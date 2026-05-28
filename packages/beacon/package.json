@@ -9,6 +9,7 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
+    "hono": "^4.12.21",
     "postgres": "^3.4.5"
   }
 }
