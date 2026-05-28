@@ -40,17 +40,27 @@ describe.skipIf(!TEST_DB)('Foundation round-trip', () => {
       'beacon_short_links',
     ]);
 
-    // Every §4.1 index is present (name set — column-list fidelity is asserted in migrate.test.ts).
-    const indexes = await sql<{ indexname: string }[]>`
-      SELECT indexname FROM pg_indexes
+    // Every §4.1 index is present — assert the complete name set (nothing
+    // missing or extra) and the column lists of the composite indexes, so a
+    // wrong-column index fails here too (not only in migrate.test.ts).
+    const indexes = await sql<{ indexname: string; indexdef: string }[]>`
+      SELECT indexname, indexdef FROM pg_indexes
       WHERE schemaname = 'public' AND indexname LIKE 'idx_beacon_%'`;
-    expect(indexes.map((r) => r.indexname).sort()).toEqual([
+    const byName = new Map(indexes.map((r) => [r.indexname, r.indexdef]));
+    expect([...byName.keys()].sort()).toEqual([
       'idx_beacon_events_product_time',
       'idx_beacon_events_type',
       'idx_beacon_events_user',
       'idx_beacon_events_visitor',
       'idx_beacon_short_links_product',
     ]);
+    expect(byName.get('idx_beacon_events_product_time')).toContain(
+      '(product_id, "timestamp" DESC)',
+    );
+    expect(byName.get('idx_beacon_events_type')).toContain(
+      '(product_id, event_type, "timestamp" DESC)',
+    );
+    expect(byName.get('idx_beacon_events_user')).toContain('(user_id, "timestamp" DESC)');
 
     // Second run is idempotent.
     const second = await runMigrations(sql);
