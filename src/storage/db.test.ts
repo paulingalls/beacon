@@ -5,14 +5,31 @@ import { closeDb, createDb } from './db';
 const TEST_DB = process.env.TEST_DATABASE_URL;
 
 describe('createDb failure isolation', () => {
-  test('does not throw on a malformed connection string', () => {
+  test('does not throw on a malformed connection string, and warns', () => {
     const warn = spyOn(console, 'warn').mockImplementation(() => {});
     let sql: ReturnType<typeof createDb> | undefined;
     expect(() => {
       sql = createDb({ connectionString: 'postgres://u:p@127.0.0.1:99999/db' });
     }).not.toThrow();
+    // An out-of-range port throws synchronously at construction, so the catch
+    // branch fires and warns immediately — this assertion proves that branch is
+    // live (the connectivity-probe warning is async and would not be visible yet).
+    expect(warn).toHaveBeenCalled();
     void sql?.end({ timeout: 1 }).catch(() => {});
     warn.mockRestore();
+  });
+
+  test('applies the connection pool size (default 10, passthrough otherwise)', () => {
+    const def = createDb({ connectionString: 'postgres://u:p@127.0.0.1:5544/db' });
+    expect(def.options.max).toBe(10);
+    void def.end({ timeout: 1 }).catch(() => {});
+
+    const custom = createDb({
+      connectionString: 'postgres://u:p@127.0.0.1:5544/db',
+      maxConnections: 3,
+    });
+    expect(custom.options.max).toBe(3);
+    void custom.end({ timeout: 1 }).catch(() => {});
   });
 
   test('does not throw on a well-formed but unreachable host, and warns', async () => {
