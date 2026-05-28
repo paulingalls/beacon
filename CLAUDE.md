@@ -108,16 +108,18 @@ CREATE TABLE beacon_events (
     user_id         TEXT,
     visitor_token   TEXT,
     platform        TEXT NOT NULL DEFAULT 'web',
-    properties      JSONB DEFAULT '{}',
-    context         JSONB DEFAULT '{}',
-    attribution     JSONB DEFAULT '{}'
+    properties      JSONB NOT NULL DEFAULT '{}',
+    context         JSONB NOT NULL DEFAULT '{}',
+    attribution     JSONB NOT NULL DEFAULT '{}'
 );
 
 CREATE INDEX idx_beacon_events_product_time ON beacon_events (product_id, timestamp DESC);
-CREATE INDEX idx_beacon_events_user ON beacon_events (user_id) WHERE user_id IS NOT NULL;
+CREATE INDEX idx_beacon_events_user ON beacon_events (user_id, timestamp DESC) WHERE user_id IS NOT NULL;
 CREATE INDEX idx_beacon_events_visitor ON beacon_events (visitor_token) WHERE visitor_token IS NOT NULL;
-CREATE INDEX idx_beacon_events_type ON beacon_events (event_type);
+CREATE INDEX idx_beacon_events_type ON beacon_events (product_id, event_type, timestamp DESC);
 ```
+
+> The authoritative schema lives in `REQUIREMENTS.md` §4.1 and the applied migration `packages/beacon/src/storage/migrations/001_initial_schema.sql`. The blocks here are a quick reference kept in sync with them.
 
 ### URL Shortener
 
@@ -126,9 +128,10 @@ CREATE TABLE beacon_short_links (
     code            TEXT PRIMARY KEY,
     destination     TEXT NOT NULL,
     product_id      TEXT NOT NULL,
-    campaign        JSONB DEFAULT '{}',
+    campaign        JSONB NOT NULL DEFAULT '{}',
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
-    expires_at      TIMESTAMPTZ
+    expires_at      TIMESTAMPTZ,
+    click_count     INTEGER NOT NULL DEFAULT 0
 );
 ```
 
