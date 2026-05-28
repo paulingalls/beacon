@@ -40,10 +40,12 @@ describe('Capstone — failure isolation (no Postgres)', () => {
     // A flush against the down DB re-queues rather than throwing.
     await expect(beacon.flush()).resolves.toBeUndefined();
 
-    // Fire-and-forget cleanup: clears the flush timer synchronously; the
-    // unreachable closeDb drains in the background (asserted reachable below).
-    void beacon.shutdown().catch(() => {});
-  });
+    // shutdown() must resolve cleanly even with Postgres down — the milestone's
+    // "Postgres-down never crashes the host" DoD. buffer.stop() drains (writes
+    // keep failing, no-progress break), then closeDb closes without rejecting.
+    // The generous timeout guards closeDb's worst-case 5s drain bound.
+    await expect(beacon.shutdown()).resolves.toBeUndefined();
+  }, 15_000);
 });
 
 describe.skipIf(!TEST_DB)('Capstone — live Postgres', () => {
