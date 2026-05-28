@@ -1,12 +1,11 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
+import { describe, expect, test } from 'bun:test';
 import { Hono } from 'hono';
 import type { Sql } from 'postgres';
 
 import { EventBuffer } from '../src/events/buffer';
 import { createBeacon } from '../src/index';
-import { closeDb, createDb } from '../src/storage/db';
-import { runMigrations } from '../src/storage/migrate';
 import type { BeaconEvent } from '../src/types';
+import { stubSql, withTestDb } from './helpers';
 
 const TEST_DB = process.env.TEST_DATABASE_URL;
 
@@ -49,24 +48,10 @@ describe('Capstone — failure isolation (no Postgres)', () => {
 });
 
 describe.skipIf(!TEST_DB)('Capstone — live Postgres', () => {
-  let migrator: Sql;
-
-  beforeAll(async () => {
-    migrator = createDb({ connectionString: TEST_DB as string });
-    await migrator`DROP TABLE IF EXISTS beacon_events, beacon_short_links, beacon_meta, beacon_migrations CASCADE`;
-    await runMigrations(migrator);
-  });
-
-  beforeEach(async () => {
-    await migrator`TRUNCATE beacon_events, beacon_meta`;
-  });
-
-  afterAll(async () => {
-    await migrator`DROP TABLE IF EXISTS beacon_events, beacon_short_links, beacon_meta, beacon_migrations CASCADE`;
-    await closeDb(migrator);
-  });
+  const getDb = withTestDb(TEST_DB as string);
 
   test('round-trip: a request is logged to Postgres through the full createBeacon surface', async () => {
+    const migrator = getDb();
     const beacon = createBeacon({
       productId: 'beacon-test',
       postgres: { connectionString: TEST_DB as string },
@@ -87,6 +72,7 @@ describe.skipIf(!TEST_DB)('Capstone — live Postgres', () => {
   });
 
   test('events buffered during a transient outage drain on recovery, with no loss', async () => {
+    const migrator = getDb();
     // flakyOnce wraps the live client: the first begin() rejects (simulated
     // outage), subsequent calls delegate to the real connection (recovery).
     const buffer = new EventBuffer(flakyOnce(migrator), { maxBatchSize: 100 });
@@ -118,14 +104,14 @@ function flakyOnce(realSql: Sql): Sql {
     json: (value: unknown) => unknown;
   };
   let failedOnce = false;
-  const wrap = (() => Promise.reject(new Error('unused'))) as unknown as Record<string, unknown>;
-  wrap.begin = (fn: unknown) => {
-    if (!failedOnce) {
-      failedOnce = true;
-      return Promise.reject(new Error('transient outage'));
-    }
-    return real.begin(fn);
-  };
-  wrap.json = (value: unknown) => real.json(value);
-  return wrap as unknown as Sql;
+  return stubSql({
+    begin: (fn) => {
+      if (!failedOnce) {
+        failedOnce = true;
+        return Promise.reject(new Error('transient outage'));
+      }
+      return real.begin(fn);
+    },
+    json: (value) => real.json(value),
+  });
 }
