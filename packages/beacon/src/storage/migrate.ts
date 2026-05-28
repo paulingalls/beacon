@@ -10,13 +10,13 @@ const MIGRATIONS_DIR = join(import.meta.dir, 'migrations');
 /**
  * Applies any unapplied SQL migrations in filename order (REQUIREMENTS.md §4.2).
  *
- * Ensures the beacon_migrations ledger exists, then runs each pending file
- * inside its own transaction and records it. Returns the filenames applied this
- * run — empty when the database is already up to date (idempotent).
+ * Ensures the beacon_migrations ledger exists, then runs all pending files in
+ * one transaction (under an advisory lock) and records each. Returns the
+ * filenames applied this run — empty when already up to date (idempotent).
  */
-// Arbitrary but stable key for the session-level advisory lock that serializes
-// concurrent runners. Two `bun run migrate` invocations against the same DB
-// then queue rather than racing the UNIQUE(filename) constraint.
+// Arbitrary but stable key for the transaction-scoped advisory lock that
+// serializes concurrent runners. Two `bun run migrate` invocations against the
+// same DB then queue rather than racing the UNIQUE(filename) constraint.
 const MIGRATION_LOCK_KEY = 8324_1001;
 
 export async function runMigrations(sql: Sql): Promise<string[]> {
