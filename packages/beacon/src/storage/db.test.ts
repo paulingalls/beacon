@@ -19,6 +19,17 @@ describe('createDb failure isolation', () => {
     warn.mockRestore();
   });
 
+  test('a malformed connection string yields a reject-on-query stub whose end() resolves', async () => {
+    const warn = spyOn(console, 'warn').mockImplementation(() => {});
+    const sql = createDb({ connectionString: 'postgres://u:p@127.0.0.1:99999/db' });
+    // The fallback is an explicit stub: queries reject with a clear beacon error
+    // (no real socket, no connect_timeout wait), and end() resolves cleanly.
+    // This keeps the §1.3 never-throw contract airtight (debt e8b3cf6b0af9).
+    await expect(sql`select 1`).rejects.toThrow(/beacon.*unavailable/i);
+    await expect(closeDb(sql)).resolves.toBeUndefined();
+    warn.mockRestore();
+  });
+
   test('applies the connection pool size (default 10, passthrough otherwise)', () => {
     const def = createDb({ connectionString: 'postgres://u:p@127.0.0.1:5544/db' });
     expect(def.options.max).toBe(10);
