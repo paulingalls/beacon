@@ -29,9 +29,11 @@ export function createDb(config: DbConfig): Sql {
     sql = postgres(config.connectionString, options);
   } catch (err) {
     console.warn(`[beacon] failed to initialize Postgres client: ${String(err)}`);
-    // Bind to an unreachable placeholder so the caller gets a usable Sql whose
-    // queries reject, instead of a throw that would crash the host app.
-    sql = postgres({ ...options, host: '127.0.0.1', port: 1, connect_timeout: 1 });
+    // Construction failed (e.g. a malformed connection string). Return a stub
+    // whose queries reject immediately — the buffer's retry path handles the
+    // failure (§1.3) — rather than a throw that would crash the host app or a
+    // real client to an unreachable host that blocks on connect timeouts.
+    return rejectingSql(options.max ?? 10);
   }
 
   // Non-blocking startup connectivity probe — warn on failure, never reject.
@@ -40,6 +42,29 @@ export function createDb(config: DbConfig): Sql {
   });
 
   return sql;
+}
+
+/**
+ * A minimal Sql whose every query rejects with a clear error and whose end()
+ * resolves cleanly. Returned by createDb when the real client can't be
+ * constructed, so callers get a usable handle that never throws and never
+ * blocks on a real connection (REQUIREMENTS.md §1.3).
+ */
+function rejectingSql(max: number): Sql {
+  const reject = (): Promise<never> =>
+    Promise.reject(
+      new Error('[beacon] Postgres client unavailable (createDb failed to initialize)'),
+    );
+  // Built untyped then cast once — typing against the real Sql signatures isn't
+  // needed. Callable as both a tagged template (`sql`...``) and the row helper
+  // (`sql(rows)`). json() passes its value through (it is only a serialization
+  // marker); begin() and queries reject; end() resolves.
+  const stub = (() => reject()) as unknown as Record<string, unknown> & (() => Promise<never>);
+  stub.begin = () => reject();
+  stub.json = (value: unknown) => value;
+  stub.end = () => Promise.resolve();
+  stub.options = { max };
+  return stub as unknown as Sql;
 }
 
 /** Closes the connection, draining in-flight queries within a 5s timeout. */
