@@ -1,0 +1,22 @@
+{
+  "name": "beacon-monorepo",
+  "private": true,
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "test": "bun test",
+    "migrate": "bun run packages/beacon/src/storage/migrate.ts",
+    "build": "tsc --noEmit",
+    "typecheck": "tsc --noEmit",
+    "lint": "biome check",
+    "format": "biome check --write",
+    "prepare": "lefthook install"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.4.15",
+    "@types/bun": "latest",
+    "lefthook": "2.1.8",
+    "typescript": "^5.7.0"
+  }
+}
