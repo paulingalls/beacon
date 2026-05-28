@@ -1,9 +1,28 @@
 // Shared types for @pi-innovations/beacon.
-//
-// BeaconConfig (the full REQUIREMENTS.md §10 configuration contract) is added in
-// story-003 alongside the createBeacon() factory, where the Hono Context-typed
-// auth callbacks (getUserId/isAdmin) and the hono dependency land. The event
-// buffer (story-001) needs only the event shape, its stats, and its own options.
+
+import type { Context } from 'hono';
+
+/**
+ * Configuration for createBeacon() (REQUIREMENTS.md §10). Only the fields the
+ * server middleware + event buffer consume are defined here; the query-API,
+ * shortener, and dashboard config fields are added by the phases that use them.
+ */
+export interface BeaconConfig {
+  productId: string;
+  postgres: { connectionString: string; maxConnections?: number };
+  /** Resolve the authenticated user id from the request, or null. */
+  getUserId?: (c: Context) => string | null;
+  /** Path prefixes to skip logging (startsWith match). */
+  excludePaths?: string[];
+  /** SHA-256 the client IP before storage. Default true. */
+  hashIPs?: boolean;
+  /** Event-buffer flush timer interval in ms. Default 5000. */
+  flushInterval?: number;
+  /** Max events written per flush. Default 100. */
+  maxBatchSize?: number;
+  /** Max events held in memory before dropping. Default 10000. */
+  maxBufferSize?: number;
+}
 
 /**
  * An event queued for batched insertion into beacon_events.
