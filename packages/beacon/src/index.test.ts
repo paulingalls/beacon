@@ -1,10 +1,8 @@
-import { afterEach, describe, expect, test } from 'bun:test';
+import { describe, expect, test } from 'bun:test';
 import { Hono } from 'hono';
-import type { Sql } from 'postgres';
 
+import { withTestDb } from '../test/helpers';
 import { type BeaconConfig, createBeacon } from './index';
-import { createDb } from './storage/db';
-import { runMigrations } from './storage/migrate';
 
 const TEST_DB = process.env.TEST_DATABASE_URL;
 
@@ -45,21 +43,11 @@ describe('createBeacon (unit)', () => {
 });
 
 describe.skipIf(!TEST_DB)('createBeacon (integration, live Postgres)', () => {
-  let migrator: Sql;
-
-  // Ensure the schema exists; each Beacon opens its own client.
-  const ensureSchema = async () => {
-    migrator = createDb({ connectionString: TEST_DB as string });
-    await migrator`DROP TABLE IF EXISTS beacon_events, beacon_short_links, beacon_meta, beacon_migrations CASCADE`;
-    await runMigrations(migrator);
-  };
-
-  afterEach(async () => {
-    if (migrator) await migrator.end({ timeout: 5 });
-  });
+  // Shared migrated client; each Beacon under test opens its own client.
+  const getDb = withTestDb(TEST_DB as string);
 
   test('round-trip: middleware on a Hono app logs a request to Postgres after flush', async () => {
-    await ensureSchema();
+    const migrator = getDb();
 
     const beacon = createBeacon({
       productId: 'beacon-test',
@@ -81,7 +69,7 @@ describe.skipIf(!TEST_DB)('createBeacon (integration, live Postgres)', () => {
   });
 
   test('shutdown() drains buffered events before closing the connection', async () => {
-    await ensureSchema();
+    const migrator = getDb();
 
     const beacon = createBeacon({
       productId: 'beacon-test',

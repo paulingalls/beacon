@@ -1,9 +1,7 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
+import { describe, expect, test } from 'bun:test';
 
 import type { Sql } from 'postgres';
-
-import { closeDb, createDb } from '../storage/db';
-import { runMigrations } from '../storage/migrate';
+import { stubSql, txResolver, withTestDb } from '../../test/helpers';
 import type { BeaconEvent } from '../types';
 import { EventBuffer } from './buffer';
 
@@ -16,32 +14,24 @@ const evt = (overrides: Partial<BeaconEvent> = {}): BeaconEvent => ({
 });
 
 /**
- * Minimal stub standing in for postgres.js `Sql`. It is both callable as a
- * tagged template and as the `sql(rows)` insert helper, and exposes `.begin()`.
- * `failBegins` makes the first N transactions reject, simulating write failures
- * so the retry path is exercised without a live database.
+ * A stub Sql whose first `failBegins` transactions reject (simulating write
+ * failures) so the buffer's retry path is exercised without a live database.
  */
 function makeStubSql(opts: { failBegins?: number } = {}): {
   sql: Sql;
   beginCalls: () => number;
 } {
   let begins = 0;
-  // Callable as both `tx`...`` and `tx(rows)`; the buffer only needs the calls
-  // to resolve, so the return value is inert. Built untyped, then cast to Sql —
-  // typing `.begin` against the real (TransactionSql) signature isn't needed.
-  const tx = (() => Promise.resolve([])) as unknown as Sql;
-  const base = (() => Promise.resolve([])) as unknown as Record<string, unknown> &
-    (() => Promise<unknown>);
-  // The buffer wraps jsonb values via sql.json(); the stub passes them through.
-  base.json = (value: unknown) => value;
-  base.begin = async (fn: (t: Sql) => Promise<unknown>) => {
-    begins += 1;
-    if (opts.failBegins && begins <= opts.failBegins) {
-      throw new Error('simulated write failure');
-    }
-    return fn(tx);
-  };
-  return { sql: base as unknown as Sql, beginCalls: () => begins };
+  const sql = stubSql({
+    begin: async (fn) => {
+      begins += 1;
+      if (opts.failBegins && begins <= opts.failBegins) {
+        throw new Error('simulated write failure');
+      }
+      return fn(txResolver);
+    },
+  });
+  return { sql, beginCalls: () => begins };
 }
 
 describe('EventBuffer (unit, stub Sql)', () => {
@@ -147,25 +137,23 @@ describe('EventBuffer (unit, stub Sql)', () => {
 function makeGatedStubSql(): { sql: Sql; openGate: () => void } {
   let open = false;
   const pending: Array<() => void> = [];
-  const tx = (() => Promise.resolve([])) as unknown as Sql;
-  const base = (() => Promise.resolve([])) as unknown as Record<string, unknown> &
-    (() => Promise<unknown>);
-  base.json = (value: unknown) => value;
-  base.begin = (fn: (t: Sql) => Promise<unknown>) =>
-    new Promise((resolve, reject) => {
-      const run = () => {
-        Promise.resolve()
-          .then(() => fn(tx))
-          .then(resolve, reject);
-      };
-      if (open) run();
-      else pending.push(run);
-    });
+  const sql = stubSql({
+    begin: (fn) =>
+      new Promise((resolve, reject) => {
+        const run = () => {
+          Promise.resolve()
+            .then(() => fn(txResolver))
+            .then(resolve, reject);
+        };
+        if (open) run();
+        else pending.push(run);
+      }),
+  });
   const openGate = () => {
     open = true;
     while (pending.length > 0) pending.shift()?.();
   };
-  return { sql: base as unknown as Sql, openGate };
+  return { sql, openGate };
 }
 
 describe('EventBuffer (concurrency, stub Sql)', () => {
@@ -203,24 +191,10 @@ describe('EventBuffer (concurrency, stub Sql)', () => {
 });
 
 describe.skipIf(!TEST_DB)('EventBuffer (integration, live Postgres)', () => {
-  let sql: Sql;
-
-  beforeAll(async () => {
-    sql = createDb({ connectionString: TEST_DB as string });
-    await sql`DROP TABLE IF EXISTS beacon_events, beacon_short_links, beacon_meta, beacon_migrations CASCADE`;
-    await runMigrations(sql);
-  });
-
-  beforeEach(async () => {
-    await sql`TRUNCATE beacon_events, beacon_meta`;
-  });
-
-  afterAll(async () => {
-    await sql`DROP TABLE IF EXISTS beacon_events, beacon_short_links, beacon_meta, beacon_migrations CASCADE`;
-    await closeDb(sql);
-  });
+  const getDb = withTestDb(TEST_DB as string);
 
   test('flushes events across two (product_id,event_type) pairs and upserts beacon_meta', async () => {
+    const sql = getDb();
     const buffer = new EventBuffer(sql, { maxBatchSize: 100 });
     buffer.push(evt({ eventType: 'request', properties: { path: '/a' } }));
     buffer.push(evt({ eventType: 'request', properties: { path: '/b' } }));
@@ -243,6 +217,7 @@ describe.skipIf(!TEST_DB)('EventBuffer (integration, live Postgres)', () => {
   });
 
   test('a second flush increments existing beacon_meta counts (ON CONFLICT)', async () => {
+    const sql = getDb();
     const buffer = new EventBuffer(sql, { maxBatchSize: 100 });
     buffer.push(evt({ eventType: 'request' }));
     await buffer.flush();
@@ -257,6 +232,7 @@ describe.skipIf(!TEST_DB)('EventBuffer (integration, live Postgres)', () => {
   });
 
   test('jsonb columns round-trip object properties', async () => {
+    const sql = getDb();
     const buffer = new EventBuffer(sql, {});
     buffer.push(evt({ eventType: 'request', properties: { nested: { a: 1 }, list: [1, 2] } }));
     await buffer.flush();
