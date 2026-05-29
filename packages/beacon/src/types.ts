@@ -22,6 +22,49 @@ export interface BeaconConfig {
   maxBatchSize?: number;
   /** Max events held in memory before dropping. Default 10000. */
   maxBufferSize?: number;
+  /** Visitor-token sliding-window TTL in ms (REQUIREMENTS.md §2.2). Default 1800000 (30 min). */
+  visitorTokenTTL?: number;
+  /** Max visitor tokens held in memory before oldest-by-lastSeenAt eviction. Default 50000. */
+  maxVisitorTokens?: number;
+}
+
+/**
+ * First-touch campaign attribution captured from a request URL (REQUIREMENTS.md
+ * §3). A flat string map: UTM tags and ad-platform click IDs keep their original
+ * param name; custom `_bcn_`-prefixed params are stored with the prefix stripped.
+ */
+export type Attribution = Record<string, string>;
+
+/**
+ * An anonymous visitor's in-memory tracking record (REQUIREMENTS.md §2.2). Lives
+ * only in server memory, keyed by the `_t` token — never persisted client-side.
+ * `createdAt`/`lastSeenAt` are epoch-ms; TTL is measured from `lastSeenAt`.
+ */
+export interface VisitorTokenRecord {
+  token: string;
+  createdAt: number;
+  lastSeenAt: number;
+  attribution: Attribution | null;
+  ipHash: string;
+  userAgent: string;
+}
+
+/** Tuning options for VisitorTokenStore (REQUIREMENTS.md §2.2). */
+export interface VisitorTokenStoreOptions {
+  /** Sliding-window TTL in ms, measured from lastSeenAt. Default 1800000. */
+  ttl?: number;
+  /** Max records held; at capacity, oldest-by-lastSeenAt is evicted. Default 50000. */
+  maxEntries?: number;
+  /** Clock injection for deterministic tests. Default Date.now. */
+  now?: () => number;
+}
+
+/** Snapshot of VisitorTokenStore counters, exposed via stats(). */
+export interface VisitorTokenStats {
+  /** Records currently held in memory. */
+  active: number;
+  /** Records discarded by capacity eviction (not TTL expiry). */
+  evicted: number;
 }
 
 /**
