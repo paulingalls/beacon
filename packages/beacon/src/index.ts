@@ -131,12 +131,15 @@ function appendToken(url: string, token: string | null): string {
 }
 
 /**
- * Associate an anonymous trail with a user (§2.4). Two independent UPDATEs: the
- * `user_id IS NULL` guard makes the first idempotent (re-runs are no-ops and
- * never clobber an already-associated event), and attribution lands on the
- * earliest event only when the token record carries it. Wrapped so a Postgres
- * outage during login can never crash the host (§1.3). Only persisted events are
- * updated; the caller flushes the buffer first so the trail is on disk.
+ * Associate an anonymous trail with a user (§2.4). The two UPDATEs run in one
+ * transaction for all-or-nothing semantics: the `user_id IS NULL` guard keeps
+ * the back-fill idempotent (re-runs never clobber an already-associated event),
+ * and attribution lands on the earliest event only when the token record carries
+ * it — so a partial failure can't leave the trail associated yet attribution
+ * lost. The token is removed only after the commit; on any failure it is
+ * retained so a retry can re-run cleanly. Wrapped so a Postgres outage during
+ * login can never crash the host (§1.3). Only persisted events are updated; the
+ * caller flushes the buffer first so the trail is on disk.
  */
 async function associateVisitor(
   sql: ReturnType<typeof createDb>,
@@ -146,21 +149,23 @@ async function associateVisitor(
 ): Promise<void> {
   if (!token) return; // direct login, no anonymous trail
   try {
-    await sql`
-      UPDATE beacon_events SET user_id = ${userId}
-      WHERE visitor_token = ${token} AND user_id IS NULL`;
+    await sql.begin(async (tx) => {
+      await tx`
+        UPDATE beacon_events SET user_id = ${userId}
+        WHERE visitor_token = ${token} AND user_id IS NULL`;
 
-    const record = store.get(token);
-    if (record?.attribution) {
-      await sql`
-        UPDATE beacon_events SET attribution = ${sql.json(record.attribution)}
-        WHERE event_id = (
-          SELECT event_id FROM beacon_events
-          WHERE visitor_token = ${token}
-          ORDER BY timestamp ASC, received_at ASC
-          LIMIT 1
-        )`;
-    }
+      const record = store.get(token);
+      if (record?.attribution) {
+        await tx`
+          UPDATE beacon_events SET attribution = ${tx.json(record.attribution)}
+          WHERE event_id = (
+            SELECT event_id FROM beacon_events
+            WHERE visitor_token = ${token}
+            ORDER BY timestamp ASC, received_at ASC
+            LIMIT 1
+          )`;
+      }
+    });
     store.remove(token);
   } catch (err) {
     console.warn(`[beacon] associateVisitor failed: ${String(err)}`);
