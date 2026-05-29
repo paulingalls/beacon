@@ -83,10 +83,11 @@ export function createBeacon(config: BeaconConfig): Beacon {
     associateVisitor: async (c, userId) => {
       // Persist any buffered trail before the UPDATE: a login within the flush
       // window would otherwise miss still-buffered events (and store.remove
-      // would drop their first-touch attribution permanently). flush() drains
-      // one batch (maxBatchSize); a >batch backlog could leave a tail, which
-      // the next timer flush picks up but after this association runs.
-      await buffer.flush();
+      // would drop their first-touch attribution permanently). A single flush()
+      // drains one batch, so drain in a bounded loop to cover a multi-batch
+      // backlog. The cap bounds login latency, and the no-progress break stops
+      // spinning when writes are failing/backpressured (Postgres down).
+      await drainBuffer(buffer);
       await associateVisitor(sql, tokenStore, getVisitorToken(c), userId);
     },
     shutdown: async () => {
@@ -95,6 +96,24 @@ export function createBeacon(config: BeaconConfig): Beacon {
       await closeDb(sql);
     },
   };
+}
+
+/** Max flush passes when draining before association — bounds login latency. */
+const MAX_DRAIN_PASSES = 10;
+
+/**
+ * Flush the buffer to (near-)empty before association so the visitor trail is on
+ * disk. flush() drains one batch; loop for a multi-batch backlog, capped, and
+ * stop early when a pass makes no progress (writes failing/backpressured).
+ */
+async function drainBuffer(buffer: EventBuffer): Promise<void> {
+  let remaining = buffer.stats().buffered;
+  for (let pass = 0; pass < MAX_DRAIN_PASSES && remaining > 0; pass++) {
+    await buffer.flush();
+    const next = buffer.stats().buffered;
+    if (next >= remaining) break; // no progress — don't spin
+    remaining = next;
+  }
 }
 
 /** Append the visitor token to a URL, preserving any `#fragment` (§2.3). */
