@@ -34,9 +34,12 @@ describe('http acceptance — Beacon serves real HTTP traffic', () => {
     await beacon.shutdown();
   }, 15_000);
 
-  test('GET /health returns 200 over the network with the Beacon middleware mounted', async () => {
+  test('GET /health returns 200 over the network AND the middleware logged the request', async () => {
     const res = await fetch(`${baseUrl}/health`);
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ ok: true });
+    // Prove the Beacon middleware actually ran (not a silent no-op): it buffers
+    // the request event before the response returns, so the count is now > 0.
+    expect(beacon.stats().buffered).toBeGreaterThan(0);
   });
 });
