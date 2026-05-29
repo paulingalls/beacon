@@ -55,7 +55,12 @@ export class VisitorTokenStore {
     return token;
   }
 
-  get(token: string): VisitorTokenRecord | null {
+  /**
+   * Read-only view of a record. Returned `Readonly` so callers can't bypass the
+   * first-touch attribution guard (or the sliding-window touch) with a direct
+   * field write — mutation must go through touch()/setAttribution().
+   */
+  get(token: string): Readonly<VisitorTokenRecord> | null {
     return this.records.get(token) ?? null;
   }
 
