@@ -10,9 +10,11 @@ import type { VisitorTokenStore } from '../visitors/tokenStore';
 
 // Expose the visitor token on the Hono context so the host app can read it
 // (e.g. to append ?_t= to rendered links) via c.get('beaconVisitorToken').
+// Optional: it is only set on the anonymous + token-store path, so authed and
+// no-store requests leave it undefined.
 declare module 'hono' {
   interface ContextVariableMap {
-    beaconVisitorToken: string;
+    beaconVisitorToken?: string;
   }
 }
 
@@ -156,6 +158,9 @@ function resolveVisitorToken(
     store.touch(existing.token);
     return existing.token;
   }
+  // `ip` is the configured IP representation — SHA-256 hashed by default, or the
+  // raw IP when hashIPs is off — so the record's ipHash field mirrors what the
+  // event stores. It is in-memory and TTL-bounded; nothing here is persisted.
   return store.create(ip ?? '', userAgent ?? '');
 }
 
