@@ -107,6 +107,12 @@ export function requestLogger(buffer: EventBuffer, opts: RequestLoggerOptions): 
       }
     }
 
+    // Request-start time, captured before next(). This becomes the event's
+    // `timestamp` (client/event time) — distinct from received_at (the server
+    // ingest time, set by the column DEFAULT at flush). Stamping here, rather
+    // than letting the buffer default it at flush, gives each event a stable
+    // per-request time so first-touch ordering survives batching (§4.1).
+    const requestTime = new Date();
     const start = Date.now();
     let threw = false;
     try {
@@ -133,6 +139,7 @@ export function requestLogger(buffer: EventBuffer, opts: RequestLoggerOptions): 
               ip,
               userAgent,
               path,
+              requestTime,
               responseTimeMs: Date.now() - start,
               status,
             }),
@@ -177,12 +184,24 @@ interface BuildArgs {
   ip: string | undefined;
   userAgent: string | undefined;
   path: string;
+  /** Event time (request start), distinct from received_at (server ingest). */
+  requestTime: Date;
   responseTimeMs: number;
   status: number;
 }
 
 function buildEvent(c: Context, args: BuildArgs): BeaconEvent {
-  const { productId, userId, visitorToken, ip, userAgent, path, responseTimeMs, status } = args;
+  const {
+    productId,
+    userId,
+    visitorToken,
+    ip,
+    userAgent,
+    path,
+    requestTime,
+    responseTimeMs,
+    status,
+  } = args;
 
   const appContext = parseAppContext(c.req.header('x-app-context'));
   const declaredPlatform = appContext?.platform;
@@ -202,6 +221,7 @@ function buildEvent(c: Context, args: BuildArgs): BeaconEvent {
   return {
     productId,
     eventType: 'request',
+    timestamp: requestTime,
     userId,
     visitorToken,
     platform,
