@@ -1,12 +1,10 @@
-import { createHash } from 'node:crypto';
-
 import type { Context, MiddlewareHandler } from 'hono';
-import { getConnInfo } from 'hono/bun';
 
 import type { EventBuffer } from '../events/buffer';
 import type { BeaconEvent } from '../types';
 import { extractAttribution } from '../visitors/attribution';
 import type { VisitorTokenStore } from '../visitors/tokenStore';
+import { buildEventContext, defaultClientAddress, resolveIp } from './requestContext';
 
 // Expose the visitor token on the Hono context so the host app can read it
 // (e.g. to append ?_t= to rendered links) via c.get('beaconVisitorToken').
@@ -137,7 +135,6 @@ export function requestLogger(buffer: EventBuffer, opts: RequestLoggerOptions): 
               userId,
               visitorToken,
               ip,
-              userAgent,
               path,
               requestTime,
               responseTimeMs: Date.now() - start,
@@ -182,7 +179,6 @@ interface BuildArgs {
   userId: string | null;
   visitorToken: string | null;
   ip: string | undefined;
-  userAgent: string | undefined;
   path: string;
   /** Event time (request start), distinct from received_at (server ingest). */
   requestTime: Date;
@@ -191,32 +187,11 @@ interface BuildArgs {
 }
 
 function buildEvent(c: Context, args: BuildArgs): BeaconEvent {
-  const {
-    productId,
-    userId,
-    visitorToken,
-    ip,
-    userAgent,
-    path,
-    requestTime,
-    responseTimeMs,
-    status,
-  } = args;
+  const { productId, userId, visitorToken, ip, path, requestTime, responseTimeMs, status } = args;
 
-  const appContext = parseAppContext(c.req.header('x-app-context'));
-  const declaredPlatform = appContext?.platform;
-  const platform =
-    typeof declaredPlatform === 'string' && declaredPlatform.trim() !== ''
-      ? declaredPlatform
-      : 'web';
-
-  const context: Record<string, unknown> = {
-    user_agent: userAgent,
-    referrer: c.req.header('referer'),
-    accept_language: firstLocale(c.req.header('accept-language')),
-    ip,
-  };
-  if (appContext) context.app_context = appContext;
+  // Transport `context` + platform come from the shared builder so a track()
+  // event and this request event are assembled identically.
+  const { context, platform } = buildEventContext(c, ip);
 
   return {
     productId,
@@ -233,48 +208,4 @@ function buildEvent(c: Context, args: BuildArgs): BeaconEvent {
     },
     context,
   };
-}
-
-/**
- * Client IP per §1.1: first X-Forwarded-For token, else the socket address.
- * SHA-256 hashed when enabled. Undefined when no source yields an address.
- */
-function resolveIp(
-  c: Context,
-  hashIPs: boolean,
-  getClientAddress: (c: Context) => string | undefined,
-): string | undefined {
-  const forwarded = c.req.header('x-forwarded-for')?.split(',')[0]?.trim();
-  const ip = forwarded || getClientAddress(c);
-  if (!ip) return undefined;
-  return hashIPs ? createHash('sha256').update(ip).digest('hex') : ip;
-}
-
-/** Default socket-address source (Bun). Guarded — getConnInfo throws off-server. */
-function defaultClientAddress(c: Context): string | undefined {
-  try {
-    return getConnInfo(c).remote.address;
-  } catch {
-    return undefined;
-  }
-}
-
-/** First locale only, per §1.1 (e.g. "en-US,en;q=0.9" -> "en-US"). */
-function firstLocale(acceptLanguage: string | undefined): string | undefined {
-  return acceptLanguage?.split(',')[0]?.trim() || undefined;
-}
-
-/** Parse the X-App-Context JSON header; malformed JSON is silently ignored. */
-function parseAppContext(header: string | undefined): Record<string, unknown> | undefined {
-  if (!header) return undefined;
-  try {
-    const parsed: unknown = JSON.parse(header);
-    // Accept only a plain JSON object — arrays and primitives are not valid
-    // app context and are silently ignored, like malformed JSON.
-    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
-      ? (parsed as Record<string, unknown>)
-      : undefined;
-  } catch {
-    return undefined;
-  }
 }
