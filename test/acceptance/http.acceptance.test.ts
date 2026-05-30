@@ -43,3 +43,64 @@ describe('http acceptance — Beacon serves real HTTP traffic', () => {
     expect(beacon.stats().buffered).toBeGreaterThan(0);
   });
 });
+
+/**
+ * Stand up a fresh Beacon + real server, run fn(baseUrl), then tear down. A fresh
+ * beacon per call means a fresh RateLimiter window, so the 429 test is deterministic.
+ * Postgres stays unreachable — the ingest endpoint buffers fire-and-forget and returns
+ * 202 regardless of the DB, so this surface needs no external services.
+ */
+async function withServer(fn: (baseUrl: string) => Promise<void>): Promise<void> {
+  const beacon = createBeacon({
+    productId: 'acceptance',
+    postgres: { connectionString: 'postgres://u:p@127.0.0.1:1/db' },
+    flushInterval: 60_000,
+  });
+  const app = new Hono();
+  app.use('*', beacon.middleware());
+  app.route(beacon.basePath, beacon.router());
+  const server = Bun.serve({ port: 0, fetch: app.fetch });
+  try {
+    await fn(`http://localhost:${server.port}`);
+  } finally {
+    server.stop(true);
+    await beacon.shutdown();
+  }
+}
+
+function postEvents(baseUrl: string, events: unknown[]): Promise<Response> {
+  return fetch(`${baseUrl}/analytics/events`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ events }),
+  });
+}
+
+describe('http acceptance — POST /analytics/events ingest over the network', () => {
+  test('accepts an event batch and returns 202 { accepted } over the wire', async () => {
+    await withServer(async (baseUrl) => {
+      const res = await postEvents(baseUrl, [
+        { event_type: 'screen_view' },
+        { event_type: 'button_tap' },
+      ]);
+      expect(res.status).toBe(202);
+      expect(await res.json()).toEqual({ accepted: 2 });
+    });
+  }, 15_000);
+
+  test('rate-limits a caller past the per-minute limit with a 429 + Retry-After', async () => {
+    await withServer(async (baseUrl) => {
+      // Default limit is 10/min per caller. Unauthenticated, so the identifier is the
+      // resolved client IP — stable across these localhost fetches (and if getConnInfo
+      // yields nothing, ingest's 'unknown' sentinel keys them together just the same),
+      // so request 11 deterministically trips the window.
+      for (let i = 0; i < 10; i++) {
+        const ok = await postEvents(baseUrl, [{ event_type: 'e' }]);
+        expect(ok.status).toBe(202);
+      }
+      const denied = await postEvents(baseUrl, [{ event_type: 'e' }]);
+      expect(denied.status).toBe(429);
+      expect(Number(denied.headers.get('Retry-After'))).toBeGreaterThan(0);
+    });
+  }, 15_000);
+});

@@ -67,12 +67,21 @@ export class VisitorTokenStore {
   /** Refresh lastSeenAt so the sliding-window TTL restarts. No-op if unknown. */
   touch(token: string): void {
     const record = this.records.get(token);
-    if (record) record.lastSeenAt = this.now();
+    if (!record) return;
+    record.lastSeenAt = this.now();
+    // Move to the Map's tail so insertion order tracks lastSeenAt ascending —
+    // the invariant that lets evictOldest() pop the front in O(1). Every
+    // lastSeenAt write MUST reorder; reads and setAttribution (no lastSeenAt
+    // change) must NOT (decision: visitor-token-lifecycle eviction-order).
+    this.records.delete(token);
+    this.records.set(token, record);
   }
 
   /** First-touch only: store attribution once; later calls are ignored (§3.2). */
   setAttribution(token: string, attribution: Attribution): void {
     const record = this.records.get(token);
+    // Mutates in place; does NOT touch lastSeenAt, so deliberately no reorder —
+    // keeps the Map's order == lastSeenAt order (see touch()/evictOldest()).
     if (record && record.attribution === null) record.attribution = attribution;
   }
 
@@ -100,18 +109,20 @@ export class VisitorTokenStore {
     }
   }
 
-  /** Remove the oldest-by-lastSeenAt record to free capacity (§2.2). */
+  /**
+   * Evict the oldest-by-lastSeenAt record to free capacity (§2.2). O(1): create()
+   * and touch() keep the Map ordered by lastSeenAt ascending (newest at the tail),
+   * so the FRONT is the least-recently-seen entry — pop it without scanning.
+   *
+   * Behaviour-preserving versus the former O(n) min-scan *under a monotonic clock*
+   * (Date.now, the test fakeClock): each create/touch stamps now() ≥ all prior
+   * values, so front == true min. A backward clock step (NTP correction) could pick
+   * a non-oldest victim — an accepted tradeoff for a 30-min in-memory store.
+   */
   private evictOldest(): void {
-    let oldestToken: string | null = null;
-    let oldestSeen = Number.POSITIVE_INFINITY;
-    for (const [token, record] of this.records) {
-      if (record.lastSeenAt < oldestSeen) {
-        oldestSeen = record.lastSeenAt;
-        oldestToken = token;
-      }
-    }
-    if (oldestToken !== null) {
-      this.records.delete(oldestToken);
+    const oldest = this.records.keys().next().value;
+    if (oldest !== undefined) {
+      this.records.delete(oldest);
       this.evicted += 1;
     }
   }
