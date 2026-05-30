@@ -66,6 +66,13 @@ describe('cursor codec', () => {
       QueryParamError,
     );
   });
+
+  test('rejects structurally-valid cursors with junk timestamp or id (→ 400, not a 500 at the SQL cast)', () => {
+    const badTime = encodeCursor('not-a-date', '550e8400-e29b-41d4-a716-446655440000');
+    const badId = encodeCursor('2026-04-04T10:30:00.000Z', 'not-a-uuid');
+    expect(() => decodeCursor(badTime)).toThrow(QueryParamError);
+    expect(() => decodeCursor(badId)).toThrow(QueryParamError);
+  });
 });
 
 /**
