@@ -68,6 +68,21 @@ describe('resolveIp', () => {
     const out = resolveIp(ctx({ 'x-forwarded-for': ip }), true, noSocket);
     expect(out).not.toContain(ip);
   });
+
+  test('swallows a throwing custom getClientAddress and falls back to XFF (§1.3)', () => {
+    const throwing = () => {
+      throw new Error('host override boom');
+    };
+    const c = ctx({ 'x-forwarded-for': '203.0.113.7' });
+    expect(resolveIp(c, false, throwing)).toBe('203.0.113.7');
+  });
+
+  test('returns undefined (does not crash) when getClientAddress throws and no XFF', () => {
+    const throwing = () => {
+      throw new Error('host override boom');
+    };
+    expect(resolveIp(ctx(), false, throwing)).toBeUndefined();
+  });
 });
 
 describe('defaultClientAddress', () => {
