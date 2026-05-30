@@ -131,6 +131,38 @@ describe('VisitorTokenStore — capacity eviction', () => {
     expect(store.stats().active).toBe(2);
   });
 
+  test('eviction follows touch-recency across a sequence (front-of-Map order, O(1))', () => {
+    // Characterizes the ordering invariant the O(1) eviction relies on: the Map is
+    // kept ordered by lastSeenAt, so the least-recently-touched record is always the
+    // victim — proven by the victims tracking touch-recency, not insertion order.
+    // (A wall-clock "no O(n) scan" assertion would be flaky; this is the honest proxy.)
+    const clock = fakeClock();
+    const store = makeStore({ maxEntries: 3, now: clock.now });
+    const a = store.create('h', 'ua');
+    clock.advance(1_000);
+    const b = store.create('h', 'ua');
+    clock.advance(1_000);
+    const c = store.create('h', 'ua');
+
+    clock.advance(1_000);
+    store.touch(a); // a becomes newest; oldest is now b
+    clock.advance(1_000);
+    const d = store.create('h', 'ua'); // at capacity -> evicts b (the oldest)
+    expect(store.get(b)).toBeNull();
+    expect(store.get(a)?.token).toBe(a); // a survived: it was touched out of the front
+
+    clock.advance(1_000);
+    store.touch(c); // c becomes newest; now a is the oldest (its touch predates d/c)
+    clock.advance(1_000);
+    const e = store.create('h', 'ua'); // at capacity -> evicts a
+    expect(store.get(a)).toBeNull(); // recency moved on; a is now the least-recently-seen
+    expect(store.get(c)?.token).toBe(c);
+    expect(store.get(d)?.token).toBe(d);
+    expect(store.get(e)?.token).toBe(e);
+    expect(store.stats().evicted).toBe(2);
+    expect(store.stats().active).toBe(3);
+  });
+
   test('stats().evicted counts capacity evictions, not TTL-sweep removals', () => {
     const clock = fakeClock();
     const store = makeStore({ ttl: 10_000, maxEntries: 1, now: clock.now });
