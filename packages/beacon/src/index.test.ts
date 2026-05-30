@@ -35,7 +35,10 @@ describe('createBeacon (unit)', () => {
     // baseConfig points at an unreachable host; createDb never throws, so the
     // factory must construct cleanly without a connectivity gate.
     const beacon = createBeacon(baseConfig());
+    expect(beacon.basePath).toBe('/analytics');
     expect(typeof beacon.middleware).toBe('function');
+    expect(typeof beacon.track).toBe('function');
+    expect(typeof beacon.router).toBe('function');
     expect(typeof beacon.stats).toBe('function');
     expect(typeof beacon.flush).toBe('function');
     expect(typeof beacon.shutdown).toBe('function');
