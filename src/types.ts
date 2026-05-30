@@ -12,6 +12,8 @@ export interface BeaconConfig {
   postgres: { connectionString: string; maxConnections?: number };
   /** Resolve the authenticated user id from the request, or null. */
   getUserId?: (c: Context) => string | null;
+  /** Mount prefix for the API router (CLAUDE.md Configuration). Default '/analytics'. */
+  basePath?: string;
   /** Path prefixes to skip logging (startsWith match). */
   excludePaths?: string[];
   /** SHA-256 the client IP before storage. Default true. */

@@ -1,8 +1,10 @@
 // Public API for @pi-innovations/beacon.
 
-import type { Context, MiddlewareHandler } from 'hono';
+import { type Context, Hono, type MiddlewareHandler } from 'hono';
 
+import { createIngestHandler } from './api/ingest';
 import { EventBuffer } from './events/buffer';
+import { track as trackEvent } from './events/track';
 import { requestLogger } from './middleware/requestLogger';
 import { closeDb, createDb } from './storage/db';
 import type { BeaconConfig, BeaconEvent, BufferStats } from './types';
@@ -12,8 +14,24 @@ export type { BeaconConfig, BeaconEvent, BufferStats };
 
 /** A configured Beacon instance: middleware, visitor helpers, lifecycle controls. */
 export interface Beacon {
+  /** Configured API mount prefix (default '/analytics'). Mount the router here:
+   * `app.route(beacon.basePath, beacon.router())`. */
+  basePath: string;
   /** Hono middleware that logs every request and tracks anonymous visitors. */
   middleware(): MiddlewareHandler;
+  /**
+   * Record a custom product event from a route handler (REQUIREMENTS.md §6.1).
+   * Fire-and-forget: buffers the event and returns immediately. Throws only on an
+   * invalid event_type (empty/whitespace or >100 chars).
+   */
+  track(c: Context, eventType: string, properties?: Record<string, unknown>): void;
+  /**
+   * API router with the client batch-ingest route at `{basePath}/events`
+   * (REQUIREMENTS.md §6.2) — public but rate-limited. Mount relative to basePath.
+   * Returns the same shared instance on every call (its RateLimiter window
+   * persists across requests), so mount it once.
+   */
+  router(): Hono;
   /** Current event-buffer counters. */
   stats(): BufferStats;
   /** Manually flush one batch of buffered events to Postgres. */
@@ -72,10 +90,27 @@ export function createBeacon(config: BeaconConfig): Beacon {
     tokenStore,
   });
 
+  // track() and the ingest endpoint share the request-context/IP config.
+  const eventOptions = {
+    productId: config.productId,
+    getUserId: config.getUserId,
+    hashIPs: config.hashIPs,
+  };
+
+  // Build the ingest handler + router ONCE so the handler's RateLimiter window
+  // persists across requests (a fresh handler per router() call would reset it).
+  // The route is relative to basePath; the host mounts the sub-app there.
+  const basePath = config.basePath ?? '/analytics';
+  const apiRouter = new Hono();
+  apiRouter.post('/events', createIngestHandler(buffer, eventOptions));
+
   const getVisitorToken = (c: Context): string | null => c.get('beaconVisitorToken') ?? null;
 
   return {
+    basePath,
     middleware: () => middleware,
+    track: (c, eventType, properties) => trackEvent(buffer, c, eventOptions, eventType, properties),
+    router: () => apiRouter,
     stats: () => buffer.stats(),
     flush: () => buffer.flush(),
     getVisitorToken,
