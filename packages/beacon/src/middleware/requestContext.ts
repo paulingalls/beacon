@@ -25,7 +25,15 @@ export function resolveIp(
   getClientAddress: (c: Context) => string | undefined,
 ): string | undefined {
   const forwarded = c.req.header('x-forwarded-for')?.split(',')[0]?.trim();
-  const ip = forwarded || getClientAddress(c);
+  // getClientAddress is host-supplied (default is internally guarded); a throw
+  // from a custom override must not propagate out and crash the host (§1.3).
+  let socketAddress: string | undefined;
+  try {
+    socketAddress = getClientAddress(c);
+  } catch (err) {
+    console.warn(`[beacon] getClientAddress failed: ${String(err)}`);
+  }
+  const ip = forwarded || socketAddress;
   if (!ip) return undefined;
   return hashIPs ? createHash('sha256').update(ip).digest('hex') : ip;
 }
