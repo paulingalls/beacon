@@ -12,6 +12,11 @@ export interface BeaconConfig {
   postgres: { connectionString: string; maxConnections?: number };
   /** Resolve the authenticated user id from the request, or null. */
   getUserId?: (c: Context) => string | null;
+  /**
+   * Gate the query API + dashboard (REQUIREMENTS.md §5.1 / §10). The admin gate
+   * treats a missing callback — or one that throws — as "not admin" (403).
+   */
+  isAdmin?: (c: Context) => boolean;
   /** Mount prefix for the API router (CLAUDE.md Configuration). Default '/analytics'. */
   basePath?: string;
   /** Path prefixes to skip logging (startsWith match). */
@@ -28,6 +33,15 @@ export interface BeaconConfig {
   visitorTokenTTL?: number;
   /** Max visitor tokens held in memory before oldest-by-lastSeenAt eviction. Default 50000. */
   maxVisitorTokens?: number;
+  /** Query API rate limit: max requests/min/user (REQUIREMENTS.md §5.2). Default 60. */
+  queryRateLimit?: number;
+  /**
+   * Maps a channel category (paid/organic/social/referral/email/...) to the
+   * attribution sources that belong to it (REQUIREMENTS.md §5.4 attribution,
+   * §10). Used by the attribution endpoint's `group_by=channel`; unmapped
+   * sources fall into `other`. e.g. `{ paid: ['google', 'bing'], social: ['twitter'] }`.
+   */
+  channelMapping?: Record<string, string[]>;
 }
 
 /**
