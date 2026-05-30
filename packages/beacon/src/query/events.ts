@@ -62,8 +62,17 @@ export function decodeCursor(raw: string): CursorKey {
     throw new QueryParamError('cursor', "'cursor' is not a valid pagination cursor");
   }
   const { t, id } = parsed as CursorKey;
+  // Validate the values, not just their types: a tampered cursor with junk t/id
+  // would otherwise reach the ::timestamptz/::uuid SQL casts and surface as a
+  // 500. Reject here so a bad cursor is a 400 like every other param error.
+  if (Number.isNaN(Date.parse(t)) || !UUID_RE.test(id)) {
+    throw new QueryParamError('cursor', "'cursor' is not a valid pagination cursor");
+  }
   return { t, id };
 }
+
+/** Canonical 8-4-4-4-12 hex UUID shape (matches beacon_events.event_id). */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** A row as selected; jsonb columns arrive parsed, timestamp as a Date. */
 interface EventRow {
