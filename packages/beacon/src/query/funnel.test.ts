@@ -122,6 +122,20 @@ describe('computeFunnelCounts', () => {
     expect(computeFunnelCounts(rows, STEPS, WINDOW)).toEqual([2, 2, 1]);
   });
 
+  test('window is anchor-relative, not per-hop (§5.4: max seconds first→last step)', () => {
+    // window=100s, anchor at t=0. step2 at t=90 (within), step3 at t=180.
+    // Anchor-relative: step3 must be <= anchor+100 → 180 > 100 → EXCLUDED → [1,1,0].
+    // A per-hop reading (step3 <= step2+100 = 190) would WRONGLY include it → [1,1,1].
+    // §5.4 defines window as "Max seconds between first and last step", so the
+    // anchor-relative reading is correct. This pins it against a future regression.
+    const rows = [
+      row('u1', 'a', '2026-03-01T00:00:00Z'),
+      row('u1', 'b', '2026-03-01T00:01:30Z'), // +90s
+      row('u1', 'c', '2026-03-01T00:03:00Z'), // +180s — past anchor+100s, within step2+100s
+    ];
+    expect(computeFunnelCounts(rows, ['a', 'b', 'c'], 100)).toEqual([1, 1, 0]);
+  });
+
   test('an entity that skips a middle step is dropped from later steps', () => {
     // u1 never signs up but does have a clip_created; it must not count for step 3.
     const rows = [
