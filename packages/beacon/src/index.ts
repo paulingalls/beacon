@@ -2,13 +2,24 @@
 
 import { type Context, Hono, type MiddlewareHandler } from 'hono';
 
+import { adminGate } from './api/auth';
 import { createIngestHandler } from './api/ingest';
+import { RateLimiter, rateLimitGate } from './api/rateLimit';
 import { EventBuffer } from './events/buffer';
 import { track as trackEvent } from './events/track';
 import { requestLogger } from './middleware/requestLogger';
+import { createAggregateHandler } from './query/aggregate';
+import { createAttributionHandler } from './query/attribution';
+import { createEventsHandler } from './query/events';
+import { createFunnelHandler } from './query/funnel';
+import { createSchemaHandler } from './query/schema';
 import { closeDb, createDb } from './storage/db';
 import type { BeaconConfig, BeaconEvent, BufferStats } from './types';
 import { VisitorTokenStore } from './visitors/tokenStore';
+
+/** Query-API rate-limit window: requests/min/user (REQUIREMENTS.md §5.2). */
+const QUERY_RATE_WINDOW_MS = 60_000;
+const DEFAULT_QUERY_RATE_LIMIT = 60;
 
 export type { BeaconConfig, BeaconEvent, BufferStats };
 
@@ -103,6 +114,32 @@ export function createBeacon(config: BeaconConfig): Beacon {
   const basePath = config.basePath ?? '/analytics';
   const apiRouter = new Hono();
   apiRouter.post('/events', createIngestHandler(buffer, eventOptions));
+
+  // The five read endpoints (REQUIREMENTS.md §5.4), each behind the admin gate
+  // (§5.1) and a per-user query rate limiter (§5.2). Built ONCE so the limiter
+  // window and the schema property-keys cache persist across requests — a fresh
+  // instance per request would reset both. The POST /events ingest route above
+  // stays public with its own limiter; query auth/limiting is independent of it.
+  const queryLimiter = new RateLimiter({
+    limit: config.queryRateLimit ?? DEFAULT_QUERY_RATE_LIMIT,
+    windowMs: QUERY_RATE_WINDOW_MS,
+  });
+  const admin = adminGate({ isAdmin: config.isAdmin });
+  const limit = rateLimitGate({
+    limiter: queryLimiter,
+    getUserId: (c) => config.getUserId?.(c) ?? null,
+    hashIPs: config.hashIPs,
+  });
+  apiRouter.get('/schema', admin, limit, createSchemaHandler(sql, { basePath }));
+  apiRouter.get('/events', admin, limit, createEventsHandler(sql));
+  apiRouter.get('/aggregate', admin, limit, createAggregateHandler(sql));
+  apiRouter.get('/funnel', admin, limit, createFunnelHandler(sql));
+  apiRouter.get(
+    '/attribution',
+    admin,
+    limit,
+    createAttributionHandler(sql, { channelMapping: config.channelMapping }),
+  );
 
   const getVisitorToken = (c: Context): string | null => c.get('beaconVisitorToken') ?? null;
 
