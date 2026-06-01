@@ -420,4 +420,42 @@ describe.skipIf(!TEST_DB)('createAttributionHandler (live Postgres)', () => {
     expect(body.groups[0]?.key).toBe('other');
     expect(body.groups[0]?.clicks).toBe(2);
   });
+
+  // Locks in the §5.4 PER-GROUP conversion model: a user who clicked two
+  // sources and converted ONCE is counted in BOTH groups. Credit is shared
+  // across touched sources (not deduped to one), so SUM(conversions) here is 2
+  // for a single distinct converter. Guards against a future change that tries
+  // to attribute each conversion to a single source.
+  test('counts a single converter in every source group they clicked', async () => {
+    // u1 clicked both google and twitter, then converted once (one signup).
+    await seedEvent(sql, {
+      product_id: 'clipcast',
+      event_type: 'request',
+      timestamp: '2026-03-01T00:00:00Z',
+      user_id: 'u1',
+      attribution: { utm_source: 'google' },
+    });
+    await seedEvent(sql, {
+      product_id: 'clipcast',
+      event_type: 'request',
+      timestamp: '2026-03-01T02:00:00Z',
+      user_id: 'u1',
+      attribution: { utm_source: 'twitter' },
+    });
+    await seedEvent(sql, {
+      product_id: 'clipcast',
+      event_type: 'signup',
+      timestamp: '2026-03-01T03:00:00Z',
+      user_id: 'u1',
+    });
+
+    const body = await getAttribution(createAttributionHandler(sql), `?${WINDOW}`);
+    const groups = byKey(body.groups);
+    // The one converter is credited to BOTH sources they touched.
+    expect(groups.google?.conversions).toBe(1);
+    expect(groups.twitter?.conversions).toBe(1);
+    // Summed conversions (2) exceed the distinct-converter count (1) by design.
+    const totalConversions = body.groups.reduce((n, g) => n + g.conversions, 0);
+    expect(totalConversions).toBe(2);
+  });
 });

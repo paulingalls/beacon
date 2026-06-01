@@ -97,6 +97,16 @@ export function createAttributionHandler(sql: Sql, opts: AttributionHandlerOptio
       // applied here — a user attributed by a click counts as a conversion if
       // they converted at all in range, regardless of the converting event's
       // platform (the click defines the attributed cohort, §5.4).
+      //
+      // Conversions are counted PER GROUP, not deduplicated across groups: a
+      // user who clicked two sources (google + twitter) and converted once is
+      // counted in BOTH groups. This is intentional per §5.4 ("distinct users
+      // who have both the attribution key and a conversion_event" — evaluated
+      // within each group), so SUM(conversions) across groups can exceed the
+      // distinct-converter count and one signup can lift several groups' rates.
+      // Each group answers "of the users this source touched, how many
+      // converted?" — credit is shared across touched sources, not attributed
+      // to one. (Regression-tested in attribution.test.ts.)
       let converters = sql`
         SELECT DISTINCT user_id FROM beacon_events
         WHERE event_type = ${conversionEvent}
@@ -145,7 +155,11 @@ export function createAttributionHandler(sql: Sql, opts: AttributionHandlerOptio
 
 /**
  * Invert the category→[sources] mapping into a source→category CASE over
- * utm_source. First matching category wins; unmapped sources fall to `other`.
+ * utm_source. First matching category wins; unmapped sources fall to `other`
+ * — the explicit fallback bucket required by PHASE_5_QUERY_API.md §5.6
+ * ("Unknown sources fall into an `other` channel bucket"). The §5.4 named
+ * taxonomy (paid/organic/social/referral/direct/email) is the configurable
+ * set; `other` is the catch-all for sources outside it, not a taxonomy member.
  * Postgres rejects a CASE with no WHEN, so an empty/unconfigured mapping
  * collapses to the constant `'other'` — every attributed source buckets there.
  */
