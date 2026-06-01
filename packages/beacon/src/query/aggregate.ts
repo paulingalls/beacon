@@ -136,13 +136,15 @@ export function createAggregateHandler(sql: Sql): Handler {
       if (groupBy.kind === 'dimension') {
         // The dimension is a whitelist value, but a column name can't be a bound
         // parameter — use postgres.js identifier interpolation, never string
-        // concatenation. Top 100 groups by value, descending (§5.4).
+        // concatenation. Top 100 groups by value, descending (§5.4). The `key`
+        // tiebreak makes the LIMIT-100 truncation deterministic: without it,
+        // groups tied on value at the boundary survive arbitrarily run-to-run.
         const dim = sql(groupBy.value);
         const rows = (await sql`
           SELECT ${dim} AS key, ${value} AS value
           FROM beacon_events ${where}
           GROUP BY ${dim}
-          ORDER BY value DESC
+          ORDER BY value DESC, key
           LIMIT 100`) as unknown as { key: string | null; value: unknown }[];
         return c.json({
           metric,
