@@ -128,6 +128,7 @@ export function createBeacon(config: BeaconConfig): Beacon {
   const limit = rateLimitGate({
     limiter: queryLimiter,
     getUserId: (c) => config.getUserId?.(c) ?? null,
+    hashIPs: config.hashIPs,
   });
   apiRouter.get('/schema', admin, limit, createSchemaHandler(sql, { basePath }));
   apiRouter.get('/events', admin, limit, createEventsHandler(sql));

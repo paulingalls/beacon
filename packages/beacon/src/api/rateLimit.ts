@@ -1,5 +1,6 @@
 import type { Context, MiddlewareHandler } from 'hono';
 
+import { defaultClientAddress, resolveIp } from '../middleware/requestContext';
 import { errorResponse } from './errors';
 
 // In-memory sliding-window rate limiter (REQUIREMENTS.md §6.2). Keyed by an
@@ -79,8 +80,8 @@ export class RateLimiter {
   }
 }
 
-/** Fallback rate-limit key for callers `getUserId` can't identify, so they share
- * one bucket rather than each getting a fresh limit and bypassing the cap. */
+/** Last-resort rate-limit key when a caller has neither a user id nor a
+ * resolvable IP — they share one bucket rather than each bypassing the cap. */
 const ANONYMOUS_KEY = 'anonymous';
 
 export interface RateLimitGateOptions {
@@ -88,29 +89,41 @@ export interface RateLimitGateOptions {
   limiter: RateLimiter;
   /**
    * Identify the caller for per-user limiting (REQUIREMENTS.md §5.2). Host-
-   * supplied; a null return — or a throw — falls back to a single shared key, so
-   * a buggy/absent identity fails closed into one bucket rather than uncapped.
+   * supplied; a null return — or a throw — falls back to the client IP, then to
+   * a single shared key, so a buggy/absent identity is capped rather than uncapped.
    */
   getUserId: (c: Context) => string | null;
+  /**
+   * Hash the IP fallback key. `index.ts` wires this from the same `config.hashIPs`
+   * as the event pipeline. Defaults to false: the key is ephemeral and in-memory
+   * (never persisted), so the "no raw IP at rest" constraint does not apply.
+   */
+  hashIPs?: boolean;
+  /** Socket-address source for the IP fallback. Default `defaultClientAddress`. */
+  getClientAddress?: (c: Context) => string | undefined;
 }
 
 /**
  * Build the query-API rate-limit middleware (REQUIREMENTS.md §5.2). Keys the
- * limiter on `getUserId(c)`; on denial it sets `Retry-After` and returns the
- * §5.5 RATE_LIMITED 429 without calling the handler. `getUserId` runs inside a
- * try/catch (§1.3, mirroring adminGate): any throw falls back to the shared
- * anonymous bucket rather than surfacing a 500. Mounted ahead of every query
- * route by the router; the public ingest endpoint keeps its own separate limiter.
+ * limiter on `getUserId(c)`, falling back to the client IP and then a shared
+ * anonymous key — the same `user ?? ip ?? <shared>` precedence the ingest
+ * endpoint uses, so unidentified admins get a per-IP bucket rather than all
+ * contending for one. On denial it sets `Retry-After` and returns the §5.5
+ * RATE_LIMITED 429 without calling the handler. `getUserId` runs inside a
+ * try/catch (§1.3, mirroring adminGate): any throw falls through to the IP key
+ * rather than surfacing a 500. Mounted ahead of every query route by the router;
+ * the public ingest endpoint keeps its own separate limiter.
  */
 export function rateLimitGate(opts: RateLimitGateOptions): MiddlewareHandler {
+  const getClientAddress = opts.getClientAddress ?? defaultClientAddress;
   return async (c, next) => {
-    let key: string;
+    let userId: string | null = null;
     try {
-      key = opts.getUserId(c) ?? ANONYMOUS_KEY;
+      userId = opts.getUserId(c);
     } catch (err) {
       console.warn(`[beacon] rateLimitGate: getUserId failed: ${String(err)}`);
-      key = ANONYMOUS_KEY;
     }
+    const key = userId ?? resolveIp(c, opts.hashIPs ?? false, getClientAddress) ?? ANONYMOUS_KEY;
 
     const { allowed, retryAfter } = opts.limiter.check(key);
     if (!allowed) {
