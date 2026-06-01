@@ -1,3 +1,7 @@
+import type { Context, MiddlewareHandler } from 'hono';
+
+import { errorResponse } from './errors';
+
 // In-memory sliding-window rate limiter (REQUIREMENTS.md §6.2). Keyed by an
 // arbitrary identifier (client IP or authenticated user id) so the ingest
 // endpoint can throttle 10 req/min per caller; reusable by the query API with
@@ -73,4 +77,46 @@ export class RateLimiter {
     const retryAfter = Math.ceil((oldest + this.windowMs - now) / 1000);
     return { allowed: false, retryAfter };
   }
+}
+
+/** Fallback rate-limit key for callers `getUserId` can't identify, so they share
+ * one bucket rather than each getting a fresh limit and bypassing the cap. */
+const ANONYMOUS_KEY = 'anonymous';
+
+export interface RateLimitGateOptions {
+  /** The shared sliding-window limiter (build once so its window persists). */
+  limiter: RateLimiter;
+  /**
+   * Identify the caller for per-user limiting (REQUIREMENTS.md §5.2). Host-
+   * supplied; a null return — or a throw — falls back to a single shared key, so
+   * a buggy/absent identity fails closed into one bucket rather than uncapped.
+   */
+  getUserId: (c: Context) => string | null;
+}
+
+/**
+ * Build the query-API rate-limit middleware (REQUIREMENTS.md §5.2). Keys the
+ * limiter on `getUserId(c)`; on denial it sets `Retry-After` and returns the
+ * §5.5 RATE_LIMITED 429 without calling the handler. `getUserId` runs inside a
+ * try/catch (§1.3, mirroring adminGate): any throw falls back to the shared
+ * anonymous bucket rather than surfacing a 500. Mounted ahead of every query
+ * route by the router; the public ingest endpoint keeps its own separate limiter.
+ */
+export function rateLimitGate(opts: RateLimitGateOptions): MiddlewareHandler {
+  return async (c, next) => {
+    let key: string;
+    try {
+      key = opts.getUserId(c) ?? ANONYMOUS_KEY;
+    } catch (err) {
+      console.warn(`[beacon] rateLimitGate: getUserId failed: ${String(err)}`);
+      key = ANONYMOUS_KEY;
+    }
+
+    const { allowed, retryAfter } = opts.limiter.check(key);
+    if (!allowed) {
+      c.header('Retry-After', String(retryAfter));
+      return errorResponse(c, 'RATE_LIMITED', 'query rate limit exceeded');
+    }
+    await next();
+  };
 }
