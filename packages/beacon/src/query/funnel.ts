@@ -2,7 +2,7 @@ import type { Context, Handler } from 'hono';
 import type { Sql } from 'postgres';
 
 import { errorResponse } from '../api/errors';
-import { parseCommonParams, QueryParamError } from '../api/params';
+import { buildFilters, parseCommonParams, QueryParamError } from '../api/params';
 
 // Ordered-event conversion funnel (REQUIREMENTS.md §5.4 GET /analytics/funnel).
 // Accepts the §5.3 common params plus `steps` (the ordered event types) and
@@ -201,7 +201,7 @@ export function createFunnelHandler(sql: Sql): Handler {
         steps: buildSteps(steps, counts),
         overall_conversion: ratio(counts[counts.length - 1] as number, counts[0] as number),
         window_seconds: windowSeconds,
-        filters: { product_id: common.productId, after: common.after.toISOString() },
+        filters: buildFilters(common),
       });
     } catch (err) {
       console.warn(`[beacon] funnel query failed: ${String(err)}`);

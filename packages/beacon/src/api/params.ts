@@ -26,6 +26,18 @@ export interface CommonQueryParams {
 }
 
 /**
+ * Echo the applied filters in a query response (REQUIREMENTS.md §5.4): always the
+ * resolved `after`, plus `product_id` only when a product filter was supplied.
+ * Shared by every grouped/aggregated endpoint (aggregate, funnel, attribution)
+ * so the §5.4 filters shape stays identical across them.
+ */
+export function buildFilters(common: CommonQueryParams): { product_id?: string; after: string } {
+  return common.productId === undefined
+    ? { after: common.after.toISOString() }
+    : { product_id: common.productId, after: common.after.toISOString() };
+}
+
+/**
  * A rejected query parameter (REQUIREMENTS.md §5.5 INVALID_PARAMETER). Carries
  * the offending `parameter` name so the router can name it in the 400 body.
  */

@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 
 import type { Context } from 'hono';
 
-import { parseCommonParams, QueryParamError } from './params';
+import { buildFilters, parseCommonParams, QueryParamError } from './params';
 
 /**
  * Minimal Context stub exposing only `req.query(key)` from a fixed map — the
@@ -117,5 +117,27 @@ describe('parseCommonParams — validation (throws QueryParamError)', () => {
     expect(() => parseCommonParams(stubContext({ after: ts, before: ts }), now)).toThrow(
       QueryParamError,
     );
+  });
+});
+
+describe('buildFilters — §5.4 response echo (shared by aggregate/funnel/attribution)', () => {
+  const after = new Date('2026-03-01T00:00:00.000Z');
+
+  test('always echoes after as an ISO string', () => {
+    expect(buildFilters({ after, before: new Date() })).toEqual({
+      after: '2026-03-01T00:00:00.000Z',
+    });
+  });
+
+  test('includes product_id only when a product filter was supplied', () => {
+    expect(buildFilters({ after, before: new Date(), productId: 'clipcast' })).toEqual({
+      product_id: 'clipcast',
+      after: '2026-03-01T00:00:00.000Z',
+    });
+  });
+
+  test('omits the product_id key entirely when absent (not set to undefined)', () => {
+    const filters = buildFilters({ after, before: new Date() });
+    expect('product_id' in filters).toBe(false);
   });
 });

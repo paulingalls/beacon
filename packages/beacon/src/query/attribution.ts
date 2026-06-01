@@ -2,7 +2,12 @@ import type { Context, Handler } from 'hono';
 import type { Sql } from 'postgres';
 
 import { errorResponse } from '../api/errors';
-import { type CommonQueryParams, parseCommonParams, QueryParamError } from '../api/params';
+import {
+  buildFilters,
+  type CommonQueryParams,
+  parseCommonParams,
+  QueryParamError,
+} from '../api/params';
 
 // Campaign/source performance endpoint (REQUIREMENTS.md §5.4 GET /analytics/attribution).
 // Groups attributed events by a UTM dimension (or a derived `channel`), counting
@@ -107,6 +112,15 @@ export function createAttributionHandler(sql: Sql, opts: AttributionHandlerOptio
       // Each group answers "of the users this source touched, how many
       // converted?" — credit is shared across touched sources, not attributed
       // to one. (Regression-tested in attribution.test.ts.)
+      //
+      // Distinct-actor keying differs by design across the query API: a
+      // conversion requires `user_id IS NOT NULL` (a conversion_event like
+      // `signup` is what turns an anonymous visitor INTO a user, so attribution
+      // credits identified conversions only — §5.4 "distinct users"). Contrast
+      // aggregate's `unique_visitors` and the funnel entity, which use
+      // COALESCE(user_id, visitor_token) to count anonymous actors too. Clicks
+      // here are likewise counted across all attributed events (anonymous
+      // included); only the conversion side is user_id-scoped.
       let converters = sql`
         SELECT DISTINCT user_id FROM beacon_events
         WHERE event_type = ${conversionEvent}
@@ -171,11 +185,4 @@ function channelCaseExpr(sql: Sql, mapping: Record<string, string[]>) {
     expr = sql`${expr} WHEN attribution->>${CHANNEL_SOURCE_KEY} IN ${sql(sources)} THEN ${category}`;
   }
   return sql`${expr} ELSE 'other' END`;
-}
-
-/** Echo the applied filters (§5.4): always `after`, plus `product_id` when set. */
-function buildFilters(common: CommonQueryParams): { product_id?: string; after: string } {
-  const filters: { product_id?: string; after: string } = { after: common.after.toISOString() };
-  if (common.productId) filters.product_id = common.productId;
-  return filters;
 }
