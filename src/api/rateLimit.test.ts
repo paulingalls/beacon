@@ -106,15 +106,23 @@ describe('RateLimiter', () => {
   });
 });
 
-/** Mount rateLimitGate ahead of a trailing 200 handler. `?u=` drives getUserId. */
+/** Mount rateLimitGate ahead of a trailing 200 handler. `?u=` drives getUserId;
+ * the `x-forwarded-for` header drives the IP fallback (hashIPs off for readable keys). */
 function appWith(
   limiter: RateLimiter,
   getUserId: (c: Context) => string | null = (c) => c.req.query('u') ?? null,
 ): Hono {
   const app = new Hono();
-  app.use('/q', rateLimitGate({ limiter, getUserId }));
+  app.use('/q', rateLimitGate({ limiter, getUserId, hashIPs: false }));
   app.get('/q', (c) => c.text('ok'));
   return app;
+}
+
+/** Request /q with an optional client IP (x-forwarded-for) and user query param. */
+async function get(app: Hono, opts: { ip?: string; u?: string } = {}): Promise<Response> {
+  const path = opts.u ? `/q?u=${opts.u}` : '/q';
+  const headers = opts.ip ? { 'x-forwarded-for': opts.ip } : undefined;
+  return app.request(path, headers ? { headers } : undefined);
 }
 
 describe('rateLimitGate', () => {
@@ -142,18 +150,31 @@ describe('rateLimitGate', () => {
     expect((await app.request('/q?u=bob')).status).toBe(200); // bob unaffected
   });
 
-  test('null user ids share one fallback bucket (cannot bypass the limit)', async () => {
+  test('a null user id falls back to the client IP — same IP shares one bucket', async () => {
     const app = appWith(new RateLimiter({ limit: 1, windowMs: 60_000, now: clock().now }));
-    expect((await app.request('/q')).status).toBe(200); // no ?u → null
-    expect((await app.request('/q')).status).toBe(429); // second null shares the bucket
+    expect((await get(app, { ip: '1.1.1.1' })).status).toBe(200); // no ?u → keyed by IP
+    expect((await get(app, { ip: '1.1.1.1' })).status).toBe(429); // same IP shares the bucket
   });
 
-  test('a throwing getUserId is failure-isolated (uses the fallback, not a 500)', async () => {
+  test('null user ids from different client IPs get separate buckets (no shared-anonymous bypass)', async () => {
+    const app = appWith(new RateLimiter({ limit: 1, windowMs: 60_000, now: clock().now }));
+    expect((await get(app, { ip: '1.1.1.1' })).status).toBe(200);
+    expect((await get(app, { ip: '2.2.2.2' })).status).toBe(200); // different IP → own bucket
+    expect((await get(app, { ip: '1.1.1.1' })).status).toBe(429); // 1.1.1.1 already spent
+  });
+
+  test('with no user id and no resolvable IP, callers share the anonymous bucket', async () => {
+    const app = appWith(new RateLimiter({ limit: 1, windowMs: 60_000, now: clock().now }));
+    expect((await app.request('/q')).status).toBe(200); // no ?u, no x-forwarded-for
+    expect((await app.request('/q')).status).toBe(429); // both fall back to ANONYMOUS_KEY
+  });
+
+  test('a throwing getUserId is failure-isolated to the IP fallback (not a 500)', async () => {
     const app = appWith(new RateLimiter({ limit: 1, windowMs: 60_000, now: clock().now }), () => {
       throw new Error('getUserId boom');
     });
-    expect((await app.request('/q')).status).toBe(200); // first allowed, no crash
-    expect((await app.request('/q')).status).toBe(429); // shares the fallback bucket
+    expect((await get(app, { ip: '9.9.9.9' })).status).toBe(200); // first allowed, no crash
+    expect((await get(app, { ip: '9.9.9.9' })).status).toBe(429); // same IP shares the bucket
   });
 
   test('does not call the downstream handler when rejecting', async () => {
