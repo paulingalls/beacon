@@ -3,7 +3,7 @@ import type { Sql } from 'postgres';
 
 import { errorResponse } from '../api/errors';
 import type { CommonQueryParams } from '../api/params';
-import { parseCommonParams, QueryParamError } from '../api/params';
+import { buildFilters, parseCommonParams, QueryParamError } from '../api/params';
 
 // Aggregate metric endpoint (REQUIREMENTS.md §5.4 GET /analytics/aggregate).
 // Accepts the §5.3 common params plus event_type / metric / group_by, and
@@ -76,13 +76,6 @@ function metricExpr(sql: Sql, metric: Metric) {
   }
 }
 
-/** The §5.4 `filters` echo: applied product_id (when present) then after. */
-function echoFilters(common: CommonQueryParams): { product_id?: string; after: string } {
-  return common.productId === undefined
-    ? { after: common.after.toISOString() }
-    : { product_id: common.productId, after: common.after.toISOString() };
-}
-
 /** postgres.js returns BIGINT counts as strings; coerce to a JSON number. */
 function toCount(value: unknown): number {
   return Number(value);
@@ -125,7 +118,7 @@ export function createAggregateHandler(sql: Sql): Handler {
       if (common.userId) where = sql`${where} AND user_id = ${common.userId}`;
 
       const value = metricExpr(sql, metric);
-      const filters = echoFilters(common);
+      const filters = buildFilters(common);
 
       if (groupBy === null) {
         const [row] = (await sql`
