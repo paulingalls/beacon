@@ -93,6 +93,104 @@ describe('createBeacon (unit)', () => {
   });
 });
 
+// Router wiring (§5.1/§5.2/§5.4) — auth + rate-limit behavior fires before any DB
+// call, so these assert without Postgres. Admin reaching a handler 500s on the
+// unreachable host (proving the route is mounted, not a 404); data correctness is
+// covered by the per-endpoint integration suites + the over-network capstone.
+describe('createBeacon router (query API mounting)', () => {
+  const QUERY_ROUTES = ['/schema', '/events', '/aggregate', '/funnel', '/attribution'];
+
+  /** Mount beacon.router() under basePath on a fresh app. */
+  function mount(beacon: ReturnType<typeof createBeacon>): Hono {
+    const app = new Hono();
+    app.route(beacon.basePath, beacon.router());
+    return app;
+  }
+
+  async function errCode(res: Response): Promise<string> {
+    return ((await res.json()) as { error: { code: string } }).error.code;
+  }
+
+  test('a non-admin gets a §5.5 UNAUTHORIZED 403 on every query route', async () => {
+    const beacon = createBeacon(baseConfig({ isAdmin: () => false }));
+    const app = mount(beacon);
+    for (const route of QUERY_ROUTES) {
+      const res = await app.request(`/analytics${route}`);
+      expect(res.status).toBe(403);
+      expect(await errCode(res)).toBe('UNAUTHORIZED');
+    }
+    void beacon.shutdown().catch(() => {});
+  });
+
+  test('an admin passes the gate and reaches each handler (500 on the unreachable host, not 404)', async () => {
+    const beacon = createBeacon(baseConfig({ isAdmin: () => true }));
+    const app = mount(beacon);
+    // funnel requires a `steps` param (else it 400s before the DB); the rest need
+    // none. With valid params every handler reaches its query and 500s on the
+    // unreachable host — proving the route is mounted and the gates passed.
+    const reachable: [string, string][] = [
+      ['/schema', ''],
+      ['/events', ''],
+      ['/aggregate', ''],
+      ['/funnel', '?steps=view,signup'],
+      ['/attribution', ''],
+    ];
+    for (const [route, qs] of reachable) {
+      const res = await app.request(`/analytics${route}${qs}`);
+      expect(res.status).toBe(500); // INTERNAL_ERROR — handler ran; 404 would mean unmounted
+      expect(await errCode(res)).toBe('INTERNAL_ERROR');
+    }
+    void beacon.shutdown().catch(() => {});
+  });
+
+  test('the ingest POST /events stays public (no admin gate)', async () => {
+    const beacon = createBeacon(baseConfig({ isAdmin: () => false }));
+    const app = mount(beacon);
+    const res = await app.request('/analytics/events', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ events: [{ event_type: 'test' }] }),
+    });
+    // Ingest does not run adminGate — a non-admin is NOT 403. Fire-and-forget
+    // buffering accepts the batch (202) even on the unreachable host.
+    expect(res.status).not.toBe(403);
+    expect(res.status).toBe(202);
+    void beacon.shutdown().catch(() => {});
+  });
+
+  test('query rate limiter returns 429 + Retry-After once the per-user budget is spent', async () => {
+    const beacon = createBeacon(
+      baseConfig({ isAdmin: () => true, getUserId: () => 'admin-1', queryRateLimit: 1 }),
+    );
+    const app = mount(beacon);
+    // First query is allowed (reaches the handler → 500 on the unreachable host).
+    expect((await app.request('/analytics/schema')).status).toBe(500);
+    // Second within the minute is rate-limited before the handler.
+    const res = await app.request('/analytics/schema');
+    expect(res.status).toBe(429);
+    expect(Number(res.headers.get('Retry-After'))).toBeGreaterThanOrEqual(1);
+    expect(await errCode(res)).toBe('RATE_LIMITED');
+    void beacon.shutdown().catch(() => {});
+  });
+
+  test('the query rate limiter is independent of the ingest endpoint', async () => {
+    const beacon = createBeacon(
+      baseConfig({ isAdmin: () => true, getUserId: () => 'admin-1', queryRateLimit: 1 }),
+    );
+    const app = mount(beacon);
+    await app.request('/analytics/schema'); // spend the single query slot
+    expect((await app.request('/analytics/schema')).status).toBe(429); // query exhausted
+    // Ingest has its own limiter — still reachable (not 429 from the query limiter).
+    const ingest = await app.request('/analytics/events', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ events: [{ event_type: 'test' }] }),
+    });
+    expect(ingest.status).toBe(202);
+    void beacon.shutdown().catch(() => {});
+  });
+});
+
 describe.skipIf(!TEST_DB)('createBeacon (integration, live Postgres)', () => {
   // Shared migrated client; each Beacon under test opens its own client.
   const getDb = withTestDb(TEST_DB as string);
