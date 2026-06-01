@@ -328,6 +328,28 @@ describe.skipIf(!TEST_DB)('createAggregateHandler (live Postgres)', () => {
     ]);
   });
 
+  // Groups tied on value break by key ascending, so the LIMIT-100 truncation is
+  // deterministic rather than arbitrary run-to-run (close-review 8492f5d8988f).
+  test('group_by breaks value ties deterministically by key', async () => {
+    for (const platform of ['ios', 'android']) {
+      for (const day of ['01', '02']) {
+        await seedEvent(sql, {
+          product_id: 'clipcast',
+          event_type: 'request',
+          timestamp: `2026-03-${day}T00:00:00Z`,
+          platform,
+        });
+      }
+    }
+
+    const body = await getAggregate(createAggregateHandler(sql), `?${WINDOW}&group_by=platform`);
+    // Both have value 2; the tiebreak orders them by key ascending.
+    expect(body.groups).toEqual([
+      { key: 'android', value: 2 },
+      { key: 'ios', value: 2 },
+    ]);
+  });
+
   test('applies the common filters (product_id, platform, user_id, event_type, time range)', async () => {
     // One row matches everything; each other row breaks exactly one filter.
     await seedEvent(sql, {
