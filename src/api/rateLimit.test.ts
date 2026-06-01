@@ -1,6 +1,8 @@
 import { describe, expect, test } from 'bun:test';
 
-import { RateLimiter } from './rateLimit';
+import { type Context, Hono } from 'hono';
+
+import { RateLimiter, rateLimitGate } from './rateLimit';
 
 /** A controllable clock: now() reads the current time, advance(ms) moves it forward. */
 function clock(start = 1000): { now: () => number; advance: (ms: number) => void } {
@@ -101,5 +103,76 @@ describe('RateLimiter', () => {
   test('rejects a non-positive window at construction (fail fast)', () => {
     expect(() => new RateLimiter({ limit: 10, windowMs: 0 })).toThrow(RangeError);
     expect(() => new RateLimiter({ limit: 10, windowMs: -1 })).toThrow(RangeError);
+  });
+});
+
+/** Mount rateLimitGate ahead of a trailing 200 handler. `?u=` drives getUserId. */
+function appWith(
+  limiter: RateLimiter,
+  getUserId: (c: Context) => string | null = (c) => c.req.query('u') ?? null,
+): Hono {
+  const app = new Hono();
+  app.use('/q', rateLimitGate({ limiter, getUserId }));
+  app.get('/q', (c) => c.text('ok'));
+  return app;
+}
+
+describe('rateLimitGate', () => {
+  test('allows a request under the limit (200)', async () => {
+    const app = appWith(new RateLimiter({ limit: 2, windowMs: 60_000, now: clock().now }));
+    const res = await app.request('/q?u=alice');
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe('ok');
+  });
+
+  test('rejects over the limit with a §5.5 RATE_LIMITED 429 + Retry-After', async () => {
+    const app = appWith(new RateLimiter({ limit: 1, windowMs: 60_000, now: clock().now }));
+    expect((await app.request('/q?u=alice')).status).toBe(200);
+    const res = await app.request('/q?u=alice'); // 2nd in the window
+    expect(res.status).toBe(429);
+    expect(Number(res.headers.get('Retry-After'))).toBeGreaterThanOrEqual(1);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe('RATE_LIMITED');
+  });
+
+  test('isolates limits per user id', async () => {
+    const app = appWith(new RateLimiter({ limit: 1, windowMs: 60_000, now: clock().now }));
+    expect((await app.request('/q?u=alice')).status).toBe(200);
+    expect((await app.request('/q?u=alice')).status).toBe(429); // alice exhausted
+    expect((await app.request('/q?u=bob')).status).toBe(200); // bob unaffected
+  });
+
+  test('null user ids share one fallback bucket (cannot bypass the limit)', async () => {
+    const app = appWith(new RateLimiter({ limit: 1, windowMs: 60_000, now: clock().now }));
+    expect((await app.request('/q')).status).toBe(200); // no ?u → null
+    expect((await app.request('/q')).status).toBe(429); // second null shares the bucket
+  });
+
+  test('a throwing getUserId is failure-isolated (uses the fallback, not a 500)', async () => {
+    const app = appWith(new RateLimiter({ limit: 1, windowMs: 60_000, now: clock().now }), () => {
+      throw new Error('getUserId boom');
+    });
+    expect((await app.request('/q')).status).toBe(200); // first allowed, no crash
+    expect((await app.request('/q')).status).toBe(429); // shares the fallback bucket
+  });
+
+  test('does not call the downstream handler when rejecting', async () => {
+    let reached = false;
+    const app = new Hono();
+    app.use(
+      '/q',
+      rateLimitGate({
+        limiter: new RateLimiter({ limit: 1, windowMs: 60_000, now: clock().now }),
+        getUserId: () => 'a',
+      }),
+    );
+    app.get('/q', (c) => {
+      reached = true;
+      return c.text('ok');
+    });
+    await app.request('/q'); // consume the one allowed slot
+    reached = false;
+    await app.request('/q'); // denied
+    expect(reached).toBe(false);
   });
 });
