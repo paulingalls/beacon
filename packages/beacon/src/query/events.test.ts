@@ -16,6 +16,7 @@ interface EventRow {
   timestamp: string;
   event_type: string;
   user_id: string | null;
+  visitor_token: string | null;
   platform: string;
   properties: Record<string, unknown>;
   context: Record<string, unknown>;
@@ -121,12 +122,13 @@ async function seedEvent(
     timestamp: string;
     platform?: string;
     user_id?: string | null;
+    visitor_token?: string | null;
   },
 ): Promise<string> {
   const [r] = await sql<{ event_id: string }[]>`
-    INSERT INTO beacon_events (product_id, event_type, timestamp, platform, user_id)
+    INSERT INTO beacon_events (product_id, event_type, timestamp, platform, user_id, visitor_token)
     VALUES (${row.product_id}, ${row.event_type}, ${row.timestamp}, ${row.platform ?? 'web'},
-            ${row.user_id ?? null})
+            ${row.user_id ?? null}, ${row.visitor_token ?? null})
     RETURNING event_id`;
   return (r as { event_id: string }).event_id;
 }
@@ -186,6 +188,24 @@ describe.skipIf(!TEST_DB)('createEventsHandler (live Postgres)', () => {
     expect(body.events.map((e) => e.event_type)).toEqual(['signup', 'signup']);
     expect(body.events[0]?.timestamp).toBe('2026-03-03T00:00:00.000Z'); // newest first
     expect(body.has_more).toBe(false);
+  });
+
+  test('returns visitor_token so anonymous visitors are identifiable (§5.4)', async () => {
+    // visitor_token is the visitor identity for cookie-free (unauthenticated)
+    // traffic and is a first-class queryable dimension (§5.4 schema.dimensions);
+    // the event stream must surface it so the dashboard can count true unique
+    // visitors, not just authenticated user_id.
+    await seedEvent(sql, {
+      product_id: 'clipcast',
+      event_type: 'request',
+      timestamp: '2026-03-05T00:00:00Z',
+      visitor_token: 'vt_anon_42',
+    });
+
+    const body = await getEvents(createEventsHandler(sql), `?${WINDOW}&event_type=request`);
+
+    expect(body.events[0]?.visitor_token).toBe('vt_anon_42');
+    expect(body.events[0]?.user_id).toBeNull();
   });
 
   test('applies the §5.3 common filters (product_id, platform, user_id)', async () => {

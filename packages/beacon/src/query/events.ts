@@ -110,10 +110,13 @@ export function createEventsHandler(sql: Sql): Handler {
       // Compose the filters as nested tagged fragments so every value is
       // parameterized by postgres.js (never string-interpolated). The time
       // range is always present (§5.3 defaults); the rest are conditional.
-      // §5.4 columns (no received_at / visitor_token).
+      // §5.4 columns (no received_at — an ingest-time server column). visitor_token
+      // IS returned: it is the visitor identity for cookie-free unauthenticated
+      // traffic and a first-class queryable dimension (§5.4 schema.dimensions), so
+      // the event stream surfaces it for consumers that count unique visitors.
       let q = sql`
-        SELECT event_id, product_id, timestamp, event_type, user_id, platform,
-               properties, context, attribution
+        SELECT event_id, product_id, timestamp, event_type, user_id, visitor_token,
+               platform, properties, context, attribution
         FROM beacon_events
         WHERE timestamp >= ${common.after} AND timestamp < ${common.before}`;
       if (common.productId) q = sql`${q} AND product_id = ${common.productId}`;
