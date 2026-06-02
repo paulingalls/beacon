@@ -58,7 +58,10 @@ export function overviewWidgetScript(containerId: string): string {
       var canvasId = ${id} + '-chart';
       el.innerHTML = '<div class="beacon-metrics">' + cards +
         '</div><canvas id="' + canvasId + '"></canvas>';
-      if (groups.length) {
+      // Guard on Chart so a CDN failure (offline / CSP-blocked / down) degrades
+      // gracefully — the metric cards stay rendered and only the chart is skipped,
+      // instead of an uncaught throw masking the (successful) metrics with an error.
+      if (groups.length && typeof Chart !== 'undefined') {
         chart = new Chart(document.getElementById(canvasId), {
           type: 'bar',
           data: {
