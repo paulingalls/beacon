@@ -2,7 +2,7 @@ import type { Context, Handler } from 'hono';
 import type { Sql } from 'postgres';
 
 import { errorResponse } from '../api/errors';
-import { RateLimiter } from '../api/rateLimit';
+import { applyRateLimit, RateLimiter } from '../api/rateLimit';
 import { defaultClientAddress, resolveIp } from '../middleware/requestContext';
 import { createShortLink } from './store';
 
@@ -54,15 +54,16 @@ export function createCreateHandler(opts: CreateOptions): Handler {
     const ip = resolveIp(c, hashIPs, getClientAddress);
     const identifier = userId ?? ip ?? 'unknown';
 
-    const { allowed, retryAfter } = limiter.check(identifier);
-    if (!allowed) {
-      c.header('Retry-After', String(retryAfter));
-      return errorResponse(
-        c,
-        'RATE_LIMITED',
-        'short link creation rate limit exceeded; retry later',
-      );
-    }
+    // Check BEFORE reading the body so an over-limit caller is rejected without us
+    // parsing a (possibly large) body. Keep this ordering — a test asserts a
+    // second over-limit POST is 429, not a downstream error (concern 85313d1cbe9c).
+    const denied = applyRateLimit(
+      c,
+      limiter,
+      identifier,
+      'short link creation rate limit exceeded; retry later',
+    );
+    if (denied) return denied;
 
     let body: unknown;
     try {
