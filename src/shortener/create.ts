@@ -4,7 +4,7 @@ import type { Sql } from 'postgres';
 import { errorResponse } from '../api/errors';
 import { applyRateLimit, RateLimiter } from '../api/rateLimit';
 import { defaultClientAddress, resolveIp } from '../middleware/requestContext';
-import { createShortLink } from './store';
+import { createShortLink, isHttpUrl } from './store';
 
 /** Default create limit: 100 link creations per hour per admin (REQUIREMENTS.md §7.2). */
 const DEFAULT_CREATE_LIMIT = 100;
@@ -148,14 +148,4 @@ export function createCreateHandler(opts: CreateOptions): Handler {
       return errorResponse(c, 'INTERNAL_ERROR', 'failed to create short link');
     }
   };
-}
-
-/** True when `value` parses as an absolute http(s) URL — rejects javascript:/data:/etc. */
-function isHttpUrl(value: string): boolean {
-  try {
-    const url = new URL(value);
-    return url.protocol === 'http:' || url.protocol === 'https:';
-  } catch {
-    return false;
-  }
 }

@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, test } from 'bun:test';
+import type { Sql } from 'postgres';
 
 import { withTestDb } from '../../test/helpers';
 import { createShortLink, getShortLink, incrementClickCount } from './store';
@@ -6,6 +7,49 @@ import { createShortLink, getShortLink, incrementClickCount } from './store';
 const TEST_DB = process.env.TEST_DATABASE_URL;
 
 const SHORT_DOMAIN = 'https://pi.ink';
+
+// createShortLink validates its inputs BEFORE any query, so both the admin HTTP
+// path (POST /short) and the programmatic beacon.createShortLink() reject the
+// same bad inputs — no DB needed. `unusedSql` proves the rejection happens
+// before the insert: a tagged-template call on it throws a distinct error.
+describe('createShortLink input validation (no DB — rejects before insert)', () => {
+  const unusedSql = (() => {
+    throw new Error('sql must not be called when validation rejects');
+  }) as unknown as Sql;
+
+  test('rejects a non-http(s) destination (e.g. javascript:) so it can never 302 to it', async () => {
+    await expect(
+      createShortLink(unusedSql, {
+        destination: 'javascript:alert(1)',
+        productId: 'p',
+        shortDomain: SHORT_DOMAIN,
+      }),
+    ).rejects.toThrow(/http/i);
+  });
+
+  test('rejects an empty / non-URL destination', async () => {
+    await expect(
+      createShortLink(unusedSql, { destination: '', productId: 'p', shortDomain: SHORT_DOMAIN }),
+    ).rejects.toThrow(/http/i);
+    await expect(
+      createShortLink(unusedSql, {
+        destination: 'not a url',
+        productId: 'p',
+        shortDomain: SHORT_DOMAIN,
+      }),
+    ).rejects.toThrow(/http/i);
+  });
+
+  test('rejects an empty product_id', async () => {
+    await expect(
+      createShortLink(unusedSql, {
+        destination: 'https://example.com',
+        productId: '',
+        shortDomain: SHORT_DOMAIN,
+      }),
+    ).rejects.toThrow(/product/i);
+  });
+});
 
 describe.skipIf(!TEST_DB)('short-link store (integration)', () => {
   const getSql = withTestDb(TEST_DB as string);

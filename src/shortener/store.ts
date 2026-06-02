@@ -51,6 +51,17 @@ export async function createShortLink(
   params: CreateShortLinkParams,
   generate: () => string = generateCode,
 ): Promise<CreatedShortLink> {
+  // Validate at the store boundary so BOTH public entry points agree: the admin
+  // POST /short route (which also pre-validates for a §5.5 400) and the
+  // programmatic beacon.createShortLink(). http(s)-only keeps a javascript:/data:
+  // destination out of the table, so the redirect can never 302 to one.
+  if (typeof params.destination !== 'string' || !isHttpUrl(params.destination)) {
+    throw new Error('[beacon] createShortLink: destination must be a valid http(s) URL');
+  }
+  if (!params.productId) {
+    throw new Error('[beacon] createShortLink: productId is required');
+  }
+
   for (let attempt = 0; attempt < MAX_CODE_ATTEMPTS; attempt++) {
     const code = generate();
     const rows = (await sql`
@@ -110,5 +121,16 @@ export async function incrementClickCount(sql: Sql, code: string): Promise<void>
     await sql`UPDATE beacon_short_links SET click_count = click_count + 1 WHERE code = ${code}`;
   } catch (err) {
     console.warn(`[beacon] incrementClickCount failed for ${code}: ${String(err)}`);
+  }
+}
+
+/** True when `value` parses as an absolute http(s) URL — rejects javascript:/data:/etc.
+ * Shared by createShortLink (above) and the POST /short handler (REQUIREMENTS.md §7.2). */
+export function isHttpUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.protocol === 'http:' || url.protocol === 'https:';
+  } catch {
+    return false;
   }
 }
