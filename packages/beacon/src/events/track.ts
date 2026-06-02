@@ -1,6 +1,6 @@
 import type { Context } from 'hono';
 
-import { buildEventContext, defaultClientAddress, resolveIp } from '../middleware/requestContext';
+import { resolveEventFields } from '../middleware/requestContext';
 import type { EventBuffer } from './buffer';
 
 /** Max event_type length (REQUIREMENTS.md §6.1). */
@@ -51,16 +51,12 @@ export function track(
     );
   }
 
-  let userId: string | null = null;
-  try {
-    userId = opts.getUserId?.(c) ?? null;
-  } catch (err) {
-    console.warn(`[beacon] track: getUserId failed: ${String(err)}`);
-  }
-
-  const visitorToken = c.get('beaconVisitorToken') ?? null;
-  const ip = resolveIp(c, opts.hashIPs ?? true, opts.getClientAddress ?? defaultClientAddress);
-  const { context, platform } = buildEventContext(c, ip);
+  const { userId, visitorToken, platform, context } = resolveEventFields(c, {
+    getUserId: opts.getUserId,
+    hashIPs: opts.hashIPs,
+    getClientAddress: opts.getClientAddress,
+    label: 'track',
+  });
 
   buffer.push({
     productId: opts.productId,

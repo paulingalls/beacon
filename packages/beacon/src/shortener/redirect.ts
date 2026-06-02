@@ -2,7 +2,7 @@ import type { Context, Handler } from 'hono';
 import type { Sql } from 'postgres';
 
 import type { EventBuffer } from '../events/buffer';
-import { buildEventContext, defaultClientAddress, resolveIp } from '../middleware/requestContext';
+import { resolveEventFields } from '../middleware/requestContext';
 import { extractAttribution } from '../visitors/attribution';
 import type { ShortLinkCache } from './cache';
 import { incrementClickCount, type ShortLinkRecord } from './store';
@@ -65,16 +65,12 @@ export function createRedirectHandler(opts: RedirectOptions): Handler {
  * user_id rather than propagating (§1.3, mirroring track()).
  */
 function logClick(c: Context, opts: RedirectOptions, record: ShortLinkRecord): void {
-  let userId: string | null = null;
-  try {
-    userId = opts.getUserId?.(c) ?? null;
-  } catch (err) {
-    console.warn(`[beacon] redirect: getUserId failed: ${String(err)}`);
-  }
-
-  const visitorToken = c.get('beaconVisitorToken') ?? null;
-  const ip = resolveIp(c, opts.hashIPs ?? true, opts.getClientAddress ?? defaultClientAddress);
-  const { context, platform } = buildEventContext(c, ip);
+  const { userId, visitorToken, platform, context } = resolveEventFields(c, {
+    getUserId: opts.getUserId,
+    hashIPs: opts.hashIPs,
+    getClientAddress: opts.getClientAddress,
+    label: 'redirect',
+  });
   const attribution = { ...(extractAttribution(c.req.url) ?? {}), ...record.campaign };
 
   opts.buffer.push({
