@@ -51,6 +51,14 @@ describe('topPagesWidgetScript', () => {
     expect(script).not.toContain('users: {}');
   });
 
+  test('discloses an approximate tally when the MAX_EVENTS cap is hit', () => {
+    // When pagination stops at the cap (cursor still truthy) the table reflects only
+    // the most-recent N requests, not the full window — the widget must say so rather
+    // than let the totals read as exact.
+    expect(script).toContain('var capped = !!cursor');
+    expect(script).toContain('Approximate');
+  });
+
   test('renders empty and inline-error states', () => {
     expect(script.toLowerCase()).toContain('no ');
     expect(script).toContain('catch');

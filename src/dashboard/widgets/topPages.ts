@@ -40,6 +40,9 @@ export function topPagesWidgetScript(containerId: string): string {
         rows = rows.concat(page.events || []);
         cursor = page.cursor;
       } while (cursor && rows.length < MAX_EVENTS);
+      // A still-truthy cursor means we stopped at the cap, not the end of the feed —
+      // so the tally is the most-recent MAX_EVENTS, an approximation of the window.
+      var capped = !!cursor;
 
       // Null-prototype maps so a literal '__proto__' path or user token tallies as
       // an own key instead of hitting the Object.prototype setter (and being dropped
@@ -68,8 +71,12 @@ export function topPagesWidgetScript(containerId: string): string {
       var body = list.map(function (r) {
         return '<tr><td>' + esc(r.path) + '</td><td>' + r.views + '</td><td>' + r.uniques + '</td></tr>';
       }).join('');
+      var note = capped
+        ? '<p class="beacon-note">Approximate — based on the most recent ' + MAX_EVENTS +
+          ' requests in this range.</p>'
+        : '';
       el.innerHTML = '<table class="beacon-table"><thead><tr><th>Path</th><th>Views</th>' +
-        '<th>Unique Users</th></tr></thead><tbody>' + body + '</tbody></table>';
+        '<th>Unique Users</th></tr></thead><tbody>' + body + '</tbody></table>' + note;
     } catch (e) {
       el.innerHTML = '<p class="beacon-error">Failed to load top pages.</p>';
       console.error('[beacon-dashboard] top-pages failed', e);
