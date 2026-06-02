@@ -213,6 +213,17 @@ describe('createBeacon shortener (mounting + per-admin create limit)', () => {
     void beacon.shutdown().catch(() => {});
   });
 
+  test('createShortLink() rejects a non-http(s) destination (parity with POST /short, no DB)', async () => {
+    // The programmatic path must enforce the same http(s)-only rule as the HTTP
+    // create route, so a host app can never mint a javascript:/data: link that the
+    // redirect would later 302 to. Validation rejects before the (unreachable) DB.
+    const beacon = createBeacon(baseConfig({ shortDomain: 'https://pi.ink' }));
+    await expect(
+      beacon.createShortLink({ destination: 'javascript:alert(1)', productId: 'p' }),
+    ).rejects.toThrow(/http/i);
+    void beacon.shutdown().catch(() => {});
+  });
+
   test('the create limiter keys per admin — one admin hitting the cap does not limit another (wires getUserId, §7.2)', async () => {
     // shortLinkCreateRateLimit:1 + getUserId from the x-admin header. Postgres is
     // unreachable, so a slot-consuming POST 500s AFTER the limiter passes; the
