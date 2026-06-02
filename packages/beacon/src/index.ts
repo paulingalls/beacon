@@ -5,6 +5,7 @@ import { type Context, Hono, type MiddlewareHandler } from 'hono';
 import { adminGate } from './api/auth';
 import { createIngestHandler } from './api/ingest';
 import { RateLimiter, rateLimitGate } from './api/rateLimit';
+import { createDashboardHandler } from './dashboard';
 import { EventBuffer } from './events/buffer';
 import { track as trackEvent } from './events/track';
 import { requestLogger } from './middleware/requestLogger';
@@ -171,6 +172,13 @@ export function createBeacon(config: BeaconConfig): Beacon {
     limit,
     createAttributionHandler(sql, { channelMapping: config.channelMapping }),
   );
+
+  // Admin dashboard (REQUIREMENTS.md §9): a server-rendered HTML page that consumes
+  // the query routes above via the browser. Same admin gate as the query API; no
+  // query rate limiter — the page is cheap static HTML and the data endpoints it
+  // fetches are already limited. `basePath` is threaded into the page so its inline
+  // script builds same-origin query URLs.
+  apiRouter.get('/dashboard', admin, createDashboardHandler({ basePath }));
 
   // URL shortener (REQUIREMENTS.md §7). Build the link cache + router ONCE so the
   // LRU/TTL windows and the create limiter persist across requests — the same

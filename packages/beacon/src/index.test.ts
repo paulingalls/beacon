@@ -145,6 +145,23 @@ describe('createBeacon router (query API mounting)', () => {
     void beacon.shutdown().catch(() => {});
   });
 
+  test('the dashboard mounts behind the admin gate: non-admin 403, admin 200 text/html', async () => {
+    // Stronger mount proof than the query routes: the dashboard needs no DB
+    // (renderShell is pure), so an admin gets a real 200 HTML page, not a 500.
+    const denied = createBeacon(baseConfig({ isAdmin: () => false }));
+    const deniedRes = await mount(denied).request('/analytics/dashboard');
+    expect(deniedRes.status).toBe(403);
+    expect(await errCode(deniedRes)).toBe('UNAUTHORIZED');
+    void denied.shutdown().catch(() => {});
+
+    const allowed = createBeacon(baseConfig({ isAdmin: () => true }));
+    const allowedRes = await mount(allowed).request('/analytics/dashboard');
+    expect(allowedRes.status).toBe(200);
+    expect(allowedRes.headers.get('content-type')).toContain('text/html');
+    expect(await allowedRes.text()).toContain('id="beacon-widget-overview"');
+    void allowed.shutdown().catch(() => {});
+  });
+
   test('the ingest POST /events stays public (no admin gate)', async () => {
     const beacon = createBeacon(baseConfig({ isAdmin: () => false }));
     const app = mount(beacon);
