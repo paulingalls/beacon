@@ -46,6 +46,12 @@ describe('overviewWidgetScript', () => {
     expect(script).toContain('.destroy()');
   });
 
+  test('guards Chart on its CDN global so a CDN failure keeps the metric cards', () => {
+    // If Chart.js failed to load, new Chart() would throw and the catch would wipe
+    // the (successful) metrics with a generic error. The guard skips only the chart.
+    expect(script).toContain("typeof Chart !== 'undefined'");
+  });
+
   test('destroys the prior Chart BEFORE any await so the error path also tears it down', () => {
     expect(script.indexOf('.destroy()')).toBeLessThan(script.indexOf('await'));
   });
