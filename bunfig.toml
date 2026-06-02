@@ -1,0 +1,13 @@
+# Bun configuration for the Beacon monorepo.
+#
+# The test preload makes integration suites self-contained: it auto-starts the
+# docker-compose Postgres and sets TEST_DATABASE_URL when unset, so `bun test`
+# needs no manual env var. Opt out with BEACON_TEST_DB=off (the pre-commit hook
+# does this to stay fast/DB-free). See test/setup/ensure-test-db.ts.
+#
+# Caveat: this preload is only picked up when `bun test` runs from the repo root
+# (where this file lives). Running `bun test` from a package subdir (e.g.
+# packages/beacon) loads no bunfig, so TEST_DATABASE_URL stays unset and the
+# integration suites silently skip. Run the full suite from the repo root.
+[test]
+preload = ["./test/setup/ensure-test-db.ts"]
