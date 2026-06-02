@@ -13,6 +13,14 @@ import { createAttributionHandler } from './query/attribution';
 import { createEventsHandler } from './query/events';
 import { createFunnelHandler } from './query/funnel';
 import { createSchemaHandler } from './query/schema';
+import { ShortLinkCache } from './shortener/cache';
+import { createCreateHandler } from './shortener/create';
+import { createRedirectHandler } from './shortener/redirect';
+import {
+  type CreatedShortLink,
+  getShortLink,
+  createShortLink as persistShortLink,
+} from './shortener/store';
 import { closeDb, createDb } from './storage/db';
 import type { BeaconConfig, BeaconEvent, BufferStats } from './types';
 import { VisitorTokenStore } from './visitors/tokenStore';
@@ -21,7 +29,15 @@ import { VisitorTokenStore } from './visitors/tokenStore';
 const QUERY_RATE_WINDOW_MS = 60_000;
 const DEFAULT_QUERY_RATE_LIMIT = 60;
 
-export type { BeaconConfig, BeaconEvent, BufferStats };
+export type { BeaconConfig, BeaconEvent, BufferStats, CreatedShortLink };
+
+/** Options for the programmatic Beacon.createShortLink() helper (REQUIREMENTS.md §7.2). */
+export interface CreateShortLinkOptions {
+  destination: string;
+  productId: string;
+  campaign?: Record<string, unknown>;
+  expiresAt?: Date | null;
+}
 
 /** A configured Beacon instance: middleware, visitor helpers, lifecycle controls. */
 export interface Beacon {
@@ -43,6 +59,21 @@ export interface Beacon {
    * persists across requests), so mount it once.
    */
   router(): Hono;
+  /**
+   * URL shortener router (REQUIREMENTS.md §7): `POST /short` (admin-gated create,
+   * per-admin rate-limited) and `GET /:code` (public redirect, logs a
+   * short_link_click). Returns the same shared instance on every call — its
+   * LRU/TTL link cache and the create-limiter window persist across requests — so
+   * mount it once, typically at the root of a dedicated short domain:
+   * `app.route('/', beacon.shortener())`.
+   */
+  shortener(): Hono;
+  /**
+   * Create a short link programmatically, with no HTTP request (REQUIREMENTS.md
+   * §7.2). Persists the link and returns the §7.2 link object (code, url,
+   * destination, timestamps). `url` is built from `config.shortDomain`.
+   */
+  createShortLink(opts: CreateShortLinkOptions): Promise<CreatedShortLink>;
   /** Current event-buffer counters. */
   stats(): BufferStats;
   /** Manually flush one batch of buffered events to Postgres. */
@@ -141,6 +172,42 @@ export function createBeacon(config: BeaconConfig): Beacon {
     createAttributionHandler(sql, { channelMapping: config.channelMapping }),
   );
 
+  // URL shortener (REQUIREMENTS.md §7). Build the link cache + router ONCE so the
+  // LRU/TTL windows and the create limiter persist across requests — the same
+  // build-once rationale as apiRouter above. shortDomain defaults to '' → relative
+  // `/CODE` urls (usable when the shortener is mounted at a root); a host on a
+  // dedicated short domain sets config.shortDomain. getUserId is wired into both
+  // handlers so the per-admin create limit (§7.2) keys on the admin, not a single
+  // shared bucket, and clicks attribute to the authenticated user.
+  const shortDomain = config.shortDomain ?? '';
+  const shortLinkCache = new ShortLinkCache({
+    fetch: (code) => getShortLink(sql, code),
+    size: config.shortLinkCacheSize,
+    ttl: config.shortLinkCacheTTL,
+  });
+  const shortenerRouter = new Hono();
+  shortenerRouter.post(
+    '/short',
+    adminGate({ isAdmin: config.isAdmin }),
+    createCreateHandler({
+      sql,
+      shortDomain,
+      getUserId: config.getUserId,
+      hashIPs: config.hashIPs,
+      rateLimit: { limit: config.shortLinkCreateRateLimit },
+    }),
+  );
+  shortenerRouter.get(
+    '/:code',
+    createRedirectHandler({
+      cache: shortLinkCache,
+      sql,
+      buffer,
+      hashIPs: config.hashIPs,
+      getUserId: config.getUserId,
+    }),
+  );
+
   const getVisitorToken = (c: Context): string | null => c.get('beaconVisitorToken') ?? null;
 
   return {
@@ -148,6 +215,8 @@ export function createBeacon(config: BeaconConfig): Beacon {
     middleware: () => middleware,
     track: (c, eventType, properties) => trackEvent(buffer, c, eventOptions, eventType, properties),
     router: () => apiRouter,
+    shortener: () => shortenerRouter,
+    createShortLink: (opts) => persistShortLink(sql, { ...opts, shortDomain }),
     stats: () => buffer.stats(),
     flush: () => buffer.flush(),
     getVisitorToken,
