@@ -80,6 +80,26 @@ export class RateLimiter {
   }
 }
 
+/**
+ * Check one request against `limiter` for `identifier` and shape the denial.
+ * Returns the §5.5 RATE_LIMITED 429 (with `Retry-After` set) when over the
+ * limit, or `null` when allowed so the caller proceeds. The caller owns the
+ * identifier — keeping each call site's `user ?? ip ?? <fallback>` precedence —
+ * and the denial message. Shared by the create + ingest handlers and the query
+ * gate so the check-and-respond logic lives in exactly one place.
+ */
+export function applyRateLimit(
+  c: Context,
+  limiter: RateLimiter,
+  identifier: string,
+  message: string,
+): Response | null {
+  const { allowed, retryAfter } = limiter.check(identifier);
+  if (allowed) return null;
+  c.header('Retry-After', String(retryAfter));
+  return errorResponse(c, 'RATE_LIMITED', message);
+}
+
 /** Last-resort rate-limit key when a caller has neither a user id nor a
  * resolvable IP — they share one bucket rather than each bypassing the cap. */
 const ANONYMOUS_KEY = 'anonymous';
@@ -125,11 +145,8 @@ export function rateLimitGate(opts: RateLimitGateOptions): MiddlewareHandler {
     }
     const key = userId ?? resolveIp(c, opts.hashIPs ?? false, getClientAddress) ?? ANONYMOUS_KEY;
 
-    const { allowed, retryAfter } = opts.limiter.check(key);
-    if (!allowed) {
-      c.header('Retry-After', String(retryAfter));
-      return errorResponse(c, 'RATE_LIMITED', 'query rate limit exceeded');
-    }
+    const denied = applyRateLimit(c, opts.limiter, key, 'query rate limit exceeded');
+    if (denied) return denied;
     await next();
   };
 }

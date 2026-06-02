@@ -6,7 +6,7 @@ import type { EventBuffer } from '../events/buffer';
 import { buildEventContext, defaultClientAddress, resolveIp } from '../middleware/requestContext';
 import type { BeaconEvent } from '../types';
 import { errorResponse } from './errors';
-import { RateLimiter } from './rateLimit';
+import { applyRateLimit, RateLimiter } from './rateLimit';
 
 // Client batch ingest endpoint (REQUIREMENTS.md §6.2 / PHASE_4 §4.2). The mobile
 // SDK POSTs {events:[...]} here; valid events are buffered fire-and-forget. The
@@ -58,27 +58,30 @@ export function createIngestHandler(buffer: EventBuffer, opts: IngestOptions): H
     windowMs: opts.rateLimit?.windowMs ?? DEFAULT_RATE_WINDOW_MS,
     now: opts.rateLimit?.now,
   });
-  const hashIPs = opts.hashIPs ?? true;
-  const getClientAddress = opts.getClientAddress ?? defaultClientAddress;
 
   return async (c) => {
-    // Resolve the rate-limit identifier and check it BEFORE parsing the body, so
-    // an over-limit caller is rejected without us reading a (possibly large) body.
-    // getUserId is host-supplied — a throw must not crash the host (§1.3).
+    // Resolve ONLY the rate-limit key before the gate — user id and ip are cheap
+    // and body-free. The transport context (which JSON-parses the attacker-
+    // controlled X-App-Context header) is deliberately deferred until after the
+    // gate passes, so an over-limit caller is rejected without that parse work.
     let userId: string | null = null;
     try {
       userId = opts.getUserId?.(c) ?? null;
     } catch (err) {
       console.warn(`[beacon] ingest: getUserId failed: ${String(err)}`);
     }
-    const ip = resolveIp(c, hashIPs, getClientAddress);
+    const ip = resolveIp(c, opts.hashIPs ?? true, opts.getClientAddress ?? defaultClientAddress);
     const identifier = userId ?? ip ?? 'unknown'; // per-user when authed, else per-IP (§6.2)
 
-    const { allowed, retryAfter } = limiter.check(identifier);
-    if (!allowed) {
-      c.header('Retry-After', String(retryAfter));
-      return errorResponse(c, 'RATE_LIMITED', 'rate limit exceeded; retry later');
-    }
+    // Check BEFORE parsing the body so an over-limit caller is rejected without us
+    // reading a (possibly large) body.
+    const denied = applyRateLimit(c, limiter, identifier, 'rate limit exceeded; retry later');
+    if (denied) return denied;
+
+    // Past the gate: now build the transport context + platform (shared by every
+    // event in this batch) and read the visitor token the middleware put on c.
+    const visitorToken = c.get('beaconVisitorToken') ?? null;
+    const { context, platform } = buildEventContext(c, ip);
 
     let body: unknown;
     try {
@@ -103,12 +106,12 @@ export function createIngestHandler(buffer: EventBuffer, opts: IngestOptions): H
       );
     }
 
-    // Transport context + platform are the same for every event in this request.
-    const { context, platform } = buildEventContext(c, ip);
+    // Transport context + platform are the same for every event in this request
+    // (resolved once above, after the rate-limit gate passed).
     const shared: SharedEventFields = {
       productId: opts.productId,
       userId,
-      visitorToken: c.get('beaconVisitorToken') ?? null,
+      visitorToken,
       platform,
       context,
     };
