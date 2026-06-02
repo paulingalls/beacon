@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 
 import { renderShell, WIDGET_CONTAINER_IDS } from './layout';
+import { renderWidgetScripts } from './widgets';
 
 // Structural unit tests for the dashboard page shell (REQUIREMENTS.md §9). The
 // shell is a pure function of { basePath } — no DB, no browser — so we assert on
@@ -93,6 +94,16 @@ describe('renderShell — window.Beacon bootstrap contract (002-005 consume this
     expect(html).toContain('dataset.basePath');
   });
 
+  test('exposes getJson — the shared fetch→throw-on-!ok→json helper widgets reuse', () => {
+    // Promoted to the contract so widgets (002-005) and the bootstrap schema-load
+    // share one fetch helper instead of each reimplementing the plumbing.
+    expect(html).toContain('getJson');
+  });
+
+  test('the schema load itself goes through Beacon.getJson (no duplicate fetch plumbing)', () => {
+    expect(html).toContain("Beacon.getJson(Beacon.basePath + '/schema')");
+  });
+
   test('loads the schema endpoint to populate products and the event-type list', () => {
     expect(html).toContain('/schema');
   });
@@ -140,6 +151,24 @@ describe('renderShell — window.Beacon bootstrap contract (002-005 consume this
     expect(html).toContain('id="beacon-status"');
     expect(html).toContain('showStatus');
     expect(html).toContain('r.ok');
+  });
+});
+
+describe('renderShell — widget composition seam', () => {
+  // The shell injects the widget registry's scripts so each widget's
+  // Beacon.registerWidget(...) call actually runs in the browser. Asserted
+  // generically (the registry output is present, after the bootstrap defines
+  // window.Beacon) — widget-specific markers live in each widget's own test.
+  const html = renderShell({ basePath: '/analytics' });
+
+  test('injects the widget registry scripts', () => {
+    const scripts = renderWidgetScripts();
+    expect(scripts.length).toBeGreaterThan(0);
+    expect(html).toContain(scripts);
+  });
+
+  test('injects them AFTER the window.Beacon bootstrap so registerWidget is defined', () => {
+    expect(html.indexOf(renderWidgetScripts())).toBeGreaterThan(html.indexOf('window.Beacon'));
   });
 });
 
