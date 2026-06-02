@@ -6,7 +6,7 @@ import type { EventBuffer } from '../events/buffer';
 import { buildEventContext, defaultClientAddress, resolveIp } from '../middleware/requestContext';
 import type { BeaconEvent } from '../types';
 import { errorResponse } from './errors';
-import { RateLimiter } from './rateLimit';
+import { applyRateLimit, RateLimiter } from './rateLimit';
 
 // Client batch ingest endpoint (REQUIREMENTS.md §6.2 / PHASE_4 §4.2). The mobile
 // SDK POSTs {events:[...]} here; valid events are buffered fire-and-forget. The
@@ -74,11 +74,10 @@ export function createIngestHandler(buffer: EventBuffer, opts: IngestOptions): H
     const ip = resolveIp(c, hashIPs, getClientAddress);
     const identifier = userId ?? ip ?? 'unknown'; // per-user when authed, else per-IP (§6.2)
 
-    const { allowed, retryAfter } = limiter.check(identifier);
-    if (!allowed) {
-      c.header('Retry-After', String(retryAfter));
-      return errorResponse(c, 'RATE_LIMITED', 'rate limit exceeded; retry later');
-    }
+    // Check BEFORE parsing the body so an over-limit caller is rejected without us
+    // reading a (possibly large) body.
+    const denied = applyRateLimit(c, limiter, identifier, 'rate limit exceeded; retry later');
+    if (denied) return denied;
 
     let body: unknown;
     try {

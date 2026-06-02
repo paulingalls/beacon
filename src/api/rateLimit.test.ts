@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 
 import { type Context, Hono } from 'hono';
 
-import { RateLimiter, rateLimitGate } from './rateLimit';
+import { applyRateLimit, RateLimiter, rateLimitGate } from './rateLimit';
 
 /** A controllable clock: now() reads the current time, advance(ms) moves it forward. */
 function clock(start = 1000): { now: () => number; advance: (ms: number) => void } {
@@ -195,5 +195,52 @@ describe('rateLimitGate', () => {
     reached = false;
     await app.request('/q'); // denied
     expect(reached).toBe(false);
+  });
+});
+
+// applyRateLimit is the shared check-and-respond primitive used by the create +
+// ingest handlers and by rateLimitGate: it runs limiter.check(identifier) and,
+// on denial, sets Retry-After and returns the §5.5 RATE_LIMITED 429; on success
+// it returns null so the caller proceeds. The caller owns the identifier (so each
+// keeps its own user??ip??<fallback> precedence) and the denial message.
+describe('applyRateLimit', () => {
+  /** A route that lets applyRateLimit gate a trailing 200, keyed by `?id=`. */
+  function gatedApp(limiter: RateLimiter, message = 'too many requests'): Hono {
+    const app = new Hono();
+    app.get('/x', (c) => {
+      const identifier = c.req.query('id') ?? 'default';
+      const denied = applyRateLimit(c, limiter, identifier, message);
+      return denied ?? c.text('ok');
+    });
+    return app;
+  }
+
+  test('returns null (caller proceeds) and sets no Retry-After when under the limit', async () => {
+    const app = gatedApp(new RateLimiter({ limit: 1, windowMs: 60_000, now: clock().now }));
+    const res = await app.request('/x?id=k');
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe('ok');
+    expect(res.headers.get('Retry-After')).toBeNull();
+  });
+
+  test('over the limit returns a §5.5 RATE_LIMITED 429 with Retry-After and the given message', async () => {
+    const app = gatedApp(
+      new RateLimiter({ limit: 1, windowMs: 60_000, now: clock().now }),
+      'short link creation rate limit exceeded; retry later',
+    );
+    expect((await app.request('/x?id=k')).status).toBe(200); // spend the slot
+    const res = await app.request('/x?id=k');
+    expect(res.status).toBe(429);
+    expect(Number(res.headers.get('Retry-After'))).toBeGreaterThanOrEqual(1);
+    const body = (await res.json()) as { error: { code: string; message: string } };
+    expect(body.error.code).toBe('RATE_LIMITED');
+    expect(body.error.message).toBe('short link creation rate limit exceeded; retry later');
+  });
+
+  test('keys on the identifier passed in — distinct identifiers get independent buckets', async () => {
+    const app = gatedApp(new RateLimiter({ limit: 1, windowMs: 60_000, now: clock().now }));
+    expect((await app.request('/x?id=a')).status).toBe(200);
+    expect((await app.request('/x?id=a')).status).toBe(429); // a exhausted
+    expect((await app.request('/x?id=b')).status).toBe(200); // b independent
   });
 });
