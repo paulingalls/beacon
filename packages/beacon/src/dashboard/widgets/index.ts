@@ -7,10 +7,14 @@
 
 import { WIDGET_CONTAINER_IDS } from '../layout';
 import { overviewWidgetScript } from './overview';
+import { topPagesWidgetScript } from './topPages';
 
 /** The widgets' inline scripts, each wrapped in its own <script> tag. */
 export function renderWidgetScripts(): string {
-  return [overviewWidgetScript(WIDGET_CONTAINER_IDS.overview)]
+  return [
+    overviewWidgetScript(WIDGET_CONTAINER_IDS.overview),
+    topPagesWidgetScript(WIDGET_CONTAINER_IDS.topPages),
+  ]
     .map((script) => `<script>${script}</script>`)
     .join('\n');
 }
