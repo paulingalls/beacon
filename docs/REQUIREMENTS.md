@@ -341,6 +341,7 @@ Returns a paginated event stream.
             "timestamp": "2026-04-04T10:30:00Z",
             "event_type": "clip_created",
             "user_id": "user_abc",
+            "visitor_token": null,
             "platform": "web",
             "properties": { "clipId": "clip_123", "duration": 45 },
             "context": { "ip_hash": "a1b2c3", "user_agent": "Mozilla/5.0...", "referrer": "https://google.com" },
