@@ -7,6 +7,8 @@
 // the container divs declared here and drive everything through the window.Beacon
 // browser contract (added in the next step).
 
+import { renderWidgetScripts } from './widgets';
+
 /** Chart.js, loaded from a public CDN (no bundler). Hosts enforcing a CSP must
  * allowlist this origin and the inline script/style. */
 const CHART_JS_CDN = 'https://cdn.jsdelivr.net/npm/chart.js';
@@ -71,6 +73,7 @@ function widgetCard(id: string, title: string): string {
  *     basePath,                       // from data-base-path
  *     state: { productId, after, before },  // shared filter state; after/before ISO
  *     schema,                         // the full GET /schema body once loaded, else null
+ *     getJson(url),                   // fetch(url) → throw on !ok → parsed JSON; the shared fetch helper
  *     queryUrl(endpoint, extra),      // basePath + endpoint + ?product_id(if set)&after&before&...extra
  *     eventTypeNames(productId?),     // distinct names from schema.event_types
  *     registerWidget(fn),             // fn:(Beacon)=>void|Promise; auto-run if schema already loaded
@@ -113,6 +116,12 @@ const BOOTSTRAP_SCRIPT = `(function () {
     basePath: (document.body.dataset.basePath || ''),
     state: { productId: null, after: isoDaysAgo(30), before: nowIso() },
     schema: null,
+    getJson: function (url) {
+      return fetch(url).then(function (r) {
+        if (!r.ok) { throw new Error('request failed: ' + r.status + ' ' + url); }
+        return r.json();
+      });
+    },
     queryUrl: function (endpoint, extra) {
       var p = new URLSearchParams();
       if (Beacon.state.productId) { p.set('product_id', Beacon.state.productId); }
@@ -204,11 +213,7 @@ const BOOTSTRAP_SCRIPT = `(function () {
 
   document.addEventListener('DOMContentLoaded', function () {
     wireDateControls();
-    fetch(Beacon.basePath + '/schema')
-      .then(function (r) {
-        if (!r.ok) { throw new Error('schema request failed: ' + r.status); }
-        return r.json();
-      })
+    Beacon.getJson(Beacon.basePath + '/schema')
       .then(function (schema) {
         Beacon.schema = schema;
         populateProducts(schema.products);
@@ -263,6 +268,7 @@ export function renderShell(opts: RenderShellOptions): string {
   ${widgetCard(WIDGET_CONTAINER_IDS.funnel, 'Funnel')}
 </main>
 <script>${BOOTSTRAP_SCRIPT}</script>
+${renderWidgetScripts()}
 </body>
 </html>`;
 }
