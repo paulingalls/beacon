@@ -69,6 +69,80 @@ describe('renderShell — page structure', () => {
   });
 });
 
+describe('renderShell — window.Beacon bootstrap contract (002-005 consume this)', () => {
+  // Structural assertions only: the inline browser script can't run in bun:test
+  // without a DOM. Behavioural proof (real fetch, selector re-fetch, rendering)
+  // is story-006's Playwright capstone (assumption fef7710a05c0). These pin the
+  // contract surface so the widget stories build against stable symbols.
+  const html = renderShell({ basePath: '/analytics' });
+
+  test('installs the window.Beacon global with mutable state and a schema slot', () => {
+    expect(html).toContain('window.Beacon');
+    expect(html).toContain('state');
+    expect(html).toContain('schema');
+  });
+
+  test('exposes the registration + refresh + url-building API widgets call', () => {
+    expect(html).toContain('registerWidget');
+    expect(html).toContain('refreshAll');
+    expect(html).toContain('queryUrl');
+    expect(html).toContain('eventTypeNames');
+  });
+
+  test('reads basePath from the data-base-path attribute (script carries no interpolated value)', () => {
+    expect(html).toContain('dataset.basePath');
+  });
+
+  test('loads the schema endpoint to populate products and the event-type list', () => {
+    expect(html).toContain('/schema');
+  });
+
+  test('queryUrl maps the shared filter state to the §5.3 common params', () => {
+    expect(html).toContain('product_id');
+    expect(html).toContain('after');
+    expect(html).toContain('before');
+  });
+
+  test('eventTypeNames reads the per-product event_types objects, not flat names', () => {
+    // GET /schema returns event_types as [{product_id, event_type, ...}] objects.
+    // eventTypeNames must read the .event_type field (and dedup) rather than treat
+    // the array as names — pins concern 03d0aefb1f19 for the funnel widget (005).
+    expect(html).toContain('event_type');
+  });
+
+  test('isolates a failing widget so it cannot blank its siblings', () => {
+    expect(html).toContain('catch');
+  });
+
+  test('custom date inputs are read as local calendar days, not UTC midnight', () => {
+    // <input type=date> value is the operator's local day; new Date('YYYY-MM-DD')
+    // would parse as UTC and shift by the offset. The script builds the instant
+    // from split local Y/M/D parts instead.
+    expect(html).toContain('localDayIso');
+    expect(html).not.toContain('new Date(after.value)');
+    expect(html).not.toContain('new Date(before.value)');
+  });
+
+  test("custom 'To' bound advances one day so the whole selected end day is included", () => {
+    // Query filters timestamp < before (exclusive upper bound); the end bound must
+    // be the start of the day AFTER the picked day or the end day (and From==To)
+    // would be excluded entirely.
+    expect(html).toContain('localDayIso(before.value, 1)');
+  });
+
+  test("'today' preset is local calendar-day start, not a rolling 24h window", () => {
+    expect(html).toContain('startOfTodayIso');
+  });
+
+  test('surfaces a visible error when the schema load fails', () => {
+    // Schema load is the bootstrap precondition for refreshAll; on failure the
+    // operator must see a visible status, not four cards blank like 'no data'.
+    expect(html).toContain('id="beacon-status"');
+    expect(html).toContain('showStatus');
+    expect(html).toContain('r.ok');
+  });
+});
+
 describe('WIDGET_CONTAINER_IDS — the frozen container contract (002-005 import this)', () => {
   test('names a stable, beacon-prefixed id per widget', () => {
     expect(WIDGET_CONTAINER_IDS).toEqual({
