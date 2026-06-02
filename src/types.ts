@@ -42,6 +42,12 @@ export interface BeaconConfig {
    * sources fall into `other`. e.g. `{ paid: ['google', 'bing'], social: ['twitter'] }`.
    */
   channelMapping?: Record<string, string[]>;
+  /** Short URL base for the shortener, e.g. 'https://pi.ink' (REQUIREMENTS.md §7.2 §10). */
+  shortDomain?: string;
+  /** Max entries in the short-link LRU cache (REQUIREMENTS.md §7.3 §10). Default 10000. */
+  shortLinkCacheSize?: number;
+  /** Short-link cache entry TTL in ms (REQUIREMENTS.md §7.3 §10). Default 300000 (5 min). */
+  shortLinkCacheTTL?: number;
 }
 
 /**
