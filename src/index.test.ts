@@ -45,6 +45,8 @@ describe('createBeacon (unit)', () => {
     expect(typeof beacon.getVisitorToken).toBe('function');
     expect(typeof beacon.appendToken).toBe('function');
     expect(typeof beacon.associateVisitor).toBe('function');
+    expect(typeof beacon.shortener).toBe('function');
+    expect(typeof beacon.createShortLink).toBe('function');
     expect(beacon.stats().buffered).toBe(0);
     // Fire-and-forget cleanup: shutdown() clears the flush timer synchronously
     // (buffer.stop) so no timer leaks; the unreachable closeDb drains in the
@@ -188,6 +190,140 @@ describe('createBeacon router (query API mounting)', () => {
     });
     expect(ingest.status).toBe(202);
     void beacon.shutdown().catch(() => {});
+  });
+});
+
+// Shortener mounting (§7) — these assert the router is built once and the create
+// limiter keys per admin, both without Postgres (the limiter fires before any DB
+// call). Round-trip data correctness is the integration suite below + story-007.
+describe('createBeacon shortener (mounting + per-admin create limit)', () => {
+  /** Mount beacon.shortener() at the root on a fresh app. */
+  function mount(beacon: ReturnType<typeof createBeacon>): Hono {
+    const app = new Hono();
+    app.route('/', beacon.shortener());
+    return app;
+  }
+
+  test('shortener() returns a Hono router and the same instance on every call', () => {
+    const beacon = createBeacon(baseConfig());
+    const r1 = beacon.shortener();
+    const r2 = beacon.shortener();
+    expect(r1).toBeInstanceOf(Hono);
+    expect(r1).toBe(r2); // built once so the cache + create-limiter windows persist
+    void beacon.shutdown().catch(() => {});
+  });
+
+  test('the create limiter keys per admin — one admin hitting the cap does not limit another (wires getUserId, §7.2)', async () => {
+    // shortLinkCreateRateLimit:1 + getUserId from the x-admin header. Postgres is
+    // unreachable, so a slot-consuming POST 500s AFTER the limiter passes; the
+    // second POST by the same admin is 429 (its bucket is full) while a different
+    // admin's first POST is NOT 429 — proving the limiter keys on getUserId, not a
+    // single shared bucket. Without the mount wiring getUserId, all admins would
+    // collapse to one ip/'unknown' key and admin-B would be 429 too.
+    const beacon = createBeacon(
+      baseConfig({
+        isAdmin: () => true,
+        getUserId: (c) => c.req.header('x-admin') ?? null,
+        shortLinkCreateRateLimit: 1,
+      }),
+    );
+    const app = mount(beacon);
+    const post = (admin: string) =>
+      app.request('/short', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-admin': admin },
+        body: JSON.stringify({ destination: 'https://example.com', product_id: 'p' }),
+      });
+
+    expect((await post('admin-A')).status).toBe(500); // slot consumed, then DB unreachable
+    expect((await post('admin-A')).status).toBe(429); // admin-A's bucket is now full
+    expect((await post('admin-B')).status).not.toBe(429); // separate bucket — not limited
+    void beacon.shutdown().catch(() => {});
+  });
+
+  test('POST /short is admin-gated; a non-admin gets a §5.5 UNAUTHORIZED 403', async () => {
+    const beacon = createBeacon(baseConfig({ isAdmin: () => false }));
+    const app = mount(beacon);
+    const res = await app.request('/short', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ destination: 'https://example.com', product_id: 'p' }),
+    });
+    expect(res.status).toBe(403);
+    expect(((await res.json()) as { error: { code: string } }).error.code).toBe('UNAUTHORIZED');
+    void beacon.shutdown().catch(() => {});
+  });
+});
+
+describe.skipIf(!TEST_DB)('createBeacon shortener (integration, live Postgres)', () => {
+  const getDb = withTestDb(TEST_DB as string);
+
+  /** Mount beacon.shortener() at the root on a fresh app. */
+  function shortenerApp(beacon: ReturnType<typeof createBeacon>): Hono {
+    const app = new Hono();
+    app.route('/', beacon.shortener());
+    return app;
+  }
+
+  test('admin POST /short → 201, visitor GET /:code → 302, and a short_link_click lands after flush', async () => {
+    const migrator = getDb();
+    const beacon = createBeacon({
+      productId: 'beacon-test',
+      postgres: { connectionString: TEST_DB as string },
+      isAdmin: () => true,
+      shortDomain: 'https://pi.ink',
+      flushInterval: 60_000,
+    });
+    const app = shortenerApp(beacon);
+
+    const created = await app.request('/short', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ destination: 'https://example.com/landing', product_id: 'promo' }),
+    });
+    expect(created.status).toBe(201);
+    const link = (await created.json()) as { code: string; url: string };
+    expect(link.code).toBeTruthy();
+    expect(link.url).toBe(`https://pi.ink/${link.code}`);
+
+    const redirect = await app.request(`/${link.code}`);
+    expect(redirect.status).toBe(302);
+    expect(redirect.headers.get('location')).toBe('https://example.com/landing');
+
+    await beacon.flush();
+    const rows = await migrator<{ product_id: string; code: string; dest: string }[]>`
+      SELECT product_id, properties->>'code' AS code, properties->>'destination' AS dest
+      FROM beacon_events WHERE event_type = 'short_link_click'`;
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.product_id).toBe('promo'); // product_id comes from the LINK, not the Beacon
+    expect(rows[0]?.code).toBe(link.code);
+    expect(rows[0]?.dest).toBe('https://example.com/landing');
+
+    await beacon.shutdown();
+  });
+
+  test('createShortLink() persists a link with no HTTP request, and the returned code redirects', async () => {
+    getDb();
+    const beacon = createBeacon({
+      productId: 'beacon-test',
+      postgres: { connectionString: TEST_DB as string },
+      isAdmin: () => true,
+      shortDomain: 'https://pi.ink',
+      flushInterval: 60_000,
+    });
+    const app = shortenerApp(beacon);
+
+    const link = await beacon.createShortLink({
+      destination: 'https://example.com/api-made',
+      productId: 'promo',
+    });
+    expect(link.url).toBe(`https://pi.ink/${link.code}`);
+
+    const redirect = await app.request(`/${link.code}`);
+    expect(redirect.status).toBe(302);
+    expect(redirect.headers.get('location')).toBe('https://example.com/api-made');
+
+    await beacon.shutdown();
   });
 });
 
