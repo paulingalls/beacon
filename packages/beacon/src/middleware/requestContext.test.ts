@@ -8,6 +8,7 @@ import {
   defaultClientAddress,
   firstLocale,
   parseAppContext,
+  resolveEventFields,
   resolveIp,
 } from './requestContext';
 
@@ -175,5 +176,72 @@ describe('buildEventContext', () => {
     const { context, platform } = buildEventContext(c, undefined);
     expect(platform).toBe('web');
     expect((context as { app_context?: unknown }).app_context).toBeUndefined();
+  });
+});
+
+/** Context double exposing both `req.header` and `get('beaconVisitorToken')`. */
+function eventCtx(opts: { headers?: Record<string, string>; visitorToken?: string } = {}): Context {
+  const lower: Record<string, string> = {};
+  for (const [k, v] of Object.entries(opts.headers ?? {})) lower[k.toLowerCase()] = v;
+  return {
+    req: { header: (name: string) => lower[name.toLowerCase()] },
+    get: (key: string) => (key === 'beaconVisitorToken' ? opts.visitorToken : undefined),
+  } as unknown as Context;
+}
+
+describe('resolveEventFields', () => {
+  test('resolves user id, visitor token, ip, platform, and context together', () => {
+    const c = eventCtx({
+      headers: { 'x-forwarded-for': '203.0.113.7', 'user-agent': 'UA/1' },
+      visitorToken: 'tok-123',
+    });
+    const fields = resolveEventFields(c, {
+      getUserId: () => 'user-9',
+      hashIPs: false,
+      getClientAddress: noSocket,
+      label: 'track',
+    });
+    expect(fields.userId).toBe('user-9');
+    expect(fields.visitorToken).toBe('tok-123');
+    expect(fields.ip).toBe('203.0.113.7');
+    expect(fields.platform).toBe('web');
+    expect((fields.context as { user_agent?: string }).user_agent).toBe('UA/1');
+    expect((fields.context as { ip?: string }).ip).toBe('203.0.113.7'); // same ip threaded into context
+  });
+
+  test('hashes the ip when hashIPs defaults on', () => {
+    const c = eventCtx({ headers: { 'x-forwarded-for': '203.0.113.7' } });
+    const fields = resolveEventFields(c, { getClientAddress: noSocket, label: 'redirect' });
+    expect(fields.ip).toBe(sha256('203.0.113.7'));
+    expect((fields.context as { ip?: string }).ip).toBe(sha256('203.0.113.7'));
+  });
+
+  test('a throwing getUserId is failure-isolated to a null user id (§1.3); other fields still resolve', () => {
+    const c = eventCtx({ headers: { 'x-forwarded-for': '1.2.3.4' }, visitorToken: 'tok' });
+    const fields = resolveEventFields(c, {
+      getUserId: () => {
+        throw new Error('auth boom');
+      },
+      hashIPs: false,
+      getClientAddress: noSocket,
+      label: 'ingest',
+    });
+    expect(fields.userId).toBeNull();
+    expect(fields.visitorToken).toBe('tok');
+    expect(fields.ip).toBe('1.2.3.4');
+  });
+
+  test('null user id and null visitor token when neither is present', () => {
+    const fields = resolveEventFields(eventCtx(), { getClientAddress: noSocket, label: 'track' });
+    expect(fields.userId).toBeNull();
+    expect(fields.visitorToken).toBeNull();
+    expect(fields.ip).toBeUndefined();
+    expect(fields.platform).toBe('web');
+  });
+
+  test('derives platform from the X-App-Context header', () => {
+    const c = eventCtx({ headers: { 'x-app-context': JSON.stringify({ platform: 'ios' }) } });
+    const fields = resolveEventFields(c, { getClientAddress: noSocket, label: 'track' });
+    expect(fields.platform).toBe('ios');
   });
 });
