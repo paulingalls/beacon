@@ -8,6 +8,12 @@ const TEST_DB = process.env.TEST_DATABASE_URL;
 
 const SHORT_DOMAIN = 'https://pi.ink';
 
+// db-coverage guard (decision a02afa9ca404): a silent skip hides coverage gaps. Fail loud when
+// the DB is expected but unset; the only sanctioned skip is the explicit BEACON_TEST_DB=off opt-out.
+test('DB coverage: TEST_DATABASE_URL is set unless the DB is explicitly opted out', () => {
+  expect(Boolean(TEST_DB) || process.env.BEACON_TEST_DB === 'off').toBe(true);
+});
+
 // createShortLink validates its inputs BEFORE any query, so both the admin HTTP
 // path (POST /short) and the programmatic beacon.createShortLink() reject the
 // same bad inputs — no DB needed. `unusedSql` proves the rejection happens
@@ -27,10 +33,15 @@ describe('createShortLink input validation (no DB — rejects before insert)', (
     ).rejects.toThrow(/http/i);
   });
 
-  test('rejects an empty / non-URL destination', async () => {
-    await expect(
-      createShortLink(unusedSql, { destination: '', productId: 'p', shortDomain: SHORT_DOMAIN }),
-    ).rejects.toThrow(/http/i);
+  test('rejects an empty or whitespace destination with a "destination is required" message', async () => {
+    for (const destination of ['', '   ']) {
+      await expect(
+        createShortLink(unusedSql, { destination, productId: 'p', shortDomain: SHORT_DOMAIN }),
+      ).rejects.toThrow(/destination is required/i);
+    }
+  });
+
+  test('rejects a non-empty, non-URL destination as not a valid http(s) URL', async () => {
     await expect(
       createShortLink(unusedSql, {
         destination: 'not a url',
