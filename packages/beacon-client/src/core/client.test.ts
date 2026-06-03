@@ -508,3 +508,118 @@ describe('shutdown', () => {
     expect(calls).toHaveLength(0);
   });
 });
+
+describe('flushViaBeacon (unload transport seam)', () => {
+  test('sends one batch through the transport and clears it on success', () => {
+    const { client } = build();
+    client.track('a');
+    client.track('b');
+    const sends: Array<{ url: string; body: string }> = [];
+    const ok = client.flushViaBeacon((url, body) => {
+      sends.push({ url, body });
+      return true;
+    });
+
+    expect(ok).toBe(true);
+    expect(sends).toHaveLength(1);
+    expect(sends[0]?.url).toBe('https://ingest.test/events');
+    const payload = JSON.parse(sends[0]?.body ?? '{}');
+    expect(payload.product_id).toBe('clipcast');
+    expect(payload.events.map((e: { event_type: string }) => e.event_type)).toEqual(['a', 'b']);
+
+    // queue cleared → a second beacon is a no-op
+    let secondCalled = false;
+    client.flushViaBeacon(() => {
+      secondCalled = true;
+      return true;
+    });
+    expect(secondCalled).toBe(false);
+  });
+
+  test('keeps the queue when the transport reports failure', () => {
+    const { client } = build();
+    client.track('a');
+    expect(client.flushViaBeacon(() => false)).toBe(false);
+
+    // still queued → a successful beacon now delivers it
+    let delivered = '{}';
+    client.flushViaBeacon((_url, body) => {
+      delivered = body;
+      return true;
+    });
+    expect(JSON.parse(delivered).events).toHaveLength(1);
+  });
+
+  test('an empty-queue beacon is a no-op that returns true', () => {
+    const { client } = build();
+    let called = false;
+    const ok = client.flushViaBeacon(() => {
+      called = true;
+      return true;
+    });
+    expect(ok).toBe(true);
+    expect(called).toBe(false);
+  });
+
+  test('sends at most maxBatchSize events in one beacon (server cap)', () => {
+    // Gate the size-triggered flush so its drain hangs on the in-flight fetch and CANNOT splice
+    // the queue before the synchronous beacon reads it. Without the gate the beacon's cap of 3
+    // would hold only because nothing is awaited — this makes it hold regardless.
+    let release!: () => void;
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    const fetchFn = (async () => {
+      await gate;
+      return { ok: true, status: 202, headers: { get: () => null } };
+    }) as unknown as typeof fetch;
+    const { client } = build({ maxBatchSize: 3 }, { fetch: fetchFn });
+    for (let n = 0; n < 10; n++) client.track('e', { n });
+    let count = -1;
+    client.flushViaBeacon((_url, body) => {
+      count = JSON.parse(body).events.length;
+      return true;
+    });
+    expect(count).toBe(3);
+    release();
+  });
+
+  test('no event is delivered twice when a beacon fires during an in-flight flush', async () => {
+    // Lock the no-double-send property flushViaBeacon's doc comment motivates: drain() splices
+    // its batch out BEFORE awaiting the fetch, so a beacon racing in sees a disjoint tail.
+    let release!: () => void;
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    const fetchCalls: RecordedCall[] = [];
+    const fetchFn = (async (
+      url: string,
+      opts: { headers: Record<string, string>; body: string },
+    ) => {
+      fetchCalls.push({ url, headers: opts.headers, body: JSON.parse(opts.body) });
+      await gate;
+      return { ok: true, status: 202, headers: { get: () => null } };
+    }) as unknown as typeof fetch;
+    const { client } = build({ maxBatchSize: 3 }, { fetch: fetchFn });
+    for (let n = 0; n < 6; n++) client.track('e', { n });
+
+    const flushing = client.flush(); // drain splices [0,1,2] out, then blocks on the gate
+    await tick();
+    const beaconBodies: string[] = [];
+    client.flushViaBeacon((_url, body) => {
+      beaconBodies.push(body);
+      return true;
+    });
+    release();
+    await flushing;
+    await client.flush(); // drain anything the beacon did not take
+
+    const fetched = allEvents(fetchCalls).map((e) => (e.properties as { n: number }).n);
+    const beaconed = beaconBodies.flatMap((b) =>
+      (JSON.parse(b).events as Array<{ properties: { n: number } }>).map((e) => e.properties.n),
+    );
+    const all = [...fetched, ...beaconed];
+    expect(new Set(all).size).toBe(all.length); // every n delivered at most once
+    expect(beaconed).toEqual([3, 4, 5]); // beacon saw only the disjoint tail
+  });
+});
