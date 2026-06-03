@@ -80,7 +80,13 @@ export function createCreateHandler(opts: CreateOptions): Handler {
     const fields = (body ?? {}) as Record<string, unknown>;
 
     const destination = fields.destination;
-    if (destination === undefined || destination === null || destination === '') {
+    // Treat blank/whitespace-only as missing so this route and the store boundary
+    // (createShortLink) classify it the same way (§5.5 MISSING, not INVALID).
+    if (
+      destination === undefined ||
+      destination === null ||
+      (typeof destination === 'string' && destination.trim() === '')
+    ) {
       return errorResponse(c, 'MISSING_PARAMETER', "missing 'destination'", 'destination');
     }
     if (typeof destination !== 'string' || !isHttpUrl(destination)) {

@@ -95,6 +95,14 @@ describe.skipIf(!TEST_DB)('create route POST /short (integration)', () => {
     expect(rows).toHaveLength(0);
   });
 
+  test('a whitespace-only destination returns 400 MISSING_PARAMETER (parity with the store guard)', async () => {
+    const res = await post(buildApp(getSql()), { destination: '   ', product_id: 'clipcast' });
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: { code: string } }).error.code).toBe(
+      'MISSING_PARAMETER',
+    );
+  });
+
   test('a missing product_id returns 400 MISSING_PARAMETER', async () => {
     const res = await post(buildApp(getSql()), { destination: 'https://x.com' });
     expect(res.status).toBe(400);
