@@ -111,6 +111,11 @@ const BOOTSTRAP_SCRIPT = `(function () {
   };
   var widgets = [];
   var loaded = false;
+  // Refresh coalescing guard (concern 690e1fe2be8c). refreshAll fires on every product
+  // and date-range change; rapid toggling would otherwise launch concurrent waves whose
+  // awaits resolve out of order, letting a stale wave stomp a newer one (last-await-wins).
+  var refreshing = false;
+  var refreshQueued = false;
 
   var Beacon = {
     basePath: (document.body.dataset.basePath || ''),
@@ -150,7 +155,18 @@ const BOOTSTRAP_SCRIPT = `(function () {
       if (loaded) { runWidget(fn); }
     },
     refreshAll: function () {
-      return Promise.all(widgets.map(runWidget));
+      // Coalesce overlapping waves: while a refresh is in flight, a new request just
+      // flags a single trailing refresh instead of starting a concurrent wave. A burst
+      // of product/date toggles thus collapses to one in-flight wave + at most one
+      // follow-up, and the follow-up reads the latest Beacon.state at fetch time —
+      // last-request-wins, with no stale wave able to stomp a newer one (690e1fe2be8c).
+      // Return contract is FIRE-AND-FORGET: a coalesced call resolves immediately and
+      // the returned promise does NOT track the trailing wave it schedules. Callers that
+      // must await settled widgets (e.g. story-006 Playwright) should wait on DOM/network
+      // idle, not this promise.
+      if (refreshing) { refreshQueued = true; return Promise.resolve(); }
+      refreshing = true;
+      return Promise.all(widgets.map(runWidget)).then(drainRefresh, drainRefresh);
     },
   };
 
@@ -161,6 +177,13 @@ const BOOTSTRAP_SCRIPT = `(function () {
       reportError(e);
       return Promise.resolve();
     }
+  }
+  // Release the in-flight latch; if a refresh was requested mid-wave, run exactly one
+  // trailing wave now. runWidget already swallows per-widget errors so Promise.all never
+  // rejects — the reject arm is defensive so the latch can't wedge on an unexpected throw.
+  function drainRefresh() {
+    refreshing = false;
+    if (refreshQueued) { refreshQueued = false; Beacon.refreshAll(); }
   }
   function reportError(e) { console.error('[beacon-dashboard] widget failed', e); }
 
