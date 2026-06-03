@@ -130,6 +130,26 @@ export class BeaconClient {
     this.clearStore();
   }
 
+  /**
+   * Deliver one batch via a host transport (e.g. navigator.sendBeacon) for reliable delivery
+   * while the page unloads — a plain fetch without keepalive is cancelled on page-discard. The
+   * client builds the {product_id, events} body (≤ maxBatchSize ≤ the server's 100-event cap)
+   * and clears the sent batch when `send` returns true. A beacon carries no X-App-Context/auth
+   * headers, so the server records platform 'web' with no user association for these events.
+   * Empty queue → no-op (returns true). Reads the queue synchronously (no restore await) — the
+   * unload path has no time to await, and restore completes at construction.
+   */
+  flushViaBeacon(send: (url: string, body: string) => boolean): boolean {
+    if (this.queue.length === 0) return true;
+    const batch = this.queue.slice(0, this.maxBatchSize);
+    const ok = send(this.config.endpoint, this.buildBody(batch));
+    if (ok) {
+      this.queue.splice(0, batch.length);
+      this.persist();
+    }
+    return ok;
+  }
+
   /** Drain the queue in ≤maxBatchSize chunks, stopping at the first chunk that can't be sent. */
   private async drain(): Promise<void> {
     await this.restorePromise;
@@ -150,11 +170,16 @@ export class BeaconClient {
     if (hadEvents && this.queue.length === 0) this.clearStore();
   }
 
-  private async sendBatch(batch: QueuedEvent[]): Promise<SendResult> {
-    const body = JSON.stringify({
+  /** The single source of truth for the ingest wire shape: {product_id, events}. */
+  private buildBody(batch: QueuedEvent[]): string {
+    return JSON.stringify({
       product_id: this.config.productId,
       events: batch.map((q) => toWire(q.event)),
     });
+  }
+
+  private async sendBatch(batch: QueuedEvent[]): Promise<SendResult> {
+    const body = this.buildBody(batch);
     const headers: Record<string, string> = {
       'content-type': 'application/json',
       ...this.contextHeader,
