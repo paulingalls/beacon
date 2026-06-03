@@ -6,6 +6,7 @@
 // cycle init-safe.
 
 import { WIDGET_CONTAINER_IDS } from '../layout';
+import { attributionWidgetScript } from './attribution';
 import { overviewWidgetScript } from './overview';
 import { topPagesWidgetScript } from './topPages';
 
@@ -14,6 +15,7 @@ export function renderWidgetScripts(): string {
   return [
     overviewWidgetScript(WIDGET_CONTAINER_IDS.overview),
     topPagesWidgetScript(WIDGET_CONTAINER_IDS.topPages),
+    attributionWidgetScript(WIDGET_CONTAINER_IDS.attribution),
   ]
     .map((script) => `<script>${script}</script>`)
     .join('\n');
