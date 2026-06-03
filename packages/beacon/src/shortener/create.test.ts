@@ -13,6 +13,12 @@ interface BuildOpts {
   rateLimit?: { limit?: number; windowMs?: number };
 }
 
+// db-coverage guard (decision a02afa9ca404): a silent skip hides coverage gaps. Fail loud when
+// the DB is expected but unset; the only sanctioned skip is the explicit BEACON_TEST_DB=off opt-out.
+test('DB coverage: TEST_DATABASE_URL is set unless the DB is explicitly opted out', () => {
+  expect(Boolean(TEST_DB) || process.env.BEACON_TEST_DB === 'off').toBe(true);
+});
+
 describe.skipIf(!TEST_DB)('create route POST /short (integration)', () => {
   const getSql = withTestDb(TEST_DB as string);
 
@@ -72,6 +78,25 @@ describe.skipIf(!TEST_DB)('create route POST /short (integration)', () => {
 
   test('a missing destination returns 400 MISSING_PARAMETER', async () => {
     const res = await post(buildApp(getSql()), { product_id: 'clipcast' });
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: { code: string } }).error.code).toBe(
+      'MISSING_PARAMETER',
+    );
+  });
+
+  test('an empty-string destination returns 400 MISSING_PARAMETER and creates no row', async () => {
+    const sql = getSql();
+    const res = await post(buildApp(sql), { destination: '', product_id: 'clipcast' });
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: { code: string } }).error.code).toBe(
+      'MISSING_PARAMETER',
+    );
+    const rows = await sql`SELECT code FROM beacon_short_links`;
+    expect(rows).toHaveLength(0);
+  });
+
+  test('a whitespace-only destination returns 400 MISSING_PARAMETER (parity with the store guard)', async () => {
+    const res = await post(buildApp(getSql()), { destination: '   ', product_id: 'clipcast' });
     expect(res.status).toBe(400);
     expect(((await res.json()) as { error: { code: string } }).error.code).toBe(
       'MISSING_PARAMETER',
