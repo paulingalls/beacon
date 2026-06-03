@@ -18,6 +18,7 @@
   "devDependencies": {
     "@biomejs/biome": "2.4.15",
     "@pi-innovations/beacon": "workspace:*",
+    "@pi-innovations/beacon-client": "workspace:*",
     "@playwright/test": "1.60.0",
     "@types/bun": "latest",
     "hono": "^4.12.21",
