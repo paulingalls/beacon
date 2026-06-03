@@ -55,7 +55,12 @@ export async function createShortLink(
   // POST /short route (which also pre-validates for a §5.5 400) and the
   // programmatic beacon.createShortLink(). http(s)-only keeps a javascript:/data:
   // destination out of the table, so the redirect can never 302 to one.
-  if (typeof params.destination !== 'string' || !isHttpUrl(params.destination)) {
+  // Guard the empty/blank case first so it reports the missing input plainly
+  // rather than the confusing "must be a valid http(s) URL".
+  if (typeof params.destination !== 'string' || params.destination.trim() === '') {
+    throw new Error('[beacon] createShortLink: destination is required');
+  }
+  if (!isHttpUrl(params.destination)) {
     throw new Error('[beacon] createShortLink: destination must be a valid http(s) URL');
   }
   if (!params.productId) {
