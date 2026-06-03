@@ -125,6 +125,16 @@ describe('renderShell — window.Beacon bootstrap contract (002-005 consume this
     expect(html).toContain('catch');
   });
 
+  test('refreshAll coalesces overlapping waves instead of racing (690e1fe2be8c)', () => {
+    // Rapid product/date toggling fires refreshAll while a wave is still in flight.
+    // The shell must serialize to a single in-flight wave + one trailing refresh that
+    // reads the latest Beacon.state, so a stale wave can't stomp a newer one
+    // (last-request-wins, not last-await-wins). Structural proof of the in-flight
+    // guard here; real timing under rapid toggling is story-006's Playwright capstone.
+    expect(html).toContain('refreshing');
+    expect(html).toContain('refreshQueued');
+  });
+
   test('custom date inputs are read as local calendar days, not UTC midnight', () => {
     // <input type=date> value is the operator's local day; new Date('YYYY-MM-DD')
     // would parse as UTC and shift by the offset. The script builds the instant
