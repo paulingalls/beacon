@@ -65,6 +65,14 @@ describe('funnelWidgetScript', () => {
     expect(script).toContain('Select at least 2 steps');
   });
 
+  test('drops selected steps the current product lacks (re-intersect on product switch)', () => {
+    // A product switch can leave selectedSteps holding event types the new product has none
+    // of; the widget intersects them with the current eventTypeNames so it never queries
+    // /funnel for absent step names and the slots match state.
+    expect(script).toContain('types.indexOf(s)');
+    expect(script).toContain('selectedSteps.filter');
+  });
+
   test('guards renders with a load sequence token against out-of-order resolution', () => {
     // The step slots self-trigger load() out-of-band of refreshAll, so a stale-scope fetch
     // must not stomp a newer one — each load captures a token and renders only if latest

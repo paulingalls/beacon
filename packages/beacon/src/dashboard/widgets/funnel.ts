@@ -118,7 +118,16 @@ export function funnelWidgetScript(containerId: string): string {
     // prompt.
     var seq = ++loadSeq;
     var types = Beacon.eventTypeNames(Beacon.state.productId);
-    if (selectedSteps === null) { selectedSteps = defaultSteps(types); }
+    if (selectedSteps === null) {
+      selectedSteps = defaultSteps(types);
+    } else {
+      // A product switch may leave selected steps the new product doesn't have. Drop them so
+      // the slots (which only mark in-list options selected) match state and we never query
+      // /funnel for absent step names; if that leaves < 2 the prompt below asks for a re-pick.
+      selectedSteps = selectedSteps.filter(function (s) {
+        return types.indexOf(s) !== -1;
+      });
+    }
 
     if (selectedSteps.length < 2) {
       renderShell(Beacon, el, types,
