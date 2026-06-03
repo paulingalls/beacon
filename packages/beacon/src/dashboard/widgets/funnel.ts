@@ -81,8 +81,11 @@ export function funnelWidgetScript(containerId: string): string {
     var rows = steps.map(function (s, i) {
       var width = (s.count / first) * 100;
       // Drop-off from the previous step = 1 - this step's step-over-step conversion_rate
-      // (step 1's rate is always 1.0, so it shows no drop-off).
-      var drop = i === 0 ? '' :
+      // (step 1's rate is always 1.0, so it shows no drop-off). When the prior step had 0
+      // entities the server guards conversion_rate to 0, which would read as a misleading
+      // 100% drop — there is nothing to drop from, so suppress the label entirely.
+      var prevCount = i === 0 ? 0 : steps[i - 1].count;
+      var drop = i === 0 || prevCount === 0 ? '' :
         '<span class="beacon-funnel-drop">↓' + pct(1 - s.conversion_rate) + '</span>';
       return '<div class="beacon-funnel-row">' +
         '<div class="beacon-funnel-bar" style="width:' + width.toFixed(1) + '%"></div>' +

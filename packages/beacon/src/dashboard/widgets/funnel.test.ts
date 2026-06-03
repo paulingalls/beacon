@@ -51,6 +51,14 @@ describe('funnelWidgetScript', () => {
     expect(script).toContain('↓');
   });
 
+  test('suppresses the drop-off label when the prior step had zero entities', () => {
+    // A zero-count prior step makes the server guard conversion_rate to 0, which would
+    // render a misleading ↓100% drop — there is nothing to drop from, so the label is gated
+    // on the previous step's count.
+    expect(script).toContain('prevCount');
+    expect(script).toContain('prevCount === 0');
+  });
+
   test('prompts the admin to pick at least 2 steps when fewer are selected', () => {
     // The <2-steps branch renders a prompt and skips the fetch entirely, so the widget
     // never sends a sub-2-step request that /funnel would reject with 400.
