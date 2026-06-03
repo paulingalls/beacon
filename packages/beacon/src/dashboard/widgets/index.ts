@@ -7,6 +7,7 @@
 
 import { WIDGET_CONTAINER_IDS } from '../layout';
 import { attributionWidgetScript } from './attribution';
+import { funnelWidgetScript } from './funnel';
 import { overviewWidgetScript } from './overview';
 import { topPagesWidgetScript } from './topPages';
 
@@ -16,6 +17,7 @@ export function renderWidgetScripts(): string {
     overviewWidgetScript(WIDGET_CONTAINER_IDS.overview),
     topPagesWidgetScript(WIDGET_CONTAINER_IDS.topPages),
     attributionWidgetScript(WIDGET_CONTAINER_IDS.attribution),
+    funnelWidgetScript(WIDGET_CONTAINER_IDS.funnel),
   ]
     .map((script) => `<script>${script}</script>`)
     .join('\n');
