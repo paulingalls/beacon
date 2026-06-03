@@ -7,6 +7,7 @@
   "scripts": {
     "test": "bun test",
     "test:acceptance": "bun test test/acceptance/",
+    "test:e2e": "playwright test",
     "migrate": "bun run packages/beacon/src/storage/migrate.ts",
     "build": "tsc --noEmit",
     "typecheck": "tsc --noEmit",
@@ -17,6 +18,7 @@
   "devDependencies": {
     "@biomejs/biome": "2.4.15",
     "@pi-innovations/beacon": "workspace:*",
+    "@playwright/test": "1.60.0",
     "@types/bun": "latest",
     "hono": "^4.12.21",
     "lefthook": "2.1.8",

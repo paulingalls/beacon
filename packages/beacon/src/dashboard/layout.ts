@@ -55,6 +55,15 @@ const STYLE = `
     color: var(--muted); margin: 0 0 12px; }
   #beacon-status { margin: 0; padding: 12px 24px; background: #fef2f2;
     border-bottom: 1px solid #fecaca; color: #b91c1c; }
+  /* Funnel widget: a horizontal bar per step (width set inline ∝ count). Without an
+     explicit height/background the width-only <div> renders invisible. */
+  .beacon-funnel-row { margin: 6px 0; }
+  .beacon-funnel-bar { height: 20px; min-width: 2px; background: var(--accent);
+    border-radius: 3px; }
+  .beacon-funnel-label { font-weight: 600; margin-right: 8px; }
+  .beacon-funnel-count, .beacon-funnel-drop { color: var(--muted); margin-right: 8px;
+    font-size: 13px; }
+  .beacon-funnel-overall { margin-top: 10px; font-weight: 600; }
 `;
 
 /** A widget card with its heading and the container the widget renders into. */
