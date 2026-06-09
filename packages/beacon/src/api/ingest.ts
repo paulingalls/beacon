@@ -15,6 +15,7 @@ import { applyRateLimit, RateLimiter } from './rateLimit';
 
 const MAX_EVENTS_PER_REQUEST = 100;
 const MAX_EVENT_TYPE_LENGTH = 100;
+const MAX_PRODUCT_ID_LENGTH = 100;
 const MAX_PROPERTIES_BYTES = 10 * 1024;
 const DEFAULT_RATE_LIMIT = 10;
 const DEFAULT_RATE_WINDOW_MS = 60_000;
@@ -90,7 +91,9 @@ export function createIngestHandler(buffer: EventBuffer, opts: IngestOptions): H
       return errorResponse(c, 'INVALID_PARAMETER', 'request body must be valid JSON', 'body');
     }
 
-    const events = (body as { events?: unknown } | null)?.events;
+    // Single cast of the request body to its known shape — add new top-level
+    // fields here so the envelope is read in one place.
+    const { events, product_id } = (body ?? {}) as { events?: unknown; product_id?: unknown };
     if (events === undefined) {
       return errorResponse(c, 'MISSING_PARAMETER', "missing 'events' array", 'events');
     }
@@ -107,9 +110,11 @@ export function createIngestHandler(buffer: EventBuffer, opts: IngestOptions): H
     }
 
     // Transport context + platform are the same for every event in this request
-    // (resolved once above, after the rate-limit gate passed).
+    // (resolved once above, after the rate-limit gate passed). The batch product
+    // is the SDK's body.product_id when valid (shared multi-product ingest),
+    // else this instance's configured product — invalid never rejects the batch.
     const shared: SharedEventFields = {
-      productId: opts.productId,
+      productId: validShortString(product_id, MAX_PRODUCT_ID_LENGTH) ?? opts.productId,
       userId,
       visitorToken,
       platform,
@@ -138,9 +143,8 @@ export function createIngestHandler(buffer: EventBuffer, opts: IngestOptions): H
 function toEvent(raw: RawEvent, shared: SharedEventFields): BeaconEvent | null {
   if (typeof raw !== 'object' || raw === null) return null;
 
-  if (typeof raw.event_type !== 'string') return null;
-  const eventType = raw.event_type.trim();
-  if (eventType === '' || eventType.length > MAX_EVENT_TYPE_LENGTH) return null;
+  const eventType = validShortString(raw.event_type, MAX_EVENT_TYPE_LENGTH);
+  if (eventType === null) return null;
 
   let properties: Record<string, unknown> = {};
   if (raw.properties !== undefined) {
@@ -168,6 +172,18 @@ function toEvent(raw: RawEvent, shared: SharedEventFields): BeaconEvent | null {
     properties,
     context: shared.context,
   };
+}
+
+/**
+ * Shared shape rule for short identifier fields (event_type, product_id):
+ * a non-empty trimmed string ≤ maxLength, else null so the caller can skip
+ * the event or fall back (never rejects the batch).
+ */
+function validShortString(raw: unknown, maxLength: number): string | null {
+  if (typeof raw !== 'string') return null;
+  const value = raw.trim();
+  if (value === '' || value.length > maxLength) return null;
+  return value;
 }
 
 /** Parse an optional ISO timestamp; undefined when absent or unparseable. */
