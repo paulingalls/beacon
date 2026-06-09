@@ -1,10 +1,17 @@
 // Shared test helpers for @pi-innovations/beacon.
 
 import { afterAll, beforeAll, beforeEach } from 'bun:test';
+import type { Context } from 'hono';
 import type { Sql } from 'postgres';
 
 import { closeDb, createDb } from '../src/storage/db';
 import { runMigrations } from '../src/storage/migrate';
+
+/** Minimal Hono context carrying (or not) a visitor token. */
+export const ctxWith = (token?: string): Context =>
+  ({
+    get: (key: string) => (key === 'beaconVisitorToken' ? token : undefined),
+  }) as unknown as Context;
 
 /**
  * A throwaway tagged-template / `sql(rows)` resolver, used as the transaction
