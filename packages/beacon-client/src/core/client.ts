@@ -47,6 +47,8 @@ export class BeaconClient {
    * just-tracked event. Best-effort: each link swallows its own error.
    */
   private storageChain: Promise<void> = Promise.resolve();
+  /** True while a persist link is queued but not yet running — see persist(). */
+  private persistQueued = false;
 
   constructor(config: BeaconClientConfig, deps: BeaconClientDeps = {}) {
     if (typeof config.endpoint !== 'string' || config.endpoint === '') {
@@ -244,10 +246,19 @@ export class BeaconClient {
   private persist(): void {
     const storage = this.config.storage;
     if (!storage) return;
+    // Coalesce: a queued-but-not-yet-run link will snapshot the queue when it RUNS,
+    // so it already covers every mutation made before then — a second link would
+    // save the identical snapshot. Without this, a burst of N track()s chains N
+    // whole-queue saves (O(N^2) serialization toward the 500 cap).
+    if (this.persistQueued) return;
+    this.persistQueued = true;
     // Snapshot the queue when the chain LINK RUNS (not at call time) so a restore-merge
     // queued ahead of us is reflected — otherwise a track() racing restore would persist a
     // stale snapshot that omits the just-restored events.
     this.storageChain = this.storageChain.then(async () => {
+      // Reset BEFORE the snapshot: a mutation landing after this point needs its
+      // own later persist — resetting after the save would silently drop it.
+      this.persistQueued = false;
       try {
         await storage.save(this.queue.map((q) => q.event));
       } catch {
@@ -259,6 +270,11 @@ export class BeaconClient {
   private clearStore(): void {
     const storage = this.config.storage;
     if (!storage) return;
+    // A pending persist link runs BEFORE this clear, so it can no longer cover
+    // mutations that land after the clear is queued — without this reset, such a
+    // mutation's persist() would be skipped and the clear would wipe its event
+    // from the durable store (lost on app kill). Reset so it queues a fresh link.
+    this.persistQueued = false;
     this.storageChain = this.storageChain.then(async () => {
       try {
         await storage.clear();
