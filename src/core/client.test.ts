@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 
 import { APP_CONTEXT_HEADER, type AppContext } from '../context/appContext';
 import { BeaconClient } from './client';
-import type { BeaconClientConfig, BeaconClientDeps } from './types';
+import type { BeaconClientConfig, BeaconClientDeps, BeaconStorageAdapter } from './types';
 
 const APP_CONTEXT: AppContext = { appVersion: '1.0.0', platform: 'ios' };
 
@@ -481,6 +481,73 @@ describe('storage adapter (durable outbound queue)', () => {
     const types = last.map((e) => e.eventType);
     expect(types).toContain('restored');
     expect(types).toContain('tracked');
+  });
+
+  test('a synchronous track burst coalesces persists — one save captures the whole burst', async () => {
+    // Without coalescing, every track() chains its own save: a burst toward the
+    // 500 cap re-serializes the whole queue per event (O(N^2) total). The pending
+    // link snapshots the queue when it RUNS, so one save can cover the burst.
+    const store = makeStorage();
+    const { client } = build({ storage: store.adapter, maxBatchSize: 100 });
+    const savesBefore = store.saved.length;
+    for (let n = 0; n < 99; n++) client.track('burst', { n }); // < maxBatchSize: no flush fires
+    await tick();
+    await tick();
+    expect(store.saved.length - savesBefore).toBeLessThanOrEqual(2); // coalesced, not 99
+    expect(store.saved.at(-1)).toHaveLength(99); // and nothing was lost
+  });
+
+  test('E2E: an offline burst of 200 events persists sub-linearly and all reach the endpoint on flush', async () => {
+    const store = makeStorage();
+    const { fetchFn, calls } = makeFetch();
+    const { client } = build({ storage: store.adapter, maxBatchSize: 100 }, { fetch: fetchFn });
+    for (let n = 0; n < 200; n++) client.track('burst', { n });
+    await client.flush();
+    expect(allEvents(calls)).toHaveLength(200); // every burst event was delivered
+    expect(store.saved.length).toBeLessThan(10); // sub-linear in N, not one save per track
+    await tick();
+    expect(store.cleared).toBeGreaterThan(0); // durable store cleared once drained
+  });
+
+  test('a track landing after a queued clear is not lost to a coalesced-away persist', async () => {
+    // Regression (code-review confirmed): with a slow save backing up the chain,
+    // [persist pending] -> flush drains -> clearStore queued -> track C skipped by
+    // coalescing -> pending persist saves [C] -> clear WIPES it. clearStore must
+    // reset the coalescing flag so C queues a fresh save after the clear.
+    const ops: string[] = [];
+    let saves = 0;
+    let releaseSlowSave: (() => void) | undefined;
+    const adapter: BeaconStorageAdapter = {
+      load: async () => [],
+      save: async (events) => {
+        saves += 1;
+        if (saves === 2) {
+          // The first post-restore persist runs slow, backing up the chain.
+          await new Promise<void>((r) => {
+            releaseSlowSave = r;
+          });
+        }
+        ops.push(`save:${events.map((e) => e.eventType).join(',')}`);
+      },
+      clear: async () => {
+        ops.push('clear');
+      },
+    };
+    const { fetchFn } = makeFetch();
+    const { client } = build({ storage: adapter }, { fetch: fetchFn });
+    await tick(); // restore completes (save #1, instant)
+    client.track('a');
+    await tick(); // a's persist link starts running and BLOCKS (save #2)
+    client.track('b'); // queues a pending persist link; coalescing flag is set
+    const flushing = client.flush(); // drains a+b, queues clearStore behind the pending link
+    await tick();
+    client.track('c'); // must NOT be coalesced away across the queued clear
+    releaseSlowSave?.();
+    await flushing;
+    for (let i = 0; i < 6; i++) await tick(); // drain the storage chain
+    const lastSave = ops.filter((o) => o.startsWith('save:')).at(-1);
+    expect(lastSave).toBe('save:c'); // c survives in the durable store...
+    expect(ops.lastIndexOf(lastSave as string)).toBeGreaterThan(ops.indexOf('clear')); // ...AFTER the clear
   });
 
   test('flush awaits restore — events loaded mid-flush are still sent', async () => {
