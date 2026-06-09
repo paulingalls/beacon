@@ -13,6 +13,12 @@ import { runMigrations } from '../../../packages/beacon/src/storage/migrate';
 const TEST_DB = process.env.TEST_DATABASE_URL;
 const PRODUCT = 'sdk-acceptance';
 
+// db-coverage guard (decision a02afa9ca404): a silent skip hides coverage gaps. Fail loud when
+// the DB is expected but unset; the only sanctioned skip is the explicit BEACON_TEST_DB=off opt-out.
+test('DB coverage: TEST_DATABASE_URL is set unless the DB is explicitly opted out', () => {
+  expect(Boolean(TEST_DB) || process.env.BEACON_TEST_DB === 'off').toBe(true);
+});
+
 /** Poll until `check` is truthy or the timeout elapses — for the auto-flush network round-trip. */
 async function waitFor(check: () => boolean, timeoutMs = 2000): Promise<void> {
   const start = Date.now();
@@ -92,6 +98,36 @@ describe.skipIf(!TEST_DB)('SDK acceptance — beacon-client → live ingest → 
       // The X-App-Context the SDK attached round-trips into the event context + platform.
       expect(tap?.platform).toBe('web');
       expect(tap?.context.app_context).toMatchObject({ appVersion: '1.0.0', platform: 'web' });
+    } finally {
+      client.shutdown();
+    }
+  });
+
+  test('E2E: a client with a DIFFERENT productId than the server keeps its own product_id in Postgres', async () => {
+    // The mislabeling regression guard (concern 168d25841201): on a shared ingest,
+    // SDK events must land under the CLIENT's product, not the host instance's.
+    const client = new BeaconClient({
+      endpoint,
+      productId: `${PRODUCT}-other`,
+      appContext: { appVersion: '1.0.0', platform: 'web' },
+      flushInterval: 60_000,
+    });
+    try {
+      client.track('cross_product_tap');
+      await client.flush();
+      await beacon.flush();
+
+      const rows = (await sql`
+        SELECT product_id FROM beacon_events WHERE event_type = 'cross_product_tap'
+      `) as Array<{ product_id: string }>;
+      expect(rows.map((r) => r.product_id)).toEqual([`${PRODUCT}-other`]);
+      // Independent fallback guard, queried separately so it still protects even if the
+      // assertion above is later relaxed: the table is truncated per-test, so ANY row under
+      // the server's product here means ingest relabeled or duplicated this client's event.
+      const serverProductRows = await sql`
+        SELECT event_type FROM beacon_events WHERE product_id = ${PRODUCT}
+      `;
+      expect(serverProductRows).toHaveLength(0);
     } finally {
       client.shutdown();
     }
