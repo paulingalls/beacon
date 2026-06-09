@@ -162,7 +162,7 @@ describe('createIngestHandler — per-event skip (not reject)', () => {
 });
 
 describe('createIngestHandler — batch product_id', () => {
-  test('E2E: honors a valid body product_id over the configured one, end to end through the app', async () => {
+  test('honors a valid body product_id over the configured one', async () => {
     const { buffer, pushed } = recordingBuffer();
     const app = appWith(buffer, { productId: 'clipcast' });
 
@@ -202,6 +202,24 @@ describe('createIngestHandler — batch product_id', () => {
       events: [{ event_type: 'a' }],
     });
     expect(pushed[0]?.productId).toBe('other-app');
+  });
+
+  test('rate-limit gate still fires before the body (and its product_id) is parsed', async () => {
+    const { buffer, pushed } = recordingBuffer();
+    const app = appWith(buffer, {
+      productId: 'clipcast',
+      rateLimit: { limit: 1, windowMs: 60_000, now: () => 1000 },
+      getClientAddress: () => 'gate-ip',
+    });
+
+    expect(
+      (await post(app, { product_id: 'other-app', events: [{ event_type: 'e' }] })).status,
+    ).toBe(202);
+    // Over the limit with a MALFORMED body: a 429 (not 400 INVALID_PARAMETER)
+    // proves the gate rejected before any body/product_id parsing happened.
+    const denied = await post(app, '{"product_id": "other-app", malformed');
+    expect(denied.status).toBe(429);
+    expect(pushed).toHaveLength(1);
   });
 });
 
