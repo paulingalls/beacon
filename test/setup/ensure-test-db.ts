@@ -6,7 +6,10 @@
 // Goal: integration tests "just work" without a manual `export TEST_DATABASE_URL`.
 //
 // Behavior:
-//   - TEST_DATABASE_URL already set  -> respect it (CI / explicit override).
+//   - TEST_DATABASE_URL already set  -> respect it (CI / explicit override), but
+//                                       PROBE it first (verifyExternalDb): an
+//                                       expected-but-unreachable DB fails loud here
+//                                       rather than as confusing per-suite errors.
 //   - BEACON_TEST_DB === 'off'       -> skip bootstrap (the pre-commit hook sets
 //                                       this to stay fast and DB-free).
 //   - otherwise                      -> `docker compose up -d --wait` (idempotent;
@@ -23,10 +26,58 @@
 
 import { join } from 'node:path';
 
+import postgres from 'postgres';
+
 const REPO_ROOT = join(import.meta.dir, '..', '..');
 
+// Strip userinfo (user:password@) from a Postgres URL before it lands in shared
+// CI logs. TEST_DATABASE_URL can carry a real managed-Postgres password, so we
+// never log the raw string. Falls back to a constant on an unparseable URL
+// rather than risk echoing credentials.
+function redactUrl(url: string): string {
+  try {
+    const u = new URL(url);
+    if (u.username || u.password) {
+      u.username = '';
+      u.password = '';
+    }
+    return u.toString();
+  } catch {
+    return '<unparseable-url>';
+  }
+}
+
+// Connectivity preflight for an externally provided TEST_DATABASE_URL (CI service
+// container or explicit override). Unlike createDb (packages/beacon/src/storage/db.ts),
+// which is fail-SOFT by contract (warns, returns a query-rejecting stub, never throws —
+// REQUIREMENTS §1.3), a preflight must be fail-LOUD: an expected DB that cannot be
+// reached should abort `bun test` early with a clear message, not let every integration
+// suite trip its own beforeAll. Uses a one-shot connection with a bounded connect_timeout
+// so a wedged host fails fast rather than hanging the run.
+export async function verifyExternalDb(url: string): Promise<void> {
+  // postgres.js throws SYNCHRONOUSLY at construction on a malformed/out-of-range URL,
+  // but surfaces an unreachable host only on the awaited query — so construction and
+  // the probe both live inside the try, and end() is guarded against an unbound sql.
+  let sql: ReturnType<typeof postgres> | undefined;
+  try {
+    sql = postgres(url, { connect_timeout: 10, max: 1, onnotice: () => {} });
+    await sql`select 1`;
+  } catch (err) {
+    throw new Error(
+      `[test-db] TEST_DATABASE_URL is set but its Postgres is unreachable (${redactUrl(url)}): ${String(err)}`,
+    );
+  } finally {
+    await sql?.end({ timeout: 5 }).catch(() => {});
+  }
+}
+
 async function ensureTestDb(): Promise<void> {
-  if (process.env.TEST_DATABASE_URL) return; // explicit override / CI wins
+  if (process.env.TEST_DATABASE_URL) {
+    // Explicit override / CI service container wins — but verify it is reachable
+    // and fail loud if not, rather than returning silently into skipped/broken suites.
+    await verifyExternalDb(process.env.TEST_DATABASE_URL);
+    return;
+  }
   if (process.env.BEACON_TEST_DB === 'off') return; // pre-commit fast path
 
   // The compose host port defaults to 5544 (overridable via BEACON_PG_PORT),
@@ -63,7 +114,7 @@ async function ensureTestDb(): Promise<void> {
   }
 
   process.env.TEST_DATABASE_URL = url;
-  console.log(`[test-db] Postgres ready — TEST_DATABASE_URL=${url}`);
+  console.log(`[test-db] Postgres ready — TEST_DATABASE_URL=${redactUrl(url)}`);
 }
 
 await ensureTestDb();
