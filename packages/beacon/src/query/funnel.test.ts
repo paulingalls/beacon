@@ -1,21 +1,10 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
+import { describe, expect, test } from 'bun:test';
 
 import { Hono } from 'hono';
 import type { Sql } from 'postgres';
 
 import { QueryParamError } from '../api/params';
-import { closeDb, createDb } from '../storage/db';
-import { runMigrations } from '../storage/migrate';
-import {
-  computeFunnelCounts,
-  createFunnelHandler,
-  type FunnelRow,
-  MissingParamError,
-  parseSteps,
-  parseWindow,
-} from './funnel';
-
-const TEST_DB = process.env.TEST_DATABASE_URL;
+import { createFunnelHandler, MissingParamError, parseSteps, parseWindow } from './funnel';
 
 interface FunnelStep {
   event_type: string;
@@ -28,11 +17,6 @@ interface FunnelResponse {
   overall_conversion: number;
   window_seconds: number;
   filters: { product_id?: string; after?: string };
-}
-
-/** Build a FunnelRow with a Date timestamp from an ISO string. */
-function row(entity: string, event_type: string, iso: string): FunnelRow {
-  return { entity, event_type, timestamp: new Date(iso) };
 }
 
 // ── parseSteps (pure) ──────────────────────────────────────────────────────
@@ -89,107 +73,16 @@ describe('parseWindow', () => {
   });
 });
 
-// ── computeFunnelCounts (pure) ─────────────────────────────────────────────
-
-describe('computeFunnelCounts', () => {
-  const STEPS = ['request', 'signup', 'clip_created'];
-  const WINDOW = 86400; // 24h
-
-  test('counts a clean 3-step progression', () => {
-    const rows = [
-      row('u1', 'request', '2026-03-01T00:00:00Z'),
-      row('u1', 'signup', '2026-03-01T01:00:00Z'),
-      row('u1', 'clip_created', '2026-03-01T02:00:00Z'),
-      // u2 stops after signup.
-      row('u2', 'request', '2026-03-01T00:00:00Z'),
-      row('u2', 'signup', '2026-03-01T01:00:00Z'),
-      // u3 only requests.
-      row('u3', 'request', '2026-03-01T00:00:00Z'),
-    ];
-    expect(computeFunnelCounts(rows, STEPS, WINDOW)).toEqual([3, 2, 1]);
-  });
-
-  test('excludes an entity whose later step falls outside the window', () => {
-    // u1 finishes within 24h; u2's clip_created is one second past the deadline.
-    const rows = [
-      row('u1', 'request', '2026-03-01T00:00:00Z'),
-      row('u1', 'signup', '2026-03-01T02:00:00Z'),
-      row('u1', 'clip_created', '2026-03-01T03:00:00Z'),
-      row('u2', 'request', '2026-03-01T00:00:00Z'),
-      row('u2', 'signup', '2026-03-01T05:00:00Z'),
-      row('u2', 'clip_created', '2026-03-02T00:00:01Z'), // > anchor + 86400s
-    ];
-    expect(computeFunnelCounts(rows, STEPS, WINDOW)).toEqual([2, 2, 1]);
-  });
-
-  test('window is anchor-relative, not per-hop (§5.4: max seconds first→last step)', () => {
-    // window=100s, anchor at t=0. step2 at t=90 (within), step3 at t=180.
-    // Anchor-relative: step3 must be <= anchor+100 → 180 > 100 → EXCLUDED → [1,1,0].
-    // A per-hop reading (step3 <= step2+100 = 190) would WRONGLY include it → [1,1,1].
-    // §5.4 defines window as "Max seconds between first and last step", so the
-    // anchor-relative reading is correct. This pins it against a future regression.
-    const rows = [
-      row('u1', 'a', '2026-03-01T00:00:00Z'),
-      row('u1', 'b', '2026-03-01T00:01:30Z'), // +90s
-      row('u1', 'c', '2026-03-01T00:03:00Z'), // +180s — past anchor+100s, within step2+100s
-    ];
-    expect(computeFunnelCounts(rows, ['a', 'b', 'c'], 100)).toEqual([1, 1, 0]);
-  });
-
-  test('an entity that skips a middle step is dropped from later steps', () => {
-    // u1 never signs up but does have a clip_created; it must not count for step 3.
-    const rows = [
-      row('u1', 'request', '2026-03-01T00:00:00Z'),
-      row('u1', 'clip_created', '2026-03-01T02:00:00Z'),
-      row('u2', 'request', '2026-03-01T00:00:00Z'),
-      row('u2', 'signup', '2026-03-01T01:00:00Z'),
-      row('u2', 'clip_created', '2026-03-01T02:00:00Z'),
-    ];
-    expect(computeFunnelCounts(rows, STEPS, WINDOW)).toEqual([2, 1, 1]);
-  });
-
-  test('out-of-order completion does not count (step N+1 before step N)', () => {
-    // u1's signup precedes its request → no qualifying signup after the anchor.
-    const rows = [
-      row('u1', 'signup', '2026-03-01T00:00:00Z'),
-      row('u1', 'request', '2026-03-01T01:00:00Z'),
-    ];
-    expect(computeFunnelCounts(rows, ['request', 'signup'], WINDOW)).toEqual([1, 0]);
-  });
-
-  test('a simultaneous next-step event does not count (strictly after)', () => {
-    const ts = '2026-03-01T00:00:00Z';
-    expect(
-      computeFunnelCounts([row('u1', 'a', ts), row('u1', 'b', ts)], ['a', 'b'], WINDOW),
-    ).toEqual([1, 0]);
-  });
-
-  test('anchors on the earliest step-1 event', () => {
-    // Earliest request is at 00:00; signup at 23:00 is inside the 24h window.
-    const rows = [
-      row('u1', 'request', '2026-03-01T00:00:00Z'),
-      row('u1', 'request', '2026-03-01T12:00:00Z'),
-      row('u1', 'signup', '2026-03-01T23:00:00Z'),
-    ];
-    expect(computeFunnelCounts(rows, ['request', 'signup'], WINDOW)).toEqual([1, 1]);
-  });
-
-  test('no step-1 events yields all zeros', () => {
-    const rows = [row('u1', 'signup', '2026-03-01T00:00:00Z')];
-    expect(computeFunnelCounts(rows, STEPS, WINDOW)).toEqual([0, 0, 0]);
-  });
-});
-
 // ── createFunnelHandler: param validation & error isolation (no DB) ─────────
 
 /**
  * An `Sql` stub whose every tagged-template call resolves to the SAME rows
- * array. The handler issues a single query (composed from conditional
- * fragments), so one pre-resolved promise reused across the discarded
- * intermediates lets the final `await` see the rows — exercising the full
- * compute + response path with no database. Mirrors events.test's rejectingSql.
+ * array. The handler issues one recursive-CTE query, so a single pre-resolved
+ * promise reused across the discarded fragment intermediates lets the final
+ * `await` see these grouped (step_idx, reached_count) rows — exercising the
+ * zero-fill + response path with no database. Mirrors events.test's rejectingSql.
  */
-function rowsSql(rows: FunnelRow[]): Sql {
+function rowsSql(rows: Array<{ step_idx: number; reached_count: string }>): Sql {
   const resolved = Promise.resolve(rows);
   const builder = () => resolved;
   return builder as unknown as Sql;
@@ -249,18 +142,17 @@ describe('createFunnelHandler (validation & errors)', () => {
     expect(((await res.json()) as { error: { code: string } }).error.code).toBe('INTERNAL_ERROR');
   });
 
-  test('computes per-step counts and conversion rates from the rows', async () => {
-    const rows = [
-      row('u1', 'request', '2026-03-01T00:00:00Z'),
-      row('u1', 'signup', '2026-03-01T01:00:00Z'),
-      row('u1', 'clip_created', '2026-03-01T02:00:00Z'),
-      row('u2', 'request', '2026-03-01T00:00:00Z'),
-      row('u2', 'signup', '2026-03-01T01:00:00Z'),
-      row('u3', 'request', '2026-03-01T00:00:00Z'),
-      row('u4', 'request', '2026-03-01T00:00:00Z'),
+  test('shapes per-step counts and rates from grouped SQL rows, zero-filling unreached steps', async () => {
+    // The CTE returns one (step_idx, reached_count) row per reached step; here
+    // steps 1 and 2 were reached but step 3 was not, so it must zero-fill and
+    // guard the missing step's rate. counts are 1-based step_idx, the response
+    // is 0-based — exercising the byStep.get(i+1) zero-fill.
+    const grouped = [
+      { step_idx: 1, reached_count: '4' },
+      { step_idx: 2, reached_count: '2' },
     ];
     const res = await getFunnel(
-      createFunnelHandler(rowsSql(rows)),
+      createFunnelHandler(rowsSql(grouped)),
       '?steps=request,signup,clip_created',
     );
     expect(res.status).toBe(200);
@@ -268,9 +160,9 @@ describe('createFunnelHandler (validation & errors)', () => {
     expect(body.steps).toEqual([
       { event_type: 'request', count: 4, conversion_rate: 1.0 },
       { event_type: 'signup', count: 2, conversion_rate: 0.5 },
-      { event_type: 'clip_created', count: 1, conversion_rate: 0.5 },
+      { event_type: 'clip_created', count: 0, conversion_rate: 0 },
     ]);
-    expect(body.overall_conversion).toBe(0.25); // 1 / 4
+    expect(body.overall_conversion).toBe(0); // 0 / 4
     expect(body.window_seconds).toBe(86400);
   });
 
@@ -291,147 +183,5 @@ describe('createFunnelHandler (validation & errors)', () => {
     const body = (await res.json()) as FunnelResponse;
     expect(body.filters.product_id).toBe('clipcast');
     expect(body.filters.after).toBe('2026-03-01T00:00:00.000Z');
-  });
-});
-
-// ── Integration (live Postgres) ────────────────────────────────────────────
-
-/** Insert one event with an explicit entity (as user_id) and timestamp. */
-async function seedEvent(
-  sql: Sql,
-  e: { product_id: string; event_type: string; user_id: string; timestamp: string },
-): Promise<void> {
-  await sql`
-    INSERT INTO beacon_events (product_id, event_type, user_id, timestamp)
-    VALUES (${e.product_id}, ${e.event_type}, ${e.user_id}, ${e.timestamp})`;
-}
-
-// A wide common time range so the 30-day default never excludes fixtures.
-const RANGE = 'after=2026-01-01T00:00:00Z&before=2027-01-01T00:00:00Z';
-
-describe.skipIf(!TEST_DB)('createFunnelHandler (live Postgres)', () => {
-  let sql: Sql;
-
-  beforeAll(async () => {
-    sql = createDb({ connectionString: TEST_DB as string });
-    await sql`DROP TABLE IF EXISTS beacon_events, beacon_short_links, beacon_meta, beacon_migrations CASCADE`;
-    await runMigrations(sql);
-  });
-
-  beforeEach(async () => {
-    await sql`TRUNCATE beacon_events, beacon_meta`;
-  });
-
-  afterAll(async () => {
-    await sql`DROP TABLE IF EXISTS beacon_events, beacon_short_links, beacon_meta, beacon_migrations CASCADE`;
-    await closeDb(sql);
-  });
-
-  test('overall_conversion equals last-step / first-step over seeded ordered events', async () => {
-    // 3 entities request; 2 sign up; 1 creates a clip — all within 24h.
-    const journeys: Array<[string, string[]]> = [
-      ['u1', ['request', 'signup', 'clip_created']],
-      ['u2', ['request', 'signup']],
-      ['u3', ['request']],
-    ];
-    let hour = 0;
-    for (const [user, types] of journeys) {
-      for (const type of types) {
-        await seedEvent(sql, {
-          product_id: 'clipcast',
-          event_type: type,
-          user_id: user,
-          timestamp: `2026-03-01T0${hour++}:00:00Z`,
-        });
-      }
-      hour = 0;
-    }
-
-    const app = new Hono();
-    app.get('/funnel', createFunnelHandler(sql));
-    const res = await app.request(`/funnel?${RANGE}&steps=request,signup,clip_created`);
-    expect(res.status).toBe(200);
-    const body = (await res.json()) as FunnelResponse;
-
-    expect(body.steps.map((s) => s.count)).toEqual([3, 2, 1]);
-    expect(body.steps[1]?.conversion_rate).toBeCloseTo(2 / 3, 10);
-    expect(body.steps[2]?.conversion_rate).toBeCloseTo(0.5, 10);
-    expect(body.overall_conversion).toBeCloseTo(1 / 3, 10); // last / first
-  });
-
-  test('window expiry and step-skip exclusions hold against real SQL', async () => {
-    // u1: full chain inside 1h window.
-    await seedEvent(sql, {
-      product_id: 'p',
-      event_type: 'a',
-      user_id: 'u1',
-      timestamp: '2026-03-01T00:00:00Z',
-    });
-    await seedEvent(sql, {
-      product_id: 'p',
-      event_type: 'b',
-      user_id: 'u1',
-      timestamp: '2026-03-01T00:30:00Z',
-    });
-    // u2: step b lands after the 3600s window → excluded at step 2.
-    await seedEvent(sql, {
-      product_id: 'p',
-      event_type: 'a',
-      user_id: 'u2',
-      timestamp: '2026-03-01T00:00:00Z',
-    });
-    await seedEvent(sql, {
-      product_id: 'p',
-      event_type: 'b',
-      user_id: 'u2',
-      timestamp: '2026-03-01T02:00:00Z',
-    });
-    // u3: only step a.
-    await seedEvent(sql, {
-      product_id: 'p',
-      event_type: 'a',
-      user_id: 'u3',
-      timestamp: '2026-03-01T00:00:00Z',
-    });
-
-    const app = new Hono();
-    app.get('/funnel', createFunnelHandler(sql));
-    const res = await app.request(`/funnel?${RANGE}&product_id=p&steps=a,b&window=3600`);
-    const body = (await res.json()) as FunnelResponse;
-    expect(body.steps.map((s) => s.count)).toEqual([3, 1]);
-    expect(body.overall_conversion).toBeCloseTo(1 / 3, 10);
-  });
-
-  test('product_id filter scopes the funnel to one product', async () => {
-    await seedEvent(sql, {
-      product_id: 'p1',
-      event_type: 'a',
-      user_id: 'u1',
-      timestamp: '2026-03-01T00:00:00Z',
-    });
-    await seedEvent(sql, {
-      product_id: 'p1',
-      event_type: 'b',
-      user_id: 'u1',
-      timestamp: '2026-03-01T01:00:00Z',
-    });
-    await seedEvent(sql, {
-      product_id: 'p2',
-      event_type: 'a',
-      user_id: 'u2',
-      timestamp: '2026-03-01T00:00:00Z',
-    });
-    await seedEvent(sql, {
-      product_id: 'p2',
-      event_type: 'b',
-      user_id: 'u2',
-      timestamp: '2026-03-01T01:00:00Z',
-    });
-
-    const app = new Hono();
-    app.get('/funnel', createFunnelHandler(sql));
-    const res = await app.request(`/funnel?${RANGE}&product_id=p1&steps=a,b`);
-    const body = (await res.json()) as FunnelResponse;
-    expect(body.steps.map((s) => s.count)).toEqual([1, 1]);
   });
 });

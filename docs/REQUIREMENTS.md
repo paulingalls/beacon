@@ -509,10 +509,12 @@ Content-Type: application/json
 - Each event must have an `event_type` (string, max 100 chars)
 - `properties` is optional, max 10KB serialized JSON per event
 - `timestamp` (event time) is optional; when omitted it defaults to `received_at`. `received_at` is always set server-side at ingest and is never accepted from the client (see §4.1, Event time vs. ingest time)
-- `product_id` and `platform` are inferred from the `X-App-Context` header or the host app's config
+- `product_id` is honored from the request body when present and valid (a non-empty trimmed string ≤100 chars), enabling a shared multi-product ingest endpoint; an absent or invalid value falls back to the host app's configured product (a present-but-invalid value is logged but never rejects the batch)
+- When `productAllowlist` is configured (§10), a **present** `product_id` that is invalid-shape or not in the allowlist rejects the whole batch: `403 UNAUTHORIZED`, batch dropped, nothing stored, and the dropped event count is logged. An **absent** `product_id` is unaffected — it still falls back to the configured product (which must itself be in the allowlist). When `productAllowlist` is unset, any `product_id` is accepted (the fallback behavior above)
+- `platform` is inferred from the `X-App-Context` header or the host app's config
 - `user_id` is inferred from auth context if present
 
-Returns `202 Accepted` with `{ "accepted": <count> }`. Events are buffered, not written synchronously.
+Returns `202 Accepted` with `{ "accepted": <count>, "product_id_used": <product_id> }`, where `product_id_used` is the product the batch was attributed to (the resolved body or configured fallback) so a caller can detect a mismatch. Events are buffered, not written synchronously.
 
 Rate limited: 10 requests per minute per IP (unauthenticated) or per user ID (authenticated).
 
@@ -707,6 +709,9 @@ interface BeaconConfig {
         connectionString: string;
         maxConnections?: number;        // default: 10
     };
+
+    // Ingest
+    productAllowlist?: string[];        // opt-in; when set, a present non-allowlisted body.product_id → 403 batch drop. Must include productId. Unset = accept any (default)
 
     // Auth callbacks
     getUserId?: (c: Context) => string | null;      // default: () => null

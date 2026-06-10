@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, spyOn, test } from 'bun:test';
 
 import { Hono } from 'hono';
 import type { EventBuffer } from '../events/buffer';
@@ -54,7 +54,7 @@ describe('createIngestHandler — valid batches', () => {
     );
 
     expect(res.status).toBe(202);
-    expect(await res.json()).toEqual({ accepted: 3 });
+    expect(await res.json()).toEqual({ accepted: 3, product_id_used: 'clipcast' });
     expect(pushed).toHaveLength(3);
     expect(pushed[0]?.productId).toBe('clipcast');
     expect(pushed[0]?.eventType).toBe('a');
@@ -149,7 +149,7 @@ describe('createIngestHandler — per-event skip (not reject)', () => {
     });
 
     expect(res.status).toBe(202);
-    expect(await res.json()).toEqual({ accepted: 1 });
+    expect(await res.json()).toEqual({ accepted: 1, product_id_used: 'p' });
     expect(pushed).toHaveLength(1);
     expect(pushed[0]?.eventType).toBe('good');
   });
@@ -158,6 +158,180 @@ describe('createIngestHandler — per-event skip (not reject)', () => {
     const { buffer, pushed } = recordingBuffer();
     await post(appWith(buffer, { productId: 'p' }), { events: [{ event_type: '  signup  ' }] });
     expect(pushed[0]?.eventType).toBe('signup');
+  });
+});
+
+describe('createIngestHandler — batch product_id', () => {
+  test('honors a valid body product_id over the configured one', async () => {
+    const { buffer, pushed } = recordingBuffer();
+    const app = appWith(buffer, { productId: 'clipcast' });
+
+    const res = await post(app, {
+      product_id: 'other-app',
+      events: [{ event_type: 'a' }, { event_type: 'b' }],
+    });
+
+    expect(res.status).toBe(202);
+    expect(await res.json()).toEqual({ accepted: 2, product_id_used: 'other-app' });
+    expect(pushed.map((e) => e.productId)).toEqual(['other-app', 'other-app']);
+  });
+
+  test('falls back to the configured productId when the body has no product_id', async () => {
+    const { buffer, pushed } = recordingBuffer();
+    await post(appWith(buffer, { productId: 'clipcast' }), { events: [{ event_type: 'a' }] });
+    expect(pushed[0]?.productId).toBe('clipcast');
+  });
+
+  test('falls back on an invalid product_id and still accepts the batch (skip-not-reject)', async () => {
+    const invalid: unknown[] = ['', '   ', 42, null, { nested: true }, 'x'.repeat(101)];
+    for (const product_id of invalid) {
+      const { buffer, pushed } = recordingBuffer();
+      const res = await post(appWith(buffer, { productId: 'clipcast' }), {
+        product_id,
+        events: [{ event_type: 'a' }],
+      });
+      expect(res.status).toBe(202);
+      expect(pushed[0]?.productId).toBe('clipcast');
+    }
+  });
+
+  test('trims surrounding whitespace from a valid body product_id', async () => {
+    const { buffer, pushed } = recordingBuffer();
+    await post(appWith(buffer, { productId: 'clipcast' }), {
+      product_id: '  other-app  ',
+      events: [{ event_type: 'a' }],
+    });
+    expect(pushed[0]?.productId).toBe('other-app');
+  });
+
+  test('rate-limit gate still fires before the body (and its product_id) is parsed', async () => {
+    const { buffer, pushed } = recordingBuffer();
+    const app = appWith(buffer, {
+      productId: 'clipcast',
+      rateLimit: { limit: 1, windowMs: 60_000, now: () => 1000 },
+      getClientAddress: () => 'gate-ip',
+    });
+
+    expect(
+      (await post(app, { product_id: 'other-app', events: [{ event_type: 'e' }] })).status,
+    ).toBe(202);
+    // Over the limit with a MALFORMED body: a 429 (not 400 INVALID_PARAMETER)
+    // proves the gate rejected before any body/product_id parsing happened.
+    const denied = await post(app, '{"product_id": "other-app", malformed');
+    expect(denied.status).toBe(429);
+    expect(pushed).toHaveLength(1);
+  });
+});
+
+describe('createIngestHandler — fallback observability (concern 627bc47710fd)', () => {
+  test('reports product_id_used and logs nothing on a valid body product_id', async () => {
+    const warn = spyOn(console, 'warn').mockImplementation(() => {});
+    const { buffer } = recordingBuffer();
+    const res = await post(appWith(buffer, { productId: 'clipcast' }), {
+      product_id: 'other-app',
+      events: [{ event_type: 'a' }],
+    });
+    expect(res.status).toBe(202);
+    expect(await res.json()).toEqual({ accepted: 1, product_id_used: 'other-app' });
+    expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  test('reports the configured product_id_used and stays silent when product_id is absent', async () => {
+    // Absent product_id is the normal web default-to-configured case — no log spam.
+    const warn = spyOn(console, 'warn').mockImplementation(() => {});
+    const { buffer } = recordingBuffer();
+    const res = await post(appWith(buffer, { productId: 'clipcast' }), {
+      events: [{ event_type: 'a' }],
+    });
+    expect(await res.json()).toEqual({ accepted: 1, product_id_used: 'clipcast' });
+    expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  test('warns once with the rejected value and reports the fallback when a present product_id is invalid', async () => {
+    for (const product_id of ['', '   ', 42, null, 'x'.repeat(101)] as unknown[]) {
+      const warn = spyOn(console, 'warn').mockImplementation(() => {});
+      const { buffer } = recordingBuffer();
+      const res = await post(appWith(buffer, { productId: 'clipcast' }), {
+        product_id,
+        events: [{ event_type: 'a' }],
+      });
+      expect(res.status).toBe(202); // skip-not-reject preserved
+      expect(await res.json()).toEqual({ accepted: 1, product_id_used: 'clipcast' });
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn.mock.calls[0]?.[0]).toContain('invalid body.product_id');
+      warn.mockRestore();
+    }
+  });
+});
+
+describe('createIngestHandler — product allowlist (strict mode, concerns 5cd718796d70/5966333732ba)', () => {
+  const allowlist = ['clipcast', 'other-app'];
+
+  test('honors an allowlisted body product_id (202, echoed, stored)', async () => {
+    const { buffer, pushed } = recordingBuffer();
+    const res = await post(
+      appWith(buffer, { productId: 'clipcast', productAllowlist: allowlist }),
+      {
+        product_id: 'other-app',
+        events: [{ event_type: 'a' }, { event_type: 'b' }],
+      },
+    );
+    expect(res.status).toBe(202);
+    expect(await res.json()).toEqual({ accepted: 2, product_id_used: 'other-app' });
+    expect(pushed.map((e) => e.productId)).toEqual(['other-app', 'other-app']);
+  });
+
+  test('rejects a present non-allowlisted product_id with 403, drops the batch, logs the count', async () => {
+    const warn = spyOn(console, 'warn').mockImplementation(() => {});
+    const { buffer, pushed } = recordingBuffer();
+    const res = await post(
+      appWith(buffer, { productId: 'clipcast', productAllowlist: allowlist }),
+      {
+        product_id: 'evil-app',
+        events: [{ event_type: 'a' }, { event_type: 'b' }, { event_type: 'c' }],
+      },
+    );
+    expect(res.status).toBe(403);
+    expect(((await res.json()) as { error: { code: string } }).error.code).toBe('UNAUTHORIZED');
+    expect(pushed).toHaveLength(0); // whole batch dropped
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0]?.[0]).toContain('dropped 3 event(s)');
+    warn.mockRestore();
+  });
+
+  test('rejects an invalid-shape product_id with 403 when an allowlist is set', async () => {
+    const warn = spyOn(console, 'warn').mockImplementation(() => {});
+    const { buffer, pushed } = recordingBuffer();
+    const res = await post(
+      appWith(buffer, { productId: 'clipcast', productAllowlist: allowlist }),
+      {
+        product_id: '',
+        events: [{ event_type: 'a' }],
+      },
+    );
+    expect(res.status).toBe(403);
+    expect(pushed).toHaveLength(0);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0]?.[0]).toContain('dropped 1 event(s)');
+    warn.mockRestore();
+  });
+
+  test('absent product_id defaults to the configured product (202, no reject, no warn)', async () => {
+    const warn = spyOn(console, 'warn').mockImplementation(() => {});
+    const { buffer, pushed } = recordingBuffer();
+    const res = await post(
+      appWith(buffer, { productId: 'clipcast', productAllowlist: allowlist }),
+      {
+        events: [{ event_type: 'a' }],
+      },
+    );
+    expect(res.status).toBe(202);
+    expect(await res.json()).toEqual({ accepted: 1, product_id_used: 'clipcast' });
+    expect(pushed[0]?.productId).toBe('clipcast');
+    expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
   });
 });
 

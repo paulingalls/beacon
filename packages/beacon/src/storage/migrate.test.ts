@@ -7,6 +7,12 @@ import { runMigrations } from './migrate';
 
 const TEST_DB = process.env.TEST_DATABASE_URL;
 
+// db-coverage guard (decision a02afa9ca404): a silent skip hides coverage gaps. Fail loud when
+// the DB is expected but unset; the only sanctioned skip is the explicit BEACON_TEST_DB=off opt-out.
+test('DB coverage: TEST_DATABASE_URL is set unless the DB is explicitly opted out', () => {
+  expect(Boolean(TEST_DB) || process.env.BEACON_TEST_DB === 'off').toBe(true);
+});
+
 describe.skipIf(!TEST_DB)('runMigrations against a live Postgres', () => {
   // Constructed in beforeAll, not at describe-body eval time, so a skipped suite
   // (TEST_DATABASE_URL unset, e.g. the pre-commit hook) never opens a stray
@@ -60,6 +66,11 @@ describe.skipIf(!TEST_DB)('runMigrations against a live Postgres', () => {
     expect(applied).toContain('001_initial_schema.sql');
   });
 
+  test('applies 002_funnel_entity_index.sql and reports it', async () => {
+    const applied = await runMigrations(sql);
+    expect(applied).toContain('002_funnel_entity_index.sql');
+  });
+
   test('creates all four core tables', async () => {
     await runMigrations(sql);
     expect(await tableExists('beacon_events')).toBe(true);
@@ -85,6 +96,19 @@ describe.skipIf(!TEST_DB)('runMigrations against a live Postgres', () => {
       '(product_id, event_type, "timestamp" DESC)',
     );
     expect(await indexDef('idx_beacon_short_links_product')).toContain('(product_id)');
+  });
+
+  test('creates the funnel entity-step expression index (002)', async () => {
+    await runMigrations(sql);
+    // The recursive-CTE funnel hops on COALESCE(user_id, visitor_token) = entity
+    // AND event_type AND a timestamp range; this partial expression index makes
+    // each hop a true index seek rather than a filter-scan (story-004, concern
+    // 18d098756f5a). Assert the column expression, not just the name.
+    const idx = (await indexDef('idx_beacon_events_entity_step')) ?? '';
+    expect(idx).toContain('COALESCE(user_id, visitor_token)');
+    expect(idx).toContain('event_type');
+    expect(idx).toContain('"timestamp" DESC');
+    expect(idx).toContain('IS NOT NULL');
   });
 
   test('beacon_short_links has click_count INTEGER NOT NULL DEFAULT 0', async () => {

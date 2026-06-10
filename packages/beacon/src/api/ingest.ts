@@ -15,6 +15,7 @@ import { applyRateLimit, RateLimiter } from './rateLimit';
 
 const MAX_EVENTS_PER_REQUEST = 100;
 const MAX_EVENT_TYPE_LENGTH = 100;
+const MAX_PRODUCT_ID_LENGTH = 100;
 const MAX_PROPERTIES_BYTES = 10 * 1024;
 const DEFAULT_RATE_LIMIT = 10;
 const DEFAULT_RATE_WINDOW_MS = 60_000;
@@ -22,6 +23,12 @@ const DEFAULT_RATE_WINDOW_MS = 60_000;
 export interface IngestOptions {
   /** Product this Beacon instance logs for (beacon_events.product_id). */
   productId: string;
+  /**
+   * Opt-in allowlist of accepted product_ids (story-006). When set, a present
+   * non-allowlisted body.product_id rejects the batch (403); when unset, any
+   * product_id is accepted. See BeaconConfig.productAllowlist.
+   */
+  productAllowlist?: string[];
   /** Resolve the authenticated user id from the request, or null. */
   getUserId?: (c: Context) => string | null;
   /** SHA-256 the client IP before storage / rate-limit keying. Default true. */
@@ -90,7 +97,9 @@ export function createIngestHandler(buffer: EventBuffer, opts: IngestOptions): H
       return errorResponse(c, 'INVALID_PARAMETER', 'request body must be valid JSON', 'body');
     }
 
-    const events = (body as { events?: unknown } | null)?.events;
+    // Single cast of the request body to its known shape — add new top-level
+    // fields here so the envelope is read in one place.
+    const { events, product_id } = (body ?? {}) as { events?: unknown; product_id?: unknown };
     if (events === undefined) {
       return errorResponse(c, 'MISSING_PARAMETER', "missing 'events' array", 'events');
     }
@@ -106,10 +115,51 @@ export function createIngestHandler(buffer: EventBuffer, opts: IngestOptions): H
       );
     }
 
+    const resolvedProductId = validShortString(product_id, MAX_PRODUCT_ID_LENGTH);
+
+    // Strict allowlist mode (story-006): when an allowlist is configured, a PRESENT
+    // body.product_id must resolve to an allowlisted value — else reject the whole
+    // batch (403) and drop its events. This is the one place ingest rejects, and it
+    // never loses VALID events: a correctly-configured client always sends an
+    // allowlisted id; only a spoofed/typo'd claim is dropped, with a loud signal so
+    // a misconfigured product is caught fast (concerns 5cd718796d70, 5966333732ba).
+    // An absent product_id is unaffected — it defaults to opts.productId below
+    // (createBeacon guarantees opts.productId is itself allowlisted).
+    if (
+      opts.productAllowlist !== undefined &&
+      product_id !== undefined &&
+      (resolvedProductId === null || !opts.productAllowlist.includes(resolvedProductId))
+    ) {
+      console.warn(
+        `[beacon] ingest: rejected batch — body.product_id ${JSON.stringify(product_id)} is not an allowed product; dropped ${events.length} event(s)`,
+      );
+      return errorResponse(
+        c,
+        'UNAUTHORIZED',
+        'body.product_id is not in the configured allowlist',
+        'product_id',
+      );
+    }
+
+    // The batch product is the SDK's body.product_id when valid (shared multi-
+    // product ingest), else this instance's configured product — outside allowlist
+    // mode an invalid value never rejects the batch (skip-not-reject). A present-
+    // but-invalid value is logged as a misconfiguration signal; an absent product_id
+    // is the normal web default-to-configured case, so it stays quiet (no log spam).
+    // Either way the resolved product is echoed back as product_id_used so a caller
+    // can detect its events were attributed to a different product than intended
+    // (concern 627bc47710fd).
+    const productId = resolvedProductId ?? opts.productId;
+    if (resolvedProductId === null && product_id !== undefined) {
+      console.warn(
+        `[beacon] ingest: invalid body.product_id ${JSON.stringify(product_id)} — using configured '${opts.productId}'`,
+      );
+    }
+
     // Transport context + platform are the same for every event in this request
     // (resolved once above, after the rate-limit gate passed).
     const shared: SharedEventFields = {
-      productId: opts.productId,
+      productId,
       userId,
       visitorToken,
       platform,
@@ -124,7 +174,7 @@ export function createIngestHandler(buffer: EventBuffer, opts: IngestOptions): H
         accepted += 1;
       }
     }
-    return c.json({ accepted }, 202);
+    return c.json({ accepted, product_id_used: productId }, 202);
   };
 }
 
@@ -138,9 +188,8 @@ export function createIngestHandler(buffer: EventBuffer, opts: IngestOptions): H
 function toEvent(raw: RawEvent, shared: SharedEventFields): BeaconEvent | null {
   if (typeof raw !== 'object' || raw === null) return null;
 
-  if (typeof raw.event_type !== 'string') return null;
-  const eventType = raw.event_type.trim();
-  if (eventType === '' || eventType.length > MAX_EVENT_TYPE_LENGTH) return null;
+  const eventType = validShortString(raw.event_type, MAX_EVENT_TYPE_LENGTH);
+  if (eventType === null) return null;
 
   let properties: Record<string, unknown> = {};
   if (raw.properties !== undefined) {
@@ -168,6 +217,18 @@ function toEvent(raw: RawEvent, shared: SharedEventFields): BeaconEvent | null {
     properties,
     context: shared.context,
   };
+}
+
+/**
+ * Shared shape rule for short identifier fields (event_type, product_id):
+ * a non-empty trimmed string ≤ maxLength, else null so the caller can skip
+ * the event or fall back (never rejects the batch).
+ */
+function validShortString(raw: unknown, maxLength: number): string | null {
+  if (typeof raw !== 'string') return null;
+  const value = raw.trim();
+  if (value === '' || value.length > maxLength) return null;
+  return value;
 }
 
 /** Parse an optional ISO timestamp; undefined when absent or unparseable. */

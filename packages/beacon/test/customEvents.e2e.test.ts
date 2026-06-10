@@ -6,6 +6,12 @@ import { withTestDb } from './helpers';
 
 const TEST_DB = process.env.TEST_DATABASE_URL;
 
+// db-coverage guard (decision a02afa9ca404): a silent skip hides coverage gaps. Fail loud when
+// the DB is expected but unset; the only sanctioned skip is the explicit BEACON_TEST_DB=off opt-out.
+test('DB coverage: TEST_DATABASE_URL is set unless the DB is explicitly opted out', () => {
+  expect(Boolean(TEST_DB) || process.env.BEACON_TEST_DB === 'off').toBe(true);
+});
+
 // Capstone for Milestone 4 (Custom Events): proves the track() helper (story-001),
 // the §5.5 errors + rate limiter (story-002), the ingest endpoint (story-003), and
 // the public wiring (story-004) compose end to end — both custom-event paths feed
@@ -67,7 +73,7 @@ describe('Capstone — custom events resilience (no Postgres)', () => {
       { event_type: 'button_tap' },
     ]);
     expect(ingest.status).toBe(202);
-    expect(await ingest.json()).toEqual({ accepted: 2 });
+    expect(await ingest.json()).toEqual({ accepted: 2, product_id_used: 'beacon-test' });
 
     // request(/buy) + track + request(/analytics/events) + 2 ingest = 5, all surviving
     // the unreachable DB (fire-and-forget; the failed flush re-queues, never drops here).

@@ -7,6 +7,12 @@ import { runMigrations } from '../src/storage/migrate';
 
 const TEST_DB = process.env.TEST_DATABASE_URL;
 
+// db-coverage guard (decision a02afa9ca404): a silent skip hides coverage gaps. Fail loud when
+// the DB is expected but unset; the only sanctioned skip is the explicit BEACON_TEST_DB=off opt-out.
+test('DB coverage: TEST_DATABASE_URL is set unless the DB is explicitly opted out', () => {
+  expect(Boolean(TEST_DB) || process.env.BEACON_TEST_DB === 'off').toBe(true);
+});
+
 // Capstone for Milestone 1 (Foundation): proves the seams between the db layer
 // (story-002) and the migration runner (story-003) hold together as one flow —
 // the milestone's Definition of Done, end to end.
@@ -48,6 +54,7 @@ describe.skipIf(!TEST_DB)('Foundation round-trip', () => {
       WHERE schemaname = 'public' AND indexname LIKE 'idx_beacon_%'`;
     const byName = new Map(indexes.map((r) => [r.indexname, r.indexdef]));
     expect([...byName.keys()].sort()).toEqual([
+      'idx_beacon_events_entity_step', // migration 002 (funnel recursive-CTE hop)
       'idx_beacon_events_product_time',
       'idx_beacon_events_type',
       'idx_beacon_events_user',
@@ -61,6 +68,9 @@ describe.skipIf(!TEST_DB)('Foundation round-trip', () => {
       '(product_id, event_type, "timestamp" DESC)',
     );
     expect(byName.get('idx_beacon_events_user')).toContain('(user_id, "timestamp" DESC)');
+    expect(byName.get('idx_beacon_events_entity_step')).toContain(
+      'COALESCE(user_id, visitor_token), event_type, "timestamp" DESC',
+    );
 
     // Second run is idempotent.
     const second = await runMigrations(sql);

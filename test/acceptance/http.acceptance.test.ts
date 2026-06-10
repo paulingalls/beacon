@@ -91,7 +91,7 @@ describe('http acceptance — POST /analytics/events ingest over the network', (
         { event_type: 'button_tap' },
       ]);
       expect(res.status).toBe(202);
-      expect(await res.json()).toEqual({ accepted: 2 });
+      expect(await res.json()).toEqual({ accepted: 2, product_id_used: 'acceptance' });
     });
   }, 15_000);
 
@@ -118,6 +118,12 @@ describe('http acceptance — POST /analytics/events ingest over the network', (
 // endpoint over fetch — the seam an AI agent or the dashboard uses. Gated on
 // TEST_DATABASE_URL so the DB-free smokes above still run with no services.
 const WINDOW = 'after=2020-01-01T00:00:00Z&before=2030-01-01T00:00:00Z';
+
+// db-coverage guard (decision a02afa9ca404): a silent skip hides coverage gaps. Fail loud when
+// the DB is expected but unset; the only sanctioned skip is the explicit BEACON_TEST_DB=off opt-out.
+test('DB coverage: TEST_DATABASE_URL is set unless the DB is explicitly opted out', () => {
+  expect(Boolean(TEST_DB) || process.env.BEACON_TEST_DB === 'off').toBe(true);
+});
 
 describe.skipIf(!TEST_DB)('http acceptance — query API over the network', () => {
   let sql: ReturnType<typeof createDb>;
