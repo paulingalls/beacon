@@ -189,13 +189,58 @@ export class BeaconClient {
     };
     try {
       const res = await this.fetchFn(this.config.endpoint, { method: 'POST', headers, body });
-      if (res.ok) return { kind: 'sent' };
+      if (res.ok) {
+        await this.notifySent(batch, res);
+        return { kind: 'sent' };
+      }
       if (res.status === 429) return { kind: 'pause', retryAfterMs: parseRetryAfter(res) };
-      if (res.status >= 400 && res.status < 500) return { kind: 'drop' }; // client error
-      return { kind: 'retry' }; // 5xx
-    } catch {
-      return { kind: 'retry' }; // network failure
+      if (res.status >= 400 && res.status < 500) {
+        // Server REJECTED the batch (e.g. product-allowlist 403): discard, do not retry.
+        this.notify(this.config.onDrop, batch, { status: res.status });
+        return { kind: 'drop' };
+      }
+      // 5xx — transient; events are retained and retried.
+      this.notify(this.config.onError, batch, { status: res.status });
+      return { kind: 'retry' };
+    } catch (error) {
+      // Network failure — transient; events are retained and retried.
+      this.notify(this.config.onError, batch, { error });
+      return { kind: 'retry' };
     }
+  }
+
+  /**
+   * Invoke a delivery-outcome callback (onDrop/onError) with the batch's events, isolated so
+   * a throwing host callback can never break the drain (mirrors the server's getUserId guard).
+   */
+  private notify<I>(
+    cb: ((events: BeaconEvent[], info: I) => void) | undefined,
+    batch: QueuedEvent[],
+    info: I,
+  ): void {
+    if (!cb) return;
+    try {
+      cb(
+        batch.map((q) => q.event),
+        info,
+      );
+    } catch {
+      // Host callback isolation — observation must never affect delivery.
+    }
+  }
+
+  /** Fire onSent for an accepted batch, surfacing product_id_used parsed from the 202 body. */
+  private async notifySent(batch: QueuedEvent[], res: { json(): Promise<unknown> }): Promise<void> {
+    const onSent = this.config.onSent;
+    if (!onSent) return; // skip the body read entirely when no consumer
+    let productIdUsed: string | undefined;
+    try {
+      const parsed = (await res.json()) as { product_id_used?: unknown };
+      if (typeof parsed?.product_id_used === 'string') productIdUsed = parsed.product_id_used;
+    } catch {
+      // Body absent / non-JSON — surface the send without a resolved product_id.
+    }
+    this.notify(onSent, batch, { productIdUsed });
   }
 
   /** Re-queue a failed batch to the front; drop events that have exhausted their 1 retry. */

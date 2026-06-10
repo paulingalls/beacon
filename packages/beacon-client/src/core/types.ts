@@ -39,6 +39,23 @@ export interface BeaconClientConfig {
   storage?: BeaconStorageAdapter;
   /** Host-supplied auth headers merged into every POST (PHASE_8 §8.2). */
   getHeaders?: () => Record<string, string>;
+  /**
+   * Delivery-outcome callbacks (all optional, fail-isolated — a throw can never break the
+   * drain). They observe each batch POST; they do not alter retry/drop behavior.
+   * - `onSent`: the batch was accepted (2xx). `productIdUsed` is the server's resolved
+   *   product_id from the 202 body — lets the host detect its events were attributed to a
+   *   different product than intended.
+   * - `onDrop`: the server REJECTED the batch (non-429 4xx, e.g. a product-allowlist 403).
+   *   These events are discarded, NOT retried — surface the misconfiguration.
+   * - `onError`: a TRANSIENT failure (5xx → `info.status`; thrown fetch → `info.error`). The
+   *   events are retried ONCE (MAX_RETRY_ATTEMPTS); on a second consecutive transient failure
+   *   they are dropped silently — `onError` fires again but no `onDrop` follows. A host that
+   *   must account for every event should treat a repeated `onError` for the same batch as a
+   *   probable loss.
+   */
+  onSent?: (events: BeaconEvent[], info: { productIdUsed?: string }) => void;
+  onDrop?: (events: BeaconEvent[], info: { status: number }) => void;
+  onError?: (events: BeaconEvent[], info: { status?: number; error?: unknown }) => void;
 }
 
 /**
