@@ -39,24 +39,18 @@ export function funnelWidgetScript(containerId: string): string {
   // the funnel with a stale-scope response.
   var loadSeq = 0;
 
-  function esc(s) {
-    return String(s).replace(/[&<>"]/g, function (c) {
-      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
-    });
-  }
-  function pct(n) { return (Number(n) * 100).toFixed(1) + '%'; }
   function defaultSteps(types) {
     var hasAll = DEFAULT_STEPS.every(function (t) { return types.indexOf(t) !== -1; });
     return hasAll ? DEFAULT_STEPS.slice() : [];
   }
 
-  function selectorMarkup(types) {
+  function selectorMarkup(Beacon, types) {
     var slots = '';
     for (var i = 0; i < MAX_STEPS; i++) {
       var cur = selectedSteps[i] || '';
       var opts = '<option value="">(none)</option>' + types.map(function (t) {
         var sel = t === cur ? ' selected' : '';
-        return '<option value="' + esc(t) + '"' + sel + '>' + esc(t) + '</option>';
+        return '<option value="' + Beacon.esc(t) + '"' + sel + '>' + Beacon.esc(t) + '</option>';
       }).join('');
       slots += '<select data-step="' + i + '" class="beacon-funnel-slot">' + opts + '</select>';
     }
@@ -71,7 +65,7 @@ export function funnelWidgetScript(containerId: string): string {
     return out;
   }
 
-  function funnelBody(data) {
+  function funnelBody(Beacon, data) {
     var steps = (data && data.steps) || [];
     var first = steps.length ? steps[0].count : 0;
     // No entities entered the funnel — render as an empty state, not an error (AC3).
@@ -86,18 +80,18 @@ export function funnelWidgetScript(containerId: string): string {
       // 100% drop — there is nothing to drop from, so suppress the label entirely.
       var prevCount = i === 0 ? 0 : steps[i - 1].count;
       var drop = i === 0 || prevCount === 0 ? '' :
-        '<span class="beacon-funnel-drop">↓' + pct(1 - s.conversion_rate) + '</span>';
+        '<span class="beacon-funnel-drop">↓' + Beacon.pct(1 - s.conversion_rate) + '</span>';
       return '<div class="beacon-funnel-row">' +
         '<div class="beacon-funnel-bar" style="width:' + width.toFixed(1) + '%"></div>' +
-        '<span class="beacon-funnel-label">' + esc(s.event_type) + '</span>' +
+        '<span class="beacon-funnel-label">' + Beacon.esc(s.event_type) + '</span>' +
         '<span class="beacon-funnel-count">' + s.count + '</span>' + drop + '</div>';
     }).join('');
     return rows +
-      '<p class="beacon-funnel-overall">Overall conversion: ' + pct(data.overall_conversion) + '</p>';
+      '<p class="beacon-funnel-overall">Overall conversion: ' + Beacon.pct(data.overall_conversion) + '</p>';
   }
 
   function renderShell(Beacon, el, types, bodyHtml) {
-    el.innerHTML = selectorMarkup(types) + '<div class="beacon-funnel-body">' + bodyHtml + '</div>';
+    el.innerHTML = selectorMarkup(Beacon, types) + '<div class="beacon-funnel-body">' + bodyHtml + '</div>';
     attachSteps(Beacon, el);
   }
 
@@ -139,7 +133,7 @@ export function funnelWidgetScript(containerId: string): string {
     return Beacon.getJson(Beacon.queryUrl('/funnel', { steps: selectedSteps.join(',') }))
       .then(function (data) {
         if (seq !== loadSeq) { return; }
-        renderShell(Beacon, el, types, funnelBody(data));
+        renderShell(Beacon, el, types, funnelBody(Beacon, data));
       })
       .catch(function (e) {
         if (seq !== loadSeq) { return; }

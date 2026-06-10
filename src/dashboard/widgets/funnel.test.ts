@@ -88,9 +88,10 @@ describe('funnelWidgetScript', () => {
     expect(script).toContain('catch');
   });
 
-  test('escapes the (event-derived) step labels', () => {
-    expect(script).toContain('esc(');
-    expect(script).toContain('&amp;');
+  test('escapes the (event-derived) step labels via the shared Beacon.esc helper', () => {
+    // Step labels are event-derived; escaping is delegated to window.Beacon.esc
+    // (defined once in layout.ts), so the widget calls it rather than redefine the map.
+    expect(script).toContain('Beacon.esc(');
   });
 
   test('does not hardcode the container id (takes it as a parameter)', () => {
