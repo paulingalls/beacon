@@ -67,7 +67,7 @@ describe('Capstone — custom events resilience (no Postgres)', () => {
       { event_type: 'button_tap' },
     ]);
     expect(ingest.status).toBe(202);
-    expect(await ingest.json()).toEqual({ accepted: 2 });
+    expect(await ingest.json()).toEqual({ accepted: 2, product_id_used: 'beacon-test' });
 
     // request(/buy) + track + request(/analytics/events) + 2 ingest = 5, all surviving
     // the unreachable DB (fire-and-forget; the failed flush re-queues, never drops here).

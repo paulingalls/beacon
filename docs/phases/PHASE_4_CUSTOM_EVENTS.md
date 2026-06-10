@@ -52,11 +52,11 @@ Build the `POST /analytics/events` endpoint that the mobile client SDK will call
     - Each event must have `event_type` (string, max 100 chars)
     - `properties` is optional, max 10KB serialized per event
     - `timestamp` is optional, defaults to server receipt time
-  - Infers `product_id` from Beacon config
+  - Resolves `product_id` from the request body when present and valid, else falls back to Beacon config (shared multi-product ingest; added sprint-009/story-001)
   - Infers `platform` from `X-App-Context` header
   - Infers `user_id` from auth context if present
   - Pushes all valid events to the `EventBuffer`
-  - Returns `202 Accepted` with `{ "accepted": <count> }`
+  - Returns `202 Accepted` with `{ "accepted": <count>, "product_id_used": <product_id> }` (the `product_id_used` field was added in sprint-009/story-005 — it echoes the resolved product so a caller can detect a mismatch)
   - Invalid individual events within a batch are skipped (not rejected) — `accepted` count reflects only valid events
 - Rate limiting: 10 requests per minute per IP (unauthenticated) or per user ID (authenticated)
   - In-memory sliding window counter

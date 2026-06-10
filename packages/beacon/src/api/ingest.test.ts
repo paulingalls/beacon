@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, spyOn, test } from 'bun:test';
 
 import { Hono } from 'hono';
 import type { EventBuffer } from '../events/buffer';
@@ -54,7 +54,7 @@ describe('createIngestHandler — valid batches', () => {
     );
 
     expect(res.status).toBe(202);
-    expect(await res.json()).toEqual({ accepted: 3 });
+    expect(await res.json()).toEqual({ accepted: 3, product_id_used: 'clipcast' });
     expect(pushed).toHaveLength(3);
     expect(pushed[0]?.productId).toBe('clipcast');
     expect(pushed[0]?.eventType).toBe('a');
@@ -149,7 +149,7 @@ describe('createIngestHandler — per-event skip (not reject)', () => {
     });
 
     expect(res.status).toBe(202);
-    expect(await res.json()).toEqual({ accepted: 1 });
+    expect(await res.json()).toEqual({ accepted: 1, product_id_used: 'p' });
     expect(pushed).toHaveLength(1);
     expect(pushed[0]?.eventType).toBe('good');
   });
@@ -172,7 +172,7 @@ describe('createIngestHandler — batch product_id', () => {
     });
 
     expect(res.status).toBe(202);
-    expect(await res.json()).toEqual({ accepted: 2 });
+    expect(await res.json()).toEqual({ accepted: 2, product_id_used: 'other-app' });
     expect(pushed.map((e) => e.productId)).toEqual(['other-app', 'other-app']);
   });
 
@@ -220,6 +220,49 @@ describe('createIngestHandler — batch product_id', () => {
     const denied = await post(app, '{"product_id": "other-app", malformed');
     expect(denied.status).toBe(429);
     expect(pushed).toHaveLength(1);
+  });
+});
+
+describe('createIngestHandler — fallback observability (concern 627bc47710fd)', () => {
+  test('reports product_id_used and logs nothing on a valid body product_id', async () => {
+    const warn = spyOn(console, 'warn').mockImplementation(() => {});
+    const { buffer } = recordingBuffer();
+    const res = await post(appWith(buffer, { productId: 'clipcast' }), {
+      product_id: 'other-app',
+      events: [{ event_type: 'a' }],
+    });
+    expect(res.status).toBe(202);
+    expect(await res.json()).toEqual({ accepted: 1, product_id_used: 'other-app' });
+    expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  test('reports the configured product_id_used and stays silent when product_id is absent', async () => {
+    // Absent product_id is the normal web default-to-configured case — no log spam.
+    const warn = spyOn(console, 'warn').mockImplementation(() => {});
+    const { buffer } = recordingBuffer();
+    const res = await post(appWith(buffer, { productId: 'clipcast' }), {
+      events: [{ event_type: 'a' }],
+    });
+    expect(await res.json()).toEqual({ accepted: 1, product_id_used: 'clipcast' });
+    expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  test('warns once with the rejected value and reports the fallback when a present product_id is invalid', async () => {
+    for (const product_id of ['', '   ', 42, null, 'x'.repeat(101)] as unknown[]) {
+      const warn = spyOn(console, 'warn').mockImplementation(() => {});
+      const { buffer } = recordingBuffer();
+      const res = await post(appWith(buffer, { productId: 'clipcast' }), {
+        product_id,
+        events: [{ event_type: 'a' }],
+      });
+      expect(res.status).toBe(202); // skip-not-reject preserved
+      expect(await res.json()).toEqual({ accepted: 1, product_id_used: 'clipcast' });
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn.mock.calls[0]?.[0]).toContain('invalid body.product_id');
+      warn.mockRestore();
+    }
   });
 });
 

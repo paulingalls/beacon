@@ -91,7 +91,7 @@ describe('http acceptance — POST /analytics/events ingest over the network', (
         { event_type: 'button_tap' },
       ]);
       expect(res.status).toBe(202);
-      expect(await res.json()).toEqual({ accepted: 2 });
+      expect(await res.json()).toEqual({ accepted: 2, product_id_used: 'acceptance' });
     });
   }, 15_000);
 

@@ -69,7 +69,7 @@ describe('beacon.router() wiring', () => {
       { event_type: 'b' },
     ]);
     expect(res.status).toBe(202);
-    expect(await res.json()).toEqual({ accepted: 2 });
+    expect(await res.json()).toEqual({ accepted: 2, product_id_used: 'wiring-test' });
     expect(beacon.stats().buffered).toBe(2);
   });
 

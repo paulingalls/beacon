@@ -109,12 +109,26 @@ export function createIngestHandler(buffer: EventBuffer, opts: IngestOptions): H
       );
     }
 
+    // The batch product is the SDK's body.product_id when valid (shared multi-
+    // product ingest), else this instance's configured product — invalid never
+    // rejects the batch (skip-not-reject). A present-but-invalid value is logged
+    // as a misconfiguration signal; an absent product_id is the normal web
+    // default-to-configured case, so it stays quiet (no log spam). Either way the
+    // resolved product is echoed back as product_id_used so a caller can detect
+    // its events were attributed to a different product than intended (concern
+    // 627bc47710fd).
+    const resolvedProductId = validShortString(product_id, MAX_PRODUCT_ID_LENGTH);
+    const productId = resolvedProductId ?? opts.productId;
+    if (resolvedProductId === null && product_id !== undefined) {
+      console.warn(
+        `[beacon] ingest: invalid body.product_id ${JSON.stringify(product_id)} — using configured '${opts.productId}'`,
+      );
+    }
+
     // Transport context + platform are the same for every event in this request
-    // (resolved once above, after the rate-limit gate passed). The batch product
-    // is the SDK's body.product_id when valid (shared multi-product ingest),
-    // else this instance's configured product — invalid never rejects the batch.
+    // (resolved once above, after the rate-limit gate passed).
     const shared: SharedEventFields = {
-      productId: validShortString(product_id, MAX_PRODUCT_ID_LENGTH) ?? opts.productId,
+      productId,
       userId,
       visitorToken,
       platform,
@@ -129,7 +143,7 @@ export function createIngestHandler(buffer: EventBuffer, opts: IngestOptions): H
         accepted += 1;
       }
     }
-    return c.json({ accepted }, 202);
+    return c.json({ accepted, product_id_used: productId }, 202);
   };
 }
 
