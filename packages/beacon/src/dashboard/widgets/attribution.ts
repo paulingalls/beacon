@@ -42,12 +42,6 @@ export function attributionWidgetScript(containerId: string): string {
   // out-of-order resolution can't stomp the table with a stale-scope response.
   var loadSeq = 0;
 
-  function esc(s) {
-    return String(s).replace(/[&<>"]/g, function (c) {
-      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
-    });
-  }
-  function pct(n) { return (Number(n) * 100).toFixed(1) + '%'; }
   function currentLabel() {
     for (var i = 0; i < GROUP_OPTIONS.length; i++) {
       if (GROUP_OPTIONS[i].value === groupBy) { return GROUP_OPTIONS[i].label; }
@@ -97,11 +91,11 @@ export function attributionWidgetScript(containerId: string): string {
     } else {
       // Rows are rendered as received — /attribution already orders by clicks desc.
       var body = groups.map(function (g) {
-        return '<tr><td>' + esc(g.key) + '</td><td>' + g.clicks + '</td><td>' +
-          g.conversions + '</td><td>' + pct(g.conversion_rate) + '</td></tr>';
+        return '<tr><td>' + Beacon.esc(g.key) + '</td><td>' + g.clicks + '</td><td>' +
+          g.conversions + '</td><td>' + Beacon.pct(g.conversion_rate) + '</td></tr>';
       }).join('');
       el.innerHTML = selectMarkup() +
-        '<table class="beacon-table"><thead><tr><th>' + esc(currentLabel()) +
+        '<table class="beacon-table"><thead><tr><th>' + Beacon.esc(currentLabel()) +
         '</th><th>Clicks</th><th>Conversions</th><th>Conversion Rate</th></tr></thead><tbody>' +
         body + '</tbody></table>';
     }

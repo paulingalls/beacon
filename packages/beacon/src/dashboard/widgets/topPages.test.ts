@@ -59,6 +59,12 @@ describe('topPagesWidgetScript', () => {
     expect(script).toContain('Approximate');
   });
 
+  test('escapes the (event-derived) path via the shared Beacon.esc helper', () => {
+    // properties.path is event-derived; escaping is delegated to window.Beacon.esc
+    // (defined once in layout.ts), so the widget calls it rather than redefine the map.
+    expect(script).toContain('Beacon.esc(');
+  });
+
   test('renders empty and inline-error states', () => {
     expect(script.toLowerCase()).toContain('no ');
     expect(script).toContain('catch');

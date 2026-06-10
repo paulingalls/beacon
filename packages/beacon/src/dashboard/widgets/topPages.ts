@@ -63,13 +63,8 @@ export function topPagesWidgetScript(containerId: string): string {
         el.innerHTML = '<p class="beacon-empty">No request events for the selected range.</p>';
         return;
       }
-      var esc = function (s) {
-        return String(s).replace(/[&<>"]/g, function (c) {
-          return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
-        });
-      };
       var body = list.map(function (r) {
-        return '<tr><td>' + esc(r.path) + '</td><td>' + r.views + '</td><td>' + r.uniques + '</td></tr>';
+        return '<tr><td>' + Beacon.esc(r.path) + '</td><td>' + r.views + '</td><td>' + r.uniques + '</td></tr>';
       }).join('');
       var note = capped
         ? '<p class="beacon-note">Approximate — based on the most recent ' + MAX_EVENTS +
