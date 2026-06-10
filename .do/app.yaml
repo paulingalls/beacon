@@ -1,5 +1,6 @@
 # DigitalOcean App Platform spec for Beacon (sprint-012 / Milestone 4).
-# Deploy with: doctl apps create --spec .do/app.yaml  (see docs/DEPLOYMENT.md — M5).
+# Deploy with: doctl apps create --spec .do/app.yaml  (full runbook: docs/DEPLOYMENT.md,
+# added in Milestone 5 — not present yet).
 #
 # One Dockerfile-backed web service hosts every Beacon surface (ingest, query API,
 # dashboard, and the URL shortener at root) plus the DB-free /health probe. A Managed
@@ -14,7 +15,11 @@ services:
     github:
       repo: paulingalls/beacon
       branch: main
-      deploy_on_push: true
+      # Deliberate manual deploys (doctl apps create-deployment) rather than auto-deploy on
+      # every push: main's branch protection has enforce_admins=false, so an admin close-flow
+      # merge can land on main with red CI — auto-deploy would ship that to prod. Flip to true
+      # once admin merges are gated too (the gh-pr-merge follow-up, debt 436ba25557e2).
+      deploy_on_push: false
     instance_count: 1
     instance_size_slug: apps-s-1vcpu-0.5gb
     http_port: 8080
