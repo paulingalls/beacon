@@ -1,7 +1,8 @@
 // First-party Beacon host app (sprint-012 / Milestone 4). Wires createBeacon from the
-// environment and serves Beacon's four surfaces — ingest, query API, dashboard, and the
-// URL shortener — plus a DB-free /health probe for App Platform. This is the entry point
-// the Dockerfile + .do/app.yaml (story-002) invoke.
+// environment and serves Beacon's four surfaces — ingest (REQUIREMENTS.md §6.2), query API
+// (§5), dashboard (§9), and the URL shortener (§7) — plus a DB-free /health probe for App
+// Platform (§1.3 outage-degrade). Config follows REQUIREMENTS.md §10. This is the entry
+// point the Dockerfile + .do/app.yaml (story-002) invoke.
 
 import { createHash, timingSafeEqual } from 'node:crypto';
 
