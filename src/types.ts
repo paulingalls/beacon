@@ -9,6 +9,15 @@ import type { Context } from 'hono';
  */
 export interface BeaconConfig {
   productId: string;
+  /**
+   * Opt-in allowlist of product_ids the shared ingest endpoint accepts (story-006).
+   * When set, a batch whose body.product_id is a present non-allowlisted value is
+   * rejected (403, batch dropped) — stopping cross-product spoofing and bounding the
+   * product dimension surfaced by /analytics/schema + the dashboard. An absent
+   * product_id still defaults to this instance's productId, which MUST itself be in
+   * the allowlist. When unset, any product_id is accepted (current behavior).
+   */
+  productAllowlist?: string[];
   postgres: { connectionString: string; maxConnections?: number };
   /** Resolve the authenticated user id from the request, or null. */
   getUserId?: (c: Context) => string | null;
