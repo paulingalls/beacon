@@ -35,6 +35,9 @@ playwright-report/
 blob-report/
 playwright/.cache/
 
+# Docs-sample check scratch dir (test/acceptance/docs/readme-samples.test.ts; auto-cleaned)
+test/acceptance/docs/.generated/
+
 # Editor / IDE
 .vscode/
 .idea/

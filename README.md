@@ -11,23 +11,38 @@ Beacon is a self-hosted analytics stack that captures user behavior through serv
 | `@pi-innovations/beacon` | Server-side Hono middleware, query engine, API router, admin dashboard, and URL shortener |
 | `@pi-innovations/beacon-client` | Lightweight TypeScript client SDK for mobile and optional web-side event tracking |
 
-## Quick Start
+## Installation
 
-### Install
+> **Beacon is not published to npm.** Both packages are private (`"private": true`) and ship TypeScript source — there is no `bun add @pi-innovations/beacon`. Consume Beacon one of three ways:
 
-```bash
-bun add @pi-innovations/beacon
-```
+- **Bun workspace (recommended for a monorepo).** Add Beacon as a workspace member and depend on it with the `workspace:*` protocol — exactly how `apps/server` does in this repo:
 
-For mobile apps:
+  ```jsonc
+  // your-app/package.json
+  {
+    "dependencies": {
+      "@pi-innovations/beacon": "workspace:*"
+    }
+  }
+  ```
 
-```bash
-bun add @pi-innovations/beacon-client
-```
+- **Git dependency.** Point at the repository (and a subdirectory, since this is a monorepo):
+
+  ```jsonc
+  {
+    "dependencies": {
+      "@pi-innovations/beacon": "git+ssh://git@github.com/paulingalls/beacon.git#main"
+    }
+  }
+  ```
+
+- **Vendoring.** Copy `packages/beacon` (and `packages/beacon-client` for mobile) into your tree and reference it by relative path. The packages export `.ts` source, so your bundler/runtime must handle TypeScript (Bun does natively).
+
+Beacon targets the **Bun** runtime and uses the `postgres` (`postgres.js`) driver and **Hono**. Those are peer expectations of the host app, not bundled.
 
 ### Database Setup
 
-Beacon requires a PostgreSQL instance. Run the migrations to create the required tables:
+Beacon requires a PostgreSQL instance. Run the migrations to create the required tables (idempotent, advisory-locked):
 
 ```bash
 DATABASE_URL=postgres://user:pass@localhost:5432/beacon bun run migrate
@@ -45,7 +60,7 @@ const app = new Hono();
 
 const beacon = createBeacon({
     productId: 'clipcast',
-    postgres: { connectionString: process.env.DATABASE_URL },
+    postgres: { connectionString: process.env.DATABASE_URL! },
     getUserId: (c) => c.get('userId') ?? null,
     isAdmin: (c) => c.get('role') === 'admin',
 });
@@ -53,26 +68,37 @@ const beacon = createBeacon({
 // Attach middleware to capture all requests
 app.use('*', beacon.middleware());
 
-// Mount the query API and admin dashboard
-app.route('/analytics', beacon.router());
+// Mount the query API and admin dashboard at the configured base path (default '/analytics')
+app.route(beacon.basePath, beacon.router());
 
 export default app;
 ```
 
+On shutdown, drain buffered events and close Postgres so nothing in flight is lost:
+
+```typescript
+process.on('SIGTERM', async () => {
+    await beacon.shutdown();
+});
+```
+
+See `apps/server/src/server.ts` for the canonical, deployable wiring this mirrors.
+
 ### Visitor Token Propagation
 
-For pre-auth visitor tracking, include the visitor token in internal links rendered by your app:
+For pre-auth visitor tracking, append the visitor token to internal links rendered by your app. `appendToken` reads the current request's token from the Hono context and is a no-op when there is none:
 
 ```typescript
 app.get('/landing', (c) => {
-    const token = beacon.getVisitorToken(c);
     return c.html(`
-        <a href="/features?_t=${token}">See Features</a>
-        <a href="/pricing?_t=${token}">Pricing</a>
-        <a href="/signup?_t=${token}">Sign Up</a>
+        <a href="${beacon.appendToken('/features', c)}">See Features</a>
+        <a href="${beacon.appendToken('/pricing', c)}">Pricing</a>
+        <a href="${beacon.appendToken('/signup', c)}">Sign Up</a>
     `);
 });
 ```
+
+`beacon.getVisitorToken(c)` returns the raw token (`string | null`) if you need it directly.
 
 ### Associate Visitor on Auth
 
@@ -88,7 +114,7 @@ app.post('/auth/signup', async (c) => {
 
 ### Custom Events
 
-Log product-specific events from your route handlers:
+Log product-specific events from your route handlers. `track` is fire-and-forget — it buffers the event and returns immediately:
 
 ```typescript
 app.post('/clips', async (c) => {
@@ -103,7 +129,7 @@ app.post('/clips', async (c) => {
 
 ### URL Shortener
 
-Mount the shortener on a separate app or domain:
+Mount the shortener at the root of a dedicated short domain (or the same app, after the API routes):
 
 ```typescript
 import { Hono } from 'hono';
@@ -113,7 +139,8 @@ const shortApp = new Hono();
 
 const beacon = createBeacon({
     productId: 'global',
-    postgres: { connectionString: process.env.DATABASE_URL },
+    postgres: { connectionString: process.env.DATABASE_URL! },
+    shortDomain: 'https://pi.ink',
 });
 
 // GET /:code resolves and redirects, logging the click as an event
@@ -134,7 +161,7 @@ const link = await beacon.createShortLink({
         campaign: 'launch-2026',
     },
 });
-// => { code: 'xK4mQ', url: 'https://pi.ink/xK4mQ' }
+// => { code: 'xK4mQ', destination, url: 'https://pi.ink/xK4mQ', created_at, expires_at }
 ```
 
 ## Mobile Client SDK
@@ -144,7 +171,7 @@ const link = await beacon.createShortLink({
 ```typescript
 import { BeaconClient } from '@pi-innovations/beacon-client';
 
-const beacon = new BeaconClient({
+const client = new BeaconClient({
     endpoint: 'https://api.clipcast.com/analytics/events',
     productId: 'clipcast',
     flushInterval: 30000,
@@ -159,43 +186,89 @@ const beacon = new BeaconClient({
 
 ```typescript
 // Screen views
-beacon.screenView('HomeScreen');
+client.screenView('HomeScreen');
 
 // Custom events
-beacon.track('clip_played', { clipId: 'abc123', duration: 45 });
+client.track('clip_played', { clipId: 'abc123', duration: 45 });
 
 // Manual flush (e.g., before logout)
-await beacon.flush();
+await client.flush();
+```
+
+Call `client.shutdown()` to clear the queue, stop the flush timer, and clear any durable store (e.g. on logout).
+
+### Delivery Callbacks
+
+All three callbacks are optional and fail-isolated — a throwing callback can never break delivery. They observe each batch POST; they do not change retry/drop behavior:
+
+```typescript
+const client = new BeaconClient({
+    endpoint: 'https://api.clipcast.com/analytics/events',
+    productId: 'clipcast',
+    appContext: { appVersion: '1.2.0', platform: 'ios' },
+    // Accepted (2xx). `productIdUsed` is the server's resolved product_id — lets you
+    // detect events attributed to a different product than intended.
+    onSent: (events, info) => console.log(`sent ${events.length} (as ${info.productIdUsed})`),
+    // The server permanently rejected the batch (e.g. a product-allowlist 403). Not retried.
+    onDrop: (events) => console.warn(`dropped ${events.length} events`),
+    // Transient failure (5xx / network). Retried; treat a repeated onError for the same
+    // batch as a probable loss.
+    onError: (events, info) => console.warn(`transient send error (status ${info.status ?? 0})`),
+});
 ```
 
 ### React Native Integration
 
+The wrapper takes an injected `rn` bindings object so the SDK declares no `react`/`react-native` dependency — you pass your own bundled instances (most Expo-robust). Assemble `rn` once at module scope:
+
 ```typescript
 import { useBeaconLifecycle } from '@pi-innovations/beacon-client/react-native';
 
+// Assemble `rn` from your own imports — see ReactNativeBindings for the exact shape:
+//   import { useEffect } from 'react';
+//   import { AppState, Platform, Dimensions } from 'react-native';
+//   const rn = { useEffect, AppState, Platform, Dimensions };
+
 function App() {
-    // Automatically flushes on background, resets on foreground
-    useBeaconLifecycle(beacon);
+    // Flushes on background; tracks an `app_foreground` marker on a real foreground.
+    // It never resets the client — unsent events survive a foreground.
+    useBeaconLifecycle(client, rn);
 
     return <MainNavigator />;
 }
 ```
 
-### HTTP Context Header
+### Web Integration (optional)
 
-Attach the app context header to your HTTP client so the server middleware can capture device info:
+A web wrapper flushes on `visibilitychange → hidden` and delivers the last batch via `navigator.sendBeacon` on `beforeunload`. Like the RN wrapper, it takes an injected `web` bindings object (`{ document, window, navigator }`) and uses no cookies or storage:
 
 ```typescript
-const headers = beacon.getContextHeaders();
-// => { 'X-App-Context': '{"appVersion":"1.2.0","platform":"ios","os":"iOS 18.2","device":"iPhone 16","screen":"393x852"}' }
+import { useBeaconWeb } from '@pi-innovations/beacon-client/web';
+
+// On a real page you pass the globals directly:
+//   const cleanup = useBeaconWeb(client, { document, window, navigator });
+const cleanup = useBeaconWeb(client, web);
+
+// Call cleanup() on teardown to remove the listeners.
+```
+
+### HTTP Context Header
+
+Attach the app context header to your HTTP client so the server middleware can capture device info. The header carries exactly the fields you set in `appContext` (unset optional fields are omitted):
+
+```typescript
+const headers = client.getContextHeaders();
+// => { 'X-App-Context': '{"appVersion":"1.2.0","platform":"ios"}' }
 
 // Attach to your fetch/axios instance
 fetch('/api/clips', { headers: { ...headers, ...otherHeaders } });
 ```
 
+Populate the optional `os` / `device` / `screen` fields (via the React Native wrapper's `getDeviceContext`, or manually) and they appear in the header too.
+
 ## Query API
 
-All endpoints are mounted under the configured base path (default `/analytics`).
+All endpoints are mounted under the configured base path (default `/analytics`) and are gated by the `isAdmin` callback.
 
 ### Schema Discovery
 
@@ -245,6 +318,64 @@ The dashboard shows visitor and user counts, top pages, attribution breakdown, a
 
 It consumes the same query API endpoints and serves as both a quick-glance tool and a reference implementation.
 
+## Integrating Beacon (for agents)
+
+This section is a copy-paste starting point for wiring Beacon into a host service. It mirrors the deployable reference app at `apps/server/src/server.ts`.
+
+**Prerequisites**
+
+- The Bun runtime and a reachable PostgreSQL instance.
+- Beacon installed via one of the paths under [Installation](#installation).
+- Migrations applied: `DATABASE_URL=... bun run migrate`.
+
+**Mount order is load-bearing.** Register `/health` and the query router *before* the shortener — the shortener's `GET /:code` is a single-segment catch-all that would otherwise shadow them.
+
+**Environment**
+
+| Variable | Required | Purpose |
+|---|---|---|
+| `DATABASE_URL` | yes | Postgres connection string |
+| `ADMIN_TOKEN` | no | Bearer token gating the dashboard + query API. **Unset ⇒ those surfaces fail closed (403).** |
+| `PRODUCT_ID` | no | Fallback product_id for events whose batch omits one (default `beacon`) |
+| `BASE_PATH` | no | API mount prefix (default `/analytics`) |
+| `SHORT_DOMAIN` | no | Absolute base for generated short URLs (e.g. `https://pi.ink`) |
+
+**Host app template**
+
+```typescript
+import { createHash, timingSafeEqual } from 'node:crypto';
+import { Hono } from 'hono';
+import { createBeacon } from '@pi-innovations/beacon';
+
+// Fail-closed admin gate: constant-time compare of `Authorization: Bearer <token>` vs
+// ADMIN_TOKEN. Unset token ⇒ every request is non-admin (dashboard/query API unreachable).
+const adminToken = process.env.ADMIN_TOKEN;
+const expectedDigest = adminToken ? createHash('sha256').update(adminToken).digest() : null;
+
+const hostBeacon = createBeacon({
+    productId: process.env.PRODUCT_ID ?? 'beacon',
+    postgres: { connectionString: process.env.DATABASE_URL! },
+    basePath: process.env.BASE_PATH ?? '/analytics',
+    shortDomain: process.env.SHORT_DOMAIN,
+    hashIPs: true,
+    isAdmin: (c) => {
+        if (!expectedDigest) return false;
+        const presented = (c.req.header('authorization') ?? '').match(/^Bearer\s+(.+)$/i)?.[1];
+        if (presented === undefined) return false;
+        return timingSafeEqual(expectedDigest, createHash('sha256').update(presented).digest());
+    },
+});
+
+const hostApp = new Hono();
+hostApp.get('/health', (c) => c.json({ status: 'ok' })); // DB-free probe — keep first
+hostApp.route(hostBeacon.basePath, hostBeacon.router());  // query API + dashboard + ingest
+hostApp.route('/', hostBeacon.shortener());               // GET /:code — mount LAST (catch-all)
+
+export default hostApp;
+```
+
+Deployment of this host app to DigitalOcean App Platform is covered in [`docs/DEPLOYMENT.md`](./docs/DEPLOYMENT.md).
+
 ## Agent Integration
 
 Beacon's query API is designed for direct use by AI agents. The `/analytics/schema` endpoint provides full introspection so an agent can discover the data model and construct appropriate queries without prior knowledge.
@@ -253,16 +384,20 @@ Beacon can also be exposed as an MCP server, enabling Claude (via Claude Code, c
 
 ## Configuration Reference
 
+`createBeacon(config)` options (see `BeaconConfig` in `packages/beacon/src/types.ts` for the full list):
+
 | Option | Type | Default | Description |
 |---|---|---|---|
 | `productId` | `string` | *required* | Identifier for the host product |
 | `postgres.connectionString` | `string` | *required* | Postgres connection string |
-| `getUserId` | `(c: Context) => string \| null` | `() => null` | Extract authenticated user ID from Hono context |
-| `isAdmin` | `(c: Context) => boolean` | `() => false` | Gate access to the admin dashboard |
+| `getUserId` | `(c: Context) => string \| null` | no user | Extract authenticated user ID from Hono context |
+| `isAdmin` | `(c: Context) => boolean` | `() => false` | Gate the query API + dashboard (missing/throwing ⇒ not admin) |
+| `productAllowlist` | `string[]` | accept any | Opt-in allowlist of accepted `product_id`s; `productId` must be included |
 | `basePath` | `string` | `'/analytics'` | Mount point for API and dashboard routes |
+| `shortDomain` | `string` | `''` (relative) | Absolute base for generated short URLs |
 | `visitorTokenTTL` | `number` | `1800000` (30 min) | Visitor token time-to-live in milliseconds |
 | `flushInterval` | `number` | `5000` | Event buffer flush interval in milliseconds |
-| `maxBatchSize` | `number` | `100` | Max events per flush batch |
+| `maxBatchSize` | `number` | `100` | Max events written per flush batch |
 | `hashIPs` | `boolean` | `true` | Hash IP addresses before storage for privacy |
 
 ## Privacy
@@ -284,14 +419,14 @@ bun test
 bun test --filter beacon
 bun test --filter beacon-client
 
-# Local dev server
+# Local dev server (apps/server, watch mode)
 bun run dev
 
 # Run database migrations
 DATABASE_URL=postgres://... bun run migrate
 
-# Build packages
-bun run build
+# Type-check the workspace (this is what `bun run build` does — no dist is emitted)
+bun run typecheck
 ```
 
 ## Documentation
@@ -303,6 +438,7 @@ Design specs and the phased build plan live in the [`docs/`](./docs) directory:
 | [`docs/BEACON_OVERVIEW.md`](./docs/BEACON_OVERVIEW.md) | Product overview and design rationale |
 | [`docs/REQUIREMENTS.md`](./docs/REQUIREMENTS.md) | The implementation contract — every field, endpoint, and configuration option |
 | [`docs/MILESTONES.md`](./docs/MILESTONES.md) | Master build plan and index to the phase documents |
+| [`docs/DEPLOYMENT.md`](./docs/DEPLOYMENT.md) | DigitalOcean App Platform deployment runbook |
 | `docs/phases/PHASE_1_FOUNDATION.md` … `docs/phases/PHASE_8_CLIENT_SDK.md` | Detailed milestones for each build phase |
 
 ## License
