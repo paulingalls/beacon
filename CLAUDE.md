@@ -201,12 +201,12 @@ interface BeaconEvent {
 
 - Manages an in-memory event queue (plain array), optionally backed by a `storage` adapter for durability
 - Flushes via POST to the configured endpoint on interval or when batch size is reached
-- Exposes `track(event)`, `screenView(name)`, `flush()`, `reset()`
+- Exposes `track(event)`, `screenView(name)`, `flush()`, `shutdown()`
 - Builds the `X-App-Context` header from config for attachment to all outgoing HTTP requests
 
 ### Platform Wrappers
 
-- React Native wrapper hooks into `AppState` to flush on background, reset on foreground
+- React Native wrapper hooks into `AppState` to flush on background and track an `app_foreground` marker on resume (it never resets the client; unsent events survive a foreground)
 - Populates device context automatically (OS, device model, screen dimensions) via React Native APIs
 - Web wrapper (optional) hooks into `visibilitychange` and `beforeunload`
 
