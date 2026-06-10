@@ -8,6 +8,12 @@ import { createRedirectHandler } from './redirect';
 import { createShortLink, getShortLink } from './store';
 
 const TEST_DB = process.env.TEST_DATABASE_URL;
+
+// db-coverage guard (decision a02afa9ca404): a silent skip hides coverage gaps. Fail loud when
+// the DB is expected but unset; the only sanctioned skip is the explicit BEACON_TEST_DB=off opt-out.
+test('DB coverage: TEST_DATABASE_URL is set unless the DB is explicitly opted out', () => {
+  expect(Boolean(TEST_DB) || process.env.BEACON_TEST_DB === 'off').toBe(true);
+});
 const SHORT_DOMAIN = 'https://pi.ink';
 
 /** click_count is bumped fire-and-forget; poll until it reaches the target. */
