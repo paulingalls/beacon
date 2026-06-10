@@ -117,6 +117,60 @@ function ratio(numerator: number, denominator: number): number {
 }
 
 /**
+ * Build the funnel-walk query (REQUIREMENTS.md §5.4) as a composable postgres.js
+ * fragment, so it can be executed by the handler AND introspected (EXPLAIN) by the
+ * live perf-guard test — concern 4d859cce846a.
+ *
+ * Walk the funnel entirely in Postgres so the handler receives only per-step counts,
+ * never the full event set. `anchor` finds each entity's earliest step-1 event; the
+ * recursive `walk` advances one step at a time, at each hop taking the earliest
+ * next-step event strictly after the prior step and within the anchor-relative
+ * deadline (frozen in the seed). A missed step (MIN over no rows → NULL) ends that
+ * entity's walk, so an entity emits one row per step it reached — making COUNT(*)
+ * grouped by step_idx the cumulative reach directly. Both branches filter against
+ * beacon_events so the entity-step index can serve each hop (concern 18d098756f5a).
+ * Entities with neither id (entity IS NULL) can't be tracked.
+ */
+export function funnelWalkQuery(
+  sql: Sql,
+  common: CommonQueryParams,
+  steps: string[],
+  windowSeconds: number,
+) {
+  return sql`
+    WITH RECURSIVE
+    anchor AS (
+      SELECT COALESCE(e.user_id, e.visitor_token) AS entity, MIN(e.timestamp) AS anchor_ts
+      FROM beacon_events e
+      WHERE ${eventFilter(sql, common)}
+        AND e.event_type = (${steps}::text[])[1]
+        AND COALESCE(e.user_id, e.visitor_token) IS NOT NULL
+      GROUP BY 1
+    ),
+    walk AS (
+      SELECT entity, anchor_ts AS prev_ts, 1 AS step_idx,
+             anchor_ts + ${windowSeconds} * interval '1 second' AS deadline
+      FROM anchor
+      UNION ALL
+      SELECT w.entity, nxt.next_ts, w.step_idx + 1, w.deadline
+      FROM walk w
+      CROSS JOIN LATERAL (
+        SELECT MIN(e.timestamp) AS next_ts
+        FROM beacon_events e
+        WHERE ${eventFilter(sql, common)}
+          AND COALESCE(e.user_id, e.visitor_token) = w.entity
+          AND e.event_type = (${steps}::text[])[w.step_idx + 1]
+          AND e.timestamp > w.prev_ts
+          AND e.timestamp <= w.deadline
+      ) nxt
+      WHERE w.step_idx < ${steps.length} AND nxt.next_ts IS NOT NULL
+    )
+    SELECT step_idx, COUNT(*) AS reached_count
+    FROM walk GROUP BY step_idx ORDER BY step_idx
+  `;
+}
+
+/**
  * Build the GET /funnel handler (REQUIREMENTS.md §5.4). Param errors (missing or
  * malformed steps/window, or a bad common param) become a §5.5 400 before any DB
  * call; a query failure becomes a §5.5 500 — neither crashes the host. The whole
@@ -143,47 +197,10 @@ export function createFunnelHandler(sql: Sql): Handler {
     }
 
     try {
-      // Walk the funnel entirely in Postgres (§5.4) so the handler receives only
-      // per-step counts, never the full event set. `anchor` finds each entity's
-      // earliest step-1 event; the recursive `walk` advances one step at a time,
-      // at each hop taking the earliest next-step event strictly after the prior
-      // step and within the anchor-relative deadline (frozen in the seed). A
-      // missed step (MIN over no rows → NULL) ends that entity's walk, so an
-      // entity emits one row per step it reached — making COUNT(*) grouped by
-      // step_idx the cumulative reach directly. Both branches filter against
-      // beacon_events so the entity-step index can serve each hop (concern
-      // 18d098756f5a). Entities with neither id (entity IS NULL) can't be tracked.
-      const rows = (await sql`
-        WITH RECURSIVE
-        anchor AS (
-          SELECT COALESCE(e.user_id, e.visitor_token) AS entity, MIN(e.timestamp) AS anchor_ts
-          FROM beacon_events e
-          WHERE ${eventFilter(sql, common)}
-            AND e.event_type = (${steps}::text[])[1]
-            AND COALESCE(e.user_id, e.visitor_token) IS NOT NULL
-          GROUP BY 1
-        ),
-        walk AS (
-          SELECT entity, anchor_ts AS prev_ts, 1 AS step_idx,
-                 anchor_ts + ${windowSeconds} * interval '1 second' AS deadline
-          FROM anchor
-          UNION ALL
-          SELECT w.entity, nxt.next_ts, w.step_idx + 1, w.deadline
-          FROM walk w
-          CROSS JOIN LATERAL (
-            SELECT MIN(e.timestamp) AS next_ts
-            FROM beacon_events e
-            WHERE ${eventFilter(sql, common)}
-              AND COALESCE(e.user_id, e.visitor_token) = w.entity
-              AND e.event_type = (${steps}::text[])[w.step_idx + 1]
-              AND e.timestamp > w.prev_ts
-              AND e.timestamp <= w.deadline
-          ) nxt
-          WHERE w.step_idx < ${steps.length} AND nxt.next_ts IS NOT NULL
-        )
-        SELECT step_idx, COUNT(*) AS reached_count
-        FROM walk GROUP BY step_idx ORDER BY step_idx
-      `) as unknown as Array<{ step_idx: number; reached_count: string }>;
+      const rows = (await funnelWalkQuery(sql, common, steps, windowSeconds)) as unknown as Array<{
+        step_idx: number;
+        reached_count: string;
+      }>;
 
       // GROUP BY only emits rows for steps some entity reached; zero-fill the rest.
       const byStep = new Map<number, number>();
