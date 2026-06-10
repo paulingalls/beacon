@@ -1,0 +1,61 @@
+# DigitalOcean App Platform spec for Beacon (sprint-012 / Milestone 4).
+# Deploy with: doctl apps create --spec .do/app.yaml  (see docs/DEPLOYMENT.md — M5).
+#
+# One Dockerfile-backed web service hosts every Beacon surface (ingest, query API,
+# dashboard, and the URL shortener at root) plus the DB-free /health probe. A Managed
+# Postgres is bound to DATABASE_URL, and a PRE_DEPLOY job runs the idempotent migrations
+# before each deploy. ADMIN_TOKEN is a secret set at deploy time (dashboard / doctl), not
+# committed here.
+name: beacon
+
+services:
+  - name: web
+    dockerfile_path: Dockerfile
+    github:
+      repo: paulingalls/beacon
+      branch: main
+      deploy_on_push: true
+    instance_count: 1
+    instance_size_slug: apps-s-1vcpu-0.5gb
+    http_port: 8080
+    # /health is DB-free, so a Postgres outage degrades the app without failing the
+    # health check and cycling the instance (REQUIREMENTS.md §1.3).
+    health_check:
+      http_path: /health
+    # Single root route — the shortener (GET /:code), /analytics/*, and /health are all
+    # served by this one service.
+    routes:
+      - path: /
+    envs:
+      - key: DATABASE_URL
+        scope: RUN_TIME
+        value: ${beacon-db.DATABASE_URL}
+      - key: ADMIN_TOKEN
+        scope: RUN_TIME
+        type: SECRET
+      - key: PRODUCT_ID
+        scope: RUN_TIME
+        value: beacon
+
+databases:
+  - name: beacon-db
+    engine: PG
+    version: "16"
+    production: true
+
+jobs:
+  # Runs the existing `bun run migrate` entrypoint (advisory-locked + idempotent) against
+  # the managed DB before each deploy of the web service.
+  - name: migrate
+    kind: PRE_DEPLOY
+    dockerfile_path: Dockerfile
+    github:
+      repo: paulingalls/beacon
+      branch: main
+    instance_count: 1
+    instance_size_slug: apps-s-1vcpu-0.5gb
+    run_command: bun run migrate
+    envs:
+      - key: DATABASE_URL
+        scope: RUN_TIME
+        value: ${beacon-db.DATABASE_URL}

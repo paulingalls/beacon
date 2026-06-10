@@ -1,0 +1,15 @@
+# Keep the build context lean and never let host artifacts shadow the image install.
+node_modules
+**/node_modules
+.git
+.github
+.claude
+test-results
+playwright-report
+*.log
+
+# Tests and local-only files don't belong in the deployed image.
+**/*.test.ts
+**/*.e2e.ts
+.env
+.env.*
