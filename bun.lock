@@ -12,6 +12,7 @@
         "@types/bun": "latest",
         "hono": "^4.12.21",
         "lefthook": "2.1.8",
+        "postgres": "^3.4.5",
         "typescript": "^5.7.0",
       },
     },
