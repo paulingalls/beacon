@@ -36,6 +36,11 @@ services:
       - key: PRODUCT_ID
         scope: RUN_TIME
         value: beacon
+      # Optional operator-set envs (apps/server reads these; safe defaults when unset):
+      #   SHORT_DOMAIN      absolute base for short URLs, e.g. https://pi.ink — WITHOUT it the
+      #                     shortener emits relative /CODE redirects. Set for a real short domain.
+      #   PRODUCT_ALLOWLIST comma-separated allowlist of accepted product_ids (PRODUCT_ID must be in it)
+      #   BASE_PATH         API mount prefix (default /analytics)
 
 databases:
   - name: beacon-db
