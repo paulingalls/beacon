@@ -108,6 +108,11 @@ export function createBeacon(config: BeaconConfig): Beacon {
   if (!config.postgres?.connectionString) {
     throw new Error('[beacon] config.postgres.connectionString is required');
   }
+  if (config.productAllowlist && !config.productAllowlist.includes(config.productId)) {
+    // Absent-product_id ingest defaults to config.productId, so it must be in the
+    // allowlist or the cardinality bound would leak a non-allowlisted product (story-006).
+    throw new Error('[beacon] config.productId must be included in config.productAllowlist');
+  }
 
   const sql = createDb({
     connectionString: config.postgres.connectionString,
@@ -145,7 +150,12 @@ export function createBeacon(config: BeaconConfig): Beacon {
   // The route is relative to basePath; the host mounts the sub-app there.
   const basePath = config.basePath ?? '/analytics';
   const apiRouter = new Hono();
-  apiRouter.post('/events', createIngestHandler(buffer, eventOptions));
+  // The allowlist is ingest-only (track() never reads body.product_id), so add it
+  // at the call site rather than to the shared eventOptions.
+  apiRouter.post(
+    '/events',
+    createIngestHandler(buffer, { ...eventOptions, productAllowlist: config.productAllowlist }),
+  );
 
   // The five read endpoints (REQUIREMENTS.md §5.4), each behind the admin gate
   // (§5.1) and a per-user query rate limiter (§5.2). Built ONCE so the limiter

@@ -30,6 +30,21 @@ describe('createBeacon (unit)', () => {
     expect(() => createBeacon({ productId: 'p', postgres: {} } as any)).toThrow(/connectionString/);
   });
 
+  test('throws when productAllowlist is set but does not include productId', () => {
+    // The absent->configured-default fallback target must itself be allowlisted,
+    // else absent-product_id events would leak a non-allowlisted product (story-006).
+    expect(() =>
+      createBeacon(baseConfig({ productId: 'host', productAllowlist: ['other-app'] })),
+    ).toThrow(/productAllowlist/);
+  });
+
+  test('constructs when productAllowlist includes productId', () => {
+    const beacon = createBeacon(
+      baseConfig({ productId: 'host', productAllowlist: ['host', 'other-app'] }),
+    );
+    expect(typeof beacon.router).toBe('function');
+  });
+
   test('returns the documented surface, starts the buffer empty, and never throws at construction even with unreachable Postgres (§1.3)', () => {
     // baseConfig points at an unreachable host; createDb never throws, so the
     // factory must construct cleanly without a connectivity gate.

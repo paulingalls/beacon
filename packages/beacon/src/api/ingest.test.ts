@@ -266,6 +266,75 @@ describe('createIngestHandler — fallback observability (concern 627bc47710fd)'
   });
 });
 
+describe('createIngestHandler — product allowlist (strict mode, concerns 5cd718796d70/5966333732ba)', () => {
+  const allowlist = ['clipcast', 'other-app'];
+
+  test('honors an allowlisted body product_id (202, echoed, stored)', async () => {
+    const { buffer, pushed } = recordingBuffer();
+    const res = await post(
+      appWith(buffer, { productId: 'clipcast', productAllowlist: allowlist }),
+      {
+        product_id: 'other-app',
+        events: [{ event_type: 'a' }, { event_type: 'b' }],
+      },
+    );
+    expect(res.status).toBe(202);
+    expect(await res.json()).toEqual({ accepted: 2, product_id_used: 'other-app' });
+    expect(pushed.map((e) => e.productId)).toEqual(['other-app', 'other-app']);
+  });
+
+  test('rejects a present non-allowlisted product_id with 403, drops the batch, logs the count', async () => {
+    const warn = spyOn(console, 'warn').mockImplementation(() => {});
+    const { buffer, pushed } = recordingBuffer();
+    const res = await post(
+      appWith(buffer, { productId: 'clipcast', productAllowlist: allowlist }),
+      {
+        product_id: 'evil-app',
+        events: [{ event_type: 'a' }, { event_type: 'b' }, { event_type: 'c' }],
+      },
+    );
+    expect(res.status).toBe(403);
+    expect(((await res.json()) as { error: { code: string } }).error.code).toBe('UNAUTHORIZED');
+    expect(pushed).toHaveLength(0); // whole batch dropped
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0]?.[0]).toContain('dropped 3 event(s)');
+    warn.mockRestore();
+  });
+
+  test('rejects an invalid-shape product_id with 403 when an allowlist is set', async () => {
+    const warn = spyOn(console, 'warn').mockImplementation(() => {});
+    const { buffer, pushed } = recordingBuffer();
+    const res = await post(
+      appWith(buffer, { productId: 'clipcast', productAllowlist: allowlist }),
+      {
+        product_id: '',
+        events: [{ event_type: 'a' }],
+      },
+    );
+    expect(res.status).toBe(403);
+    expect(pushed).toHaveLength(0);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0]?.[0]).toContain('dropped 1 event(s)');
+    warn.mockRestore();
+  });
+
+  test('absent product_id defaults to the configured product (202, no reject, no warn)', async () => {
+    const warn = spyOn(console, 'warn').mockImplementation(() => {});
+    const { buffer, pushed } = recordingBuffer();
+    const res = await post(
+      appWith(buffer, { productId: 'clipcast', productAllowlist: allowlist }),
+      {
+        events: [{ event_type: 'a' }],
+      },
+    );
+    expect(res.status).toBe(202);
+    expect(await res.json()).toEqual({ accepted: 1, product_id_used: 'clipcast' });
+    expect(pushed[0]?.productId).toBe('clipcast');
+    expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
+  });
+});
+
 describe('createIngestHandler — timestamps', () => {
   test('uses a valid client timestamp, defaults to ingest time otherwise, ignores received_at', async () => {
     const { buffer, pushed } = recordingBuffer();
