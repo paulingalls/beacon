@@ -16,6 +16,14 @@
         "typescript": "^5.7.0",
       },
     },
+    "apps/server": {
+      "name": "@pi-innovations/beacon-server",
+      "version": "0.0.0",
+      "dependencies": {
+        "@pi-innovations/beacon": "workspace:*",
+        "hono": "^4.12.21",
+      },
+    },
     "packages/beacon": {
       "name": "@pi-innovations/beacon",
       "version": "0.0.0",
@@ -51,6 +59,8 @@
     "@pi-innovations/beacon": ["@pi-innovations/beacon@workspace:packages/beacon"],
 
     "@pi-innovations/beacon-client": ["@pi-innovations/beacon-client@workspace:packages/beacon-client"],
+
+    "@pi-innovations/beacon-server": ["@pi-innovations/beacon-server@workspace:apps/server"],
 
     "@playwright/test": ["@playwright/test@1.60.0", "", { "dependencies": { "playwright": "1.60.0" }, "bin": { "playwright": "cli.js" } }, "sha512-O71yZIbAh/PxDMNGns37GHBIfrVkEVyn+AXyIa5dOTfb4/xNvRWV+Vv/NMbNCtODB/pO7vLlF2OTmMVLhmr7Ag=="],
 
