@@ -1,37 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 
-import type { AppContext } from '../context/appContext';
-import { BeaconClient } from '../core/client';
-import type { BeaconClientDeps } from '../core/types';
+import { build, tick } from '../testkit';
 import { getDeviceContext, type ReactNativeBindings, useBeaconLifecycle } from './reactNative';
-
-const APP_CONTEXT: AppContext = { appVersion: '1.0.0', platform: 'ios' };
-
-/** Let a fire-and-forget flush chain settle. */
-const tick = () => new Promise<void>((r) => setTimeout(r, 0));
-
-interface RecordedCall {
-  body: { product_id?: string; events: Array<Record<string, unknown>> };
-}
-
-/** Records each POST; always 202. */
-function makeFetch() {
-  const calls: RecordedCall[] = [];
-  const fetchFn = (async (_url: string, opts: { body: string }) => {
-    calls.push({ body: JSON.parse(opts.body) });
-    return { ok: true, status: 202, headers: { get: () => null } };
-  }) as unknown as typeof fetch;
-  return { fetchFn, calls };
-}
-
-/** Non-firing interval seam so the client's timer never auto-flushes during a test. */
-function makeTimer(): Pick<BeaconClientDeps, 'setInterval' | 'clearInterval'> {
-  return {
-    setInterval: (() =>
-      1 as unknown as ReturnType<typeof setInterval>) as BeaconClientDeps['setInterval'],
-    clearInterval: (() => {}) as BeaconClientDeps['clearInterval'],
-  };
-}
 
 /** Fake React Native bindings: drive AppState transitions and component unmount by hand. */
 function makeRN(
@@ -72,31 +42,24 @@ function makeRN(
   };
 }
 
-function makeClient(calls?: { fetchFn: typeof fetch }) {
-  const fetchStub = calls ?? makeFetch();
-  return new BeaconClient(
-    { endpoint: 'https://ingest.test/events', productId: 'clipcast', appContext: APP_CONTEXT },
-    { fetch: fetchStub.fetchFn, ...makeTimer() },
-  );
-}
-
 describe('useBeaconLifecycle', () => {
   test('subscribes to AppState on mount', () => {
     const rn = makeRN();
-    useBeaconLifecycle(makeClient(), rn.rn);
+    const { client } = build();
+    useBeaconLifecycle(client, rn.rn);
     expect(rn.subscribeCount).toBe(1);
   });
 
   test('unsubscribes on unmount', () => {
     const rn = makeRN();
-    useBeaconLifecycle(makeClient(), rn.rn);
+    const { client } = build();
+    useBeaconLifecycle(client, rn.rn);
     rn.unmount();
     expect(rn.removed).toBe(true);
   });
 
   test('flushes on active→background', async () => {
-    const fetch = makeFetch();
-    const client = makeClient(fetch);
+    const { client, calls } = build();
     const rn = makeRN();
     useBeaconLifecycle(client, rn.rn);
 
@@ -104,13 +67,12 @@ describe('useBeaconLifecycle', () => {
     rn.fire('background');
     await tick();
 
-    expect(fetch.calls).toHaveLength(1);
-    expect(fetch.calls[0]?.body.events[0]?.event_type).toBe('button_tap');
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.body.events[0]?.event_type).toBe('button_tap');
   });
 
   test('tracks an app_foreground marker on background→active (not a teardown)', async () => {
-    const fetch = makeFetch();
-    const client = makeClient(fetch);
+    const { client, calls } = build();
     const rn = makeRN();
     useBeaconLifecycle(client, rn.rn);
 
@@ -119,7 +81,7 @@ describe('useBeaconLifecycle', () => {
     rn.fire('active'); // real foreground → marker
     await client.flush();
 
-    const marker = fetch.calls
+    const marker = calls
       .flatMap((c) => c.body.events)
       .find((e) => e.event_type === 'app_foreground');
     expect(marker).toBeDefined();
@@ -127,15 +89,14 @@ describe('useBeaconLifecycle', () => {
     // The foreground path must NOT shut the client down: a fresh event still queues and flushes.
     client.track('post_foreground_tap');
     await client.flush();
-    const after = fetch.calls
+    const after = calls
       .flatMap((c) => c.body.events)
       .find((e) => e.event_type === 'post_foreground_tap');
     expect(after).toBeDefined();
   });
 
   test('emits one app_foreground per real cycle (wasBackground resets each foreground)', async () => {
-    const fetch = makeFetch();
-    const client = makeClient(fetch);
+    const { client, calls } = build();
     const rn = makeRN();
     useBeaconLifecycle(client, rn.rn);
 
@@ -148,15 +109,14 @@ describe('useBeaconLifecycle', () => {
     rn.fire('active'); // marker #2 — only fires if wasBackground was reset to false after #1
     await client.flush();
 
-    const markers = fetch.calls
+    const markers = calls
       .flatMap((c) => c.body.events)
       .filter((e) => e.event_type === 'app_foreground');
     expect(markers).toHaveLength(2);
   });
 
   test('Android unknown state is a no-op (no flush, no marker)', async () => {
-    const fetch = makeFetch();
-    const client = makeClient(fetch);
+    const { client, calls } = build();
     const rn = makeRN({ os: 'android', version: 34 });
     useBeaconLifecycle(client, rn.rn);
 
@@ -164,12 +124,11 @@ describe('useBeaconLifecycle', () => {
     rn.fire('unknown'); // Android-only AppState value — neither background nor active
     await tick();
 
-    expect(fetch.calls).toHaveLength(0);
+    expect(calls).toHaveLength(0);
   });
 
   test('double background is harmless — the second flush coalesces', async () => {
-    const fetch = makeFetch();
-    const client = makeClient(fetch);
+    const { client, calls } = build();
     const rn = makeRN();
     useBeaconLifecycle(client, rn.rn);
 
@@ -178,13 +137,12 @@ describe('useBeaconLifecycle', () => {
     rn.fire('background'); // redundant — must not double-POST the same queued event
     await tick();
 
-    expect(fetch.calls).toHaveLength(1);
-    expect(fetch.calls[0]?.body.events).toHaveLength(1);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.body.events).toHaveLength(1);
   });
 
   test('does NOT emit a foreground marker on a transient inactive→active (no prior background)', async () => {
-    const fetch = makeFetch();
-    const client = makeClient(fetch);
+    const { client, calls } = build();
     const rn = makeRN();
     useBeaconLifecycle(client, rn.rn);
 
@@ -192,12 +150,11 @@ describe('useBeaconLifecycle', () => {
     rn.fire('active');
     await client.flush();
 
-    expect(fetch.calls.flatMap((c) => c.body.events)).toHaveLength(0);
+    expect(calls.flatMap((c) => c.body.events)).toHaveLength(0);
   });
 
   test('E2E: backgrounding with a queued event POSTs the batch to the ingest endpoint', async () => {
-    const fetch = makeFetch();
-    const client = makeClient(fetch);
+    const { client, calls } = build();
     const rn = makeRN();
     useBeaconLifecycle(client, rn.rn);
 
@@ -205,9 +162,9 @@ describe('useBeaconLifecycle', () => {
     rn.fire('background');
     await tick();
 
-    expect(fetch.calls).toHaveLength(1);
-    expect(fetch.calls[0]?.body.product_id).toBe('clipcast');
-    expect(fetch.calls[0]?.body.events[0]).toMatchObject({
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.body.product_id).toBe('clipcast');
+    expect(calls[0]?.body.events[0]).toMatchObject({
       event_type: 'screen_view',
       properties: { screen: 'HomeScreen' },
     });
