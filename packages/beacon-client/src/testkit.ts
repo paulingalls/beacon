@@ -21,6 +21,8 @@ export interface FetchStep {
   status?: number;
   retryAfter?: number | string;
   throw?: boolean;
+  /** `product_id_used` returned by the stub's res.json() (the 202 ingest body shape). */
+  productIdUsed?: string;
 }
 
 export interface RecordedCall {
@@ -48,7 +50,13 @@ export function makeFetch(plan: FetchStep[] = [{ status: 202 }]): {
           ? String(step.retryAfter)
           : null,
     };
-    return { ok: status >= 200 && status < 300, status, headers };
+    return {
+      ok: status >= 200 && status < 300,
+      status,
+      headers,
+      // Mirrors the server's 202 ingest body {accepted, product_id_used}; only onSent reads it.
+      json: async () => ({ product_id_used: step.productIdUsed }),
+    };
   }) as unknown as typeof fetch;
   return { fetchFn, calls };
 }

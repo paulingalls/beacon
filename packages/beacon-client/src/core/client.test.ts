@@ -12,7 +12,7 @@ import {
   tick,
 } from '../testkit';
 import { BeaconClient } from './client';
-import type { BeaconStorageAdapter } from './types';
+import type { BeaconEvent, BeaconStorageAdapter } from './types';
 
 describe('BeaconClient construction', () => {
   test('throws RangeError on invalid config', () => {
@@ -572,5 +572,76 @@ describe('flushViaBeacon (unload transport seam)', () => {
     const all = [...fetched, ...beaconed];
     expect(new Set(all).size).toBe(all.length); // every n delivered at most once
     expect(beaconed).toEqual([3, 4, 5]); // beacon saw only the disjoint tail
+  });
+});
+
+describe('delivery callbacks (onSent / onDrop / onError)', () => {
+  test('onDrop fires with the batch events on a non-429 4xx and does not retry', async () => {
+    const dropped: Array<{ events: BeaconEvent[]; status: number }> = [];
+    const { fetchFn, calls } = makeFetch([{ status: 403 }]); // story-006 allowlist rejection
+    const { client } = build(
+      { onDrop: (events, info) => dropped.push({ events, status: info.status }) },
+      { fetch: fetchFn },
+    );
+    client.track('e');
+    await client.flush();
+    await client.flush(); // no retry — a rejected batch is discarded, not re-queued
+
+    expect(calls).toHaveLength(1);
+    expect(dropped).toHaveLength(1);
+    expect(dropped[0]?.status).toBe(403);
+    expect(dropped[0]?.events.map((e) => e.eventType)).toEqual(['e']);
+  });
+
+  test('onError fires with the status on a 5xx and the events are retained', async () => {
+    const errors: Array<{ status?: number; error?: unknown }> = [];
+    const { fetchFn, calls } = makeFetch([{ status: 500 }, { status: 202 }]);
+    const { client } = build({ onError: (_e, info) => errors.push(info) }, { fetch: fetchFn });
+    client.track('e');
+    await client.flush(); // 500 → onError, re-queued
+    await client.flush(); // 202 → delivered the retained event
+
+    expect(errors).toHaveLength(1);
+    expect(errors[0]?.status).toBe(500);
+    expect(allEvents(calls)).toHaveLength(2); // original attempt + retry
+  });
+
+  test('onError fires with the thrown error on a network failure', async () => {
+    const errors: Array<{ status?: number; error?: unknown }> = [];
+    const { fetchFn } = makeFetch([{ throw: true }]);
+    const { client } = build({ onError: (_e, info) => errors.push(info) }, { fetch: fetchFn });
+    client.track('e');
+    await client.flush();
+
+    expect(errors).toHaveLength(1);
+    expect(errors[0]?.error).toBeInstanceOf(Error);
+    expect(errors[0]?.status).toBeUndefined();
+  });
+
+  test('onSent surfaces product_id_used parsed from the 202 body', async () => {
+    const sent: Array<{ productIdUsed?: string }> = [];
+    const { fetchFn } = makeFetch([{ status: 202, productIdUsed: 'other-app' }]);
+    const { client } = build({ onSent: (_e, info) => sent.push(info) }, { fetch: fetchFn });
+    client.track('e');
+    await client.flush();
+
+    expect(sent).toHaveLength(1);
+    expect(sent[0]?.productIdUsed).toBe('other-app');
+  });
+
+  test('a throwing host callback does not break the drain', async () => {
+    const { fetchFn, calls } = makeFetch([{ status: 403 }]);
+    const { client } = build(
+      {
+        onDrop: () => {
+          throw new Error('host callback boom');
+        },
+      },
+      { fetch: fetchFn },
+    );
+    client.track('e');
+    await expect(client.flush()).resolves.toBeUndefined(); // drain completes despite the throw
+
+    expect(calls).toHaveLength(1);
   });
 });
