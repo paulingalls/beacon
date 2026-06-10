@@ -2,9 +2,11 @@
   "name": "beacon-monorepo",
   "private": true,
   "workspaces": [
-    "packages/*"
+    "packages/*",
+    "apps/*"
   ],
   "scripts": {
+    "dev": "bun run --watch apps/server/src/server.ts",
     "test": "bun test",
     "test:acceptance": "bun test test/acceptance/",
     "test:e2e": "playwright test",
