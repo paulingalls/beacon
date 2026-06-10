@@ -1,13 +1,11 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { createBeacon } from '@pi-innovations/beacon';
 import { Hono } from 'hono';
-
 // Reach the package's DB internals by relative path for live-DB setup, exactly
 // as the package's own integration suites do (packages/beacon/test/helpers.ts).
 import { closeDb, createDb } from '../../packages/beacon/src/storage/db';
 import { runMigrations } from '../../packages/beacon/src/storage/migrate';
-
-const TEST_DB = process.env.TEST_DATABASE_URL;
+import { registerDbCoverageGuard, TEST_DB } from '../../packages/beacon/test/dbGuard';
 
 // HTTP acceptance harness for the Beacon server surface. Unlike the in-process
 // app.request() unit/e2e tests, this drives a REAL server over the network
@@ -119,11 +117,7 @@ describe('http acceptance — POST /analytics/events ingest over the network', (
 // TEST_DATABASE_URL so the DB-free smokes above still run with no services.
 const WINDOW = 'after=2020-01-01T00:00:00Z&before=2030-01-01T00:00:00Z';
 
-// db-coverage guard (decision a02afa9ca404): a silent skip hides coverage gaps. Fail loud when
-// the DB is expected but unset; the only sanctioned skip is the explicit BEACON_TEST_DB=off opt-out.
-test('DB coverage: TEST_DATABASE_URL is set unless the DB is explicitly opted out', () => {
-  expect(Boolean(TEST_DB) || process.env.BEACON_TEST_DB === 'off').toBe(true);
-});
+registerDbCoverageGuard();
 
 describe.skipIf(!TEST_DB)('http acceptance — query API over the network', () => {
   let sql: ReturnType<typeof createDb>;

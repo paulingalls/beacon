@@ -4,20 +4,15 @@ import { createBeacon } from '@pi-innovations/beacon';
 // client end-to-end (story-005's exports → core client → real HTTP → live ingest → Postgres).
 import { BeaconClient } from '@pi-innovations/beacon-client';
 import { Hono } from 'hono';
-
 // Live-DB setup via the package's own internals by relative path, exactly as the sibling
 // acceptance suites do (test/acceptance/http.acceptance.test.ts).
 import { closeDb, createDb } from '../../../packages/beacon/src/storage/db';
 import { runMigrations } from '../../../packages/beacon/src/storage/migrate';
+import { registerDbCoverageGuard, TEST_DB } from '../../../packages/beacon/test/dbGuard';
 
-const TEST_DB = process.env.TEST_DATABASE_URL;
 const PRODUCT = 'sdk-acceptance';
 
-// db-coverage guard (decision a02afa9ca404): a silent skip hides coverage gaps. Fail loud when
-// the DB is expected but unset; the only sanctioned skip is the explicit BEACON_TEST_DB=off opt-out.
-test('DB coverage: TEST_DATABASE_URL is set unless the DB is explicitly opted out', () => {
-  expect(Boolean(TEST_DB) || process.env.BEACON_TEST_DB === 'off').toBe(true);
-});
+registerDbCoverageGuard();
 
 /** Poll until `check` is truthy or the timeout elapses — for the auto-flush network round-trip. */
 async function waitFor(check: () => boolean, timeoutMs = 2000): Promise<void> {
