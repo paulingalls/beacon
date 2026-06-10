@@ -509,10 +509,11 @@ Content-Type: application/json
 - Each event must have an `event_type` (string, max 100 chars)
 - `properties` is optional, max 10KB serialized JSON per event
 - `timestamp` (event time) is optional; when omitted it defaults to `received_at`. `received_at` is always set server-side at ingest and is never accepted from the client (see §4.1, Event time vs. ingest time)
-- `product_id` and `platform` are inferred from the `X-App-Context` header or the host app's config
+- `product_id` is honored from the request body when present and valid (a non-empty trimmed string ≤100 chars), enabling a shared multi-product ingest endpoint; an absent or invalid value falls back to the host app's configured product (a present-but-invalid value is logged but never rejects the batch)
+- `platform` is inferred from the `X-App-Context` header or the host app's config
 - `user_id` is inferred from auth context if present
 
-Returns `202 Accepted` with `{ "accepted": <count> }`. Events are buffered, not written synchronously.
+Returns `202 Accepted` with `{ "accepted": <count>, "product_id_used": <product_id> }`, where `product_id_used` is the product the batch was attributed to (the resolved body or configured fallback) so a caller can detect a mismatch. Events are buffered, not written synchronously.
 
 Rate limited: 10 requests per minute per IP (unauthenticated) or per user ID (authenticated).
 
