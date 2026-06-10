@@ -1,9 +1,7 @@
 import type { Sql } from 'postgres';
 
+import type { JsonInput } from '../storage/db';
 import type { BeaconEvent, BufferStats, EventBufferOptions } from '../types';
-
-/** The value type postgres.js `sql.json()` accepts. */
-type JsonInput = Parameters<Sql['json']>[0];
 
 const DEFAULT_FLUSH_INTERVAL = 5000;
 const DEFAULT_MAX_BATCH_SIZE = 100;
