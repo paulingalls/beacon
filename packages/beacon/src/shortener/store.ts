@@ -1,9 +1,6 @@
 import type { Sql } from 'postgres';
-
+import type { JsonInput } from '../storage/db';
 import { generateCode } from './codeGen';
-
-/** The value type postgres.js `sql.json()` accepts (mirrors events/buffer.ts). */
-type JsonInput = Parameters<Sql['json']>[0];
 
 /** Max code-generation attempts before giving up on collisions (REQUIREMENTS.md §7.1). */
 const MAX_CODE_ATTEMPTS = 3;
