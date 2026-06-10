@@ -1,0 +1,133 @@
+# Beacon CI (sprint-011 / Milestone 3, closes risk 8624f2184821).
+#
+# Runs on every push and PR: lint + typecheck (DB-free) plus the full DB-backed
+# bun test and the Playwright dashboard e2e, both against a real postgres:16-alpine
+# service container mirroring docker-compose.yml credentials. The test job's preset
+# TEST_DATABASE_URL drives the ensure-test-db preflight (verifyExternalDb probes it,
+# fails loud if unreachable, skips the docker bootstrap), and the DB-coverage guard
+# (decision a02afa9ca404) must PASS — proving Postgres is genuinely exercised, not skipped.
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+# Least-privilege GITHUB_TOKEN: every job only checks out code and runs tests —
+# none write to the repo, releases, or packages. Pin read-only here so the token
+# does not inherit a write-default from repo/org settings.
+permissions:
+  contents: read
+
+# One run per ref; a new push cancels an in-flight run for the same branch.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - name: Cache bun install
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: bun-${{ runner.os }}-
+      - run: bun install --frozen-lockfile
+      - run: bun run lint
+
+  typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - name: Cache bun install
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: bun-${{ runner.os }}-
+      - run: bun install --frozen-lockfile
+      - run: bun run typecheck
+
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: beacon
+          POSTGRES_PASSWORD: beacon
+          POSTGRES_DB: beacon
+        ports:
+          - 5432:5432
+        # Mirrors docker-compose.yml's healthcheck so the job waits for a ready DB.
+        options: >-
+          --health-cmd "pg_isready -U beacon -d beacon"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 15
+    env:
+      # Preset URL → ensure-test-db probes it (fail loud) and skips docker; suites
+      # self-migrate in their beforeAll (decision 6d348d2d0cec), so no migrate step.
+      TEST_DATABASE_URL: postgres://beacon:beacon@localhost:5432/beacon
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - name: Cache bun install
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: bun-${{ runner.os }}-
+      - run: bun install --frozen-lockfile
+      - run: bun test
+
+  e2e:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: beacon
+          POSTGRES_PASSWORD: beacon
+          POSTGRES_DB: beacon
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U beacon -d beacon"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 15
+    env:
+      TEST_DATABASE_URL: postgres://beacon:beacon@localhost:5432/beacon
+      CI: "true" # playwright.config: forbidOnly on CI
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - name: Cache bun install
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: bun-${{ runner.os }}-
+      - run: bun install --frozen-lockfile
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: playwright-${{ runner.os }}-
+      - run: bunx playwright install --with-deps chromium
+      - run: bun run test:e2e
