@@ -10,8 +10,9 @@
 # CI-hardening (debt b4935388afd3): the Postgres service pulls from the AWS ECR Public
 # mirror (public.ecr.aws/docker/library/postgres:16-alpine — same image as docker-compose's
 # postgres:16-alpine, NOT subject to Docker Hub's anonymous pull-rate limit; a service
-# container is pulled before any step runs, so a docker-login step cannot help it). Actions
-# are pinned to their Node-24 majors (checkout@v6, cache@v5, setup-bun@v2 ≥2.2.0) ahead of
+# container is pulled before any step runs, so a docker-login step cannot help it).
+# checkout@v6 and cache@v5 are pinned to their Node-24 majors; setup-bun's floating @v2 tag
+# already resolves to a Node-24 build (v2.2.0+) and moves forward on its own. Done ahead of
 # GitHub's Node-20 runtime removal (2026-06-16).
 name: CI
 
