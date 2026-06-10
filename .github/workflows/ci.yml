@@ -19,10 +19,12 @@ on:
 permissions:
   contents: read
 
-# One run per ref; a new push cancels an in-flight run for the same branch.
+# One run per ref; a new push cancels an in-flight run for the same branch —
+# EXCEPT on main, where every commit must keep its own completed run (a cancelled
+# main run would leave a merge commit without a green CI record).
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   lint:
