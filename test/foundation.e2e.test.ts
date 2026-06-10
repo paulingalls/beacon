@@ -48,6 +48,7 @@ describe.skipIf(!TEST_DB)('Foundation round-trip', () => {
       WHERE schemaname = 'public' AND indexname LIKE 'idx_beacon_%'`;
     const byName = new Map(indexes.map((r) => [r.indexname, r.indexdef]));
     expect([...byName.keys()].sort()).toEqual([
+      'idx_beacon_events_entity_step', // migration 002 (funnel recursive-CTE hop)
       'idx_beacon_events_product_time',
       'idx_beacon_events_type',
       'idx_beacon_events_user',
@@ -61,6 +62,9 @@ describe.skipIf(!TEST_DB)('Foundation round-trip', () => {
       '(product_id, event_type, "timestamp" DESC)',
     );
     expect(byName.get('idx_beacon_events_user')).toContain('(user_id, "timestamp" DESC)');
+    expect(byName.get('idx_beacon_events_entity_step')).toContain(
+      'COALESCE(user_id, visitor_token), event_type, "timestamp" DESC',
+    );
 
     // Second run is idempotent.
     const second = await runMigrations(sql);

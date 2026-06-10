@@ -2,7 +2,12 @@ import type { Context, Handler } from 'hono';
 import type { Sql } from 'postgres';
 
 import { errorResponse } from '../api/errors';
-import { buildFilters, parseCommonParams, QueryParamError } from '../api/params';
+import {
+  buildFilters,
+  type CommonQueryParams,
+  parseCommonParams,
+  QueryParamError,
+} from '../api/params';
 
 // Ordered-event conversion funnel (REQUIREMENTS.md §5.4 GET /analytics/funnel).
 // Accepts the §5.3 common params plus `steps` (the ordered event types) and
@@ -28,13 +33,6 @@ export class MissingParamError extends Error {
     this.name = 'MissingParamError';
     this.parameter = parameter;
   }
-}
-
-/** One row fed to the funnel computation: an entity, an event type, and its time. */
-export interface FunnelRow {
-  entity: string;
-  event_type: string;
-  timestamp: Date;
 }
 
 /**
@@ -79,58 +77,22 @@ export function parseWindow(raw: string | undefined): number {
 }
 
 /**
- * Count, per step, how many entities reached that step (§5.4 line 418).
- *
- * For each entity: anchor on its earliest step-1 event, then for each later step
- * take the earliest matching event strictly after the previous step's time and at
- * or before `anchor + window`. The first step an entity can't satisfy ends its
- * walk, so counts are monotonically non-increasing. Pure and DB-free for unit
- * testing; the handler feeds it the rows returned by a single filtered query.
+ * Build the shared event-filter predicate fragment (aliased to `e`) for the
+ * funnel query: the §5.3 time range and the optional product/platform/user
+ * filters. Embedded in BOTH the anchor CTE and the recursive step lookup so each
+ * touches `beacon_events` directly. Each call site adds its OWN exact
+ * `event_type` equality (positional `steps[…]`), which fully constrains the step
+ * type — so this fragment deliberately omits an `event_type = ANY(steps)` membership
+ * test that the positional equalities would only subsume as dead filter work.
+ * Mirrors the fragment-composition pattern in aggregate.ts. Every value stays a
+ * bound param.
  */
-export function computeFunnelCounts(
-  rows: FunnelRow[],
-  steps: string[],
-  windowSeconds: number,
-): number[] {
-  const windowMs = windowSeconds * 1000;
-
-  const byEntity = new Map<string, FunnelRow[]>();
-  for (const r of rows) {
-    const list = byEntity.get(r.entity);
-    if (list) list.push(r);
-    else byEntity.set(r.entity, [r]);
-  }
-
-  // How many leading steps each entity completed (1..steps.length); 0 if it never
-  // entered the funnel. counts[i] is then the number of entities that got that far.
-  const reaches: number[] = [];
-  for (const events of byEntity.values()) {
-    // Step 1: anchor on the entity's earliest step-1 event.
-    let anchor = Infinity;
-    for (const e of events) {
-      if (e.event_type === steps[0]) anchor = Math.min(anchor, e.timestamp.getTime());
-    }
-    if (anchor === Infinity) continue; // never entered the funnel
-
-    const deadline = anchor + windowMs;
-    let prev = anchor;
-    let reached = 1;
-    for (let i = 1; i < steps.length; i++) {
-      // Earliest steps[i] event strictly after the previous step, within window.
-      let best = Infinity;
-      for (const e of events) {
-        if (e.event_type !== steps[i]) continue;
-        const t = e.timestamp.getTime();
-        if (t > prev && t <= deadline) best = Math.min(best, t);
-      }
-      if (best === Infinity) break; // missed this step → excluded from the rest
-      reached++;
-      prev = best;
-    }
-    reaches.push(reached);
-  }
-
-  return steps.map((_, i) => reaches.filter((reached) => reached > i).length);
+function eventFilter(sql: Sql, common: CommonQueryParams) {
+  let f = sql`e.timestamp >= ${common.after} AND e.timestamp < ${common.before}`;
+  if (common.productId) f = sql`${f} AND e.product_id = ${common.productId}`;
+  if (common.platform) f = sql`${f} AND e.platform = ${common.platform}`;
+  if (common.userId) f = sql`${f} AND e.user_id = ${common.userId}`;
+  return f;
 }
 
 /** A funnel step in the §5.4 response: its event type, reach, and step-over-step rate. */
@@ -158,7 +120,8 @@ function ratio(numerator: number, denominator: number): number {
  * Build the GET /funnel handler (REQUIREMENTS.md §5.4). Param errors (missing or
  * malformed steps/window, or a bad common param) become a §5.5 400 before any DB
  * call; a query failure becomes a §5.5 500 — neither crashes the host. The whole
- * funnel is computed from a single filtered fetch. Consumed by the story-007 router.
+ * funnel walk runs in Postgres (a recursive CTE), so only per-step counts cross
+ * the wire. Consumed by the analytics router.
  */
 export function createFunnelHandler(sql: Sql): Handler {
   return async (c: Context) => {
@@ -180,22 +143,52 @@ export function createFunnelHandler(sql: Sql): Handler {
     }
 
     try {
-      // Fetch only the step events in range, tagged with their entity, then walk
-      // the funnel in TS (§5.4). Every value is parameterized by postgres.js;
-      // `steps` rides along as a Postgres array via ANY. Entities with neither a
-      // user_id nor a visitor_token (entity IS NULL) can't be tracked, so drop them.
-      let q = sql`
-        SELECT COALESCE(user_id, visitor_token) AS entity, event_type, timestamp
-        FROM beacon_events
-        WHERE timestamp >= ${common.after} AND timestamp < ${common.before}
-          AND event_type = ANY(${steps})
-          AND COALESCE(user_id, visitor_token) IS NOT NULL`;
-      if (common.productId) q = sql`${q} AND product_id = ${common.productId}`;
-      if (common.platform) q = sql`${q} AND platform = ${common.platform}`;
-      if (common.userId) q = sql`${q} AND user_id = ${common.userId}`;
+      // Walk the funnel entirely in Postgres (§5.4) so the handler receives only
+      // per-step counts, never the full event set. `anchor` finds each entity's
+      // earliest step-1 event; the recursive `walk` advances one step at a time,
+      // at each hop taking the earliest next-step event strictly after the prior
+      // step and within the anchor-relative deadline (frozen in the seed). A
+      // missed step (MIN over no rows → NULL) ends that entity's walk, so an
+      // entity emits one row per step it reached — making COUNT(*) grouped by
+      // step_idx the cumulative reach directly. Both branches filter against
+      // beacon_events so the entity-step index can serve each hop (concern
+      // 18d098756f5a). Entities with neither id (entity IS NULL) can't be tracked.
+      const rows = (await sql`
+        WITH RECURSIVE
+        anchor AS (
+          SELECT COALESCE(e.user_id, e.visitor_token) AS entity, MIN(e.timestamp) AS anchor_ts
+          FROM beacon_events e
+          WHERE ${eventFilter(sql, common)}
+            AND e.event_type = (${steps}::text[])[1]
+            AND COALESCE(e.user_id, e.visitor_token) IS NOT NULL
+          GROUP BY 1
+        ),
+        walk AS (
+          SELECT entity, anchor_ts AS prev_ts, 1 AS step_idx,
+                 anchor_ts + ${windowSeconds} * interval '1 second' AS deadline
+          FROM anchor
+          UNION ALL
+          SELECT w.entity, nxt.next_ts, w.step_idx + 1, w.deadline
+          FROM walk w
+          CROSS JOIN LATERAL (
+            SELECT MIN(e.timestamp) AS next_ts
+            FROM beacon_events e
+            WHERE ${eventFilter(sql, common)}
+              AND COALESCE(e.user_id, e.visitor_token) = w.entity
+              AND e.event_type = (${steps}::text[])[w.step_idx + 1]
+              AND e.timestamp > w.prev_ts
+              AND e.timestamp <= w.deadline
+          ) nxt
+          WHERE w.step_idx < ${steps.length} AND nxt.next_ts IS NOT NULL
+        )
+        SELECT step_idx, COUNT(*) AS reached_count
+        FROM walk GROUP BY step_idx ORDER BY step_idx
+      `) as unknown as Array<{ step_idx: number; reached_count: string }>;
 
-      const rows = (await q) as unknown as FunnelRow[];
-      const counts = computeFunnelCounts(rows, steps, windowSeconds);
+      // GROUP BY only emits rows for steps some entity reached; zero-fill the rest.
+      const byStep = new Map<number, number>();
+      for (const r of rows) byStep.set(Number(r.step_idx), Number(r.reached_count));
+      const counts = steps.map((_, i) => byStep.get(i + 1) ?? 0);
 
       return c.json({
         steps: buildSteps(steps, counts),
