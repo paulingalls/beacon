@@ -1,43 +1,10 @@
 import { describe, expect, test } from 'bun:test';
 
-import type { AppContext } from '../context/appContext';
-import { BeaconClient } from '../core/client';
-import type { BeaconClientDeps } from '../core/types';
+import { build, tick } from '../testkit';
 import { useBeaconWeb, type WebBindings } from './web';
 
-const APP_CONTEXT: AppContext = { appVersion: '1.0.0', platform: 'web' };
-
-/** Let a fire-and-forget flush chain settle. */
-const tick = () => new Promise<void>((r) => setTimeout(r, 0));
-
-interface RecordedCall {
-  body: { product_id?: string; events: Array<Record<string, unknown>> };
-}
-
-function makeFetch() {
-  const calls: RecordedCall[] = [];
-  const fetchFn = (async (_url: string, opts: { body: string }) => {
-    calls.push({ body: JSON.parse(opts.body) });
-    return { ok: true, status: 202, headers: { get: () => null } };
-  }) as unknown as typeof fetch;
-  return { fetchFn, calls };
-}
-
-function makeTimer(): Pick<BeaconClientDeps, 'setInterval' | 'clearInterval'> {
-  return {
-    setInterval: (() =>
-      1 as unknown as ReturnType<typeof setInterval>) as BeaconClientDeps['setInterval'],
-    clearInterval: (() => {}) as BeaconClientDeps['clearInterval'],
-  };
-}
-
-function makeClient(calls?: { fetchFn: typeof fetch }) {
-  const fetchStub = calls ?? makeFetch();
-  return new BeaconClient(
-    { endpoint: 'https://ingest.test/events', productId: 'clipcast', appContext: APP_CONTEXT },
-    { fetch: fetchStub.fetchFn, ...makeTimer() },
-  );
-}
+/** This suite logs as a web client; the kit's build() defaults to ios, so pass web here. */
+const WEB_CONTEXT = { appVersion: '1.0.0', platform: 'web' as const };
 
 /** Fake DOM bindings: drive visibility + lifecycle events and record sendBeacon calls by hand. */
 function makeWeb(initialVisibility = 'visible') {
@@ -89,8 +56,7 @@ function makeWeb(initialVisibility = 'visible') {
 
 describe('useBeaconWeb', () => {
   test('flushes when the document becomes hidden', async () => {
-    const fetch = makeFetch();
-    const client = makeClient(fetch);
+    const { client, calls } = build({ appContext: WEB_CONTEXT });
     const web = makeWeb('visible');
     useBeaconWeb(client, web.web);
 
@@ -99,13 +65,12 @@ describe('useBeaconWeb', () => {
     web.fireDoc('visibilitychange');
     await tick();
 
-    expect(fetch.calls).toHaveLength(1);
-    expect(fetch.calls[0]?.body.events[0]?.event_type).toBe('button_tap');
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.body.events[0]?.event_type).toBe('button_tap');
   });
 
   test('does not flush while the document is still visible', async () => {
-    const fetch = makeFetch();
-    const client = makeClient(fetch);
+    const { client, calls } = build({ appContext: WEB_CONTEXT });
     const web = makeWeb('visible');
     useBeaconWeb(client, web.web);
 
@@ -113,11 +78,11 @@ describe('useBeaconWeb', () => {
     web.fireDoc('visibilitychange'); // visibilityState stays 'visible'
     await tick();
 
-    expect(fetch.calls).toHaveLength(0);
+    expect(calls).toHaveLength(0);
   });
 
   test('sends queued events via navigator.sendBeacon on beforeunload', async () => {
-    const client = makeClient();
+    const { client } = build({ appContext: WEB_CONTEXT });
     const web = makeWeb();
     useBeaconWeb(client, web.web);
 
@@ -137,7 +102,7 @@ describe('useBeaconWeb', () => {
   });
 
   test('cleanup removes both listeners', () => {
-    const client = makeClient();
+    const { client } = build({ appContext: WEB_CONTEXT });
     const web = makeWeb();
     const cleanup = useBeaconWeb(client, web.web);
     cleanup();
@@ -163,7 +128,7 @@ describe('useBeaconWeb', () => {
       value: Object.defineProperty({}, 'cookie', { configurable: true, get: throwingGet }),
     });
     try {
-      const client = makeClient();
+      const { client } = build({ appContext: WEB_CONTEXT });
       const web = makeWeb('hidden');
       const cleanup = useBeaconWeb(client, web.web);
       client.track('e');
