@@ -53,8 +53,9 @@ export function makeFetch(plan: FetchStep[] = [{ status: 202 }]): {
   return { fetchFn, calls };
 }
 
-/** Manual interval scheduler — bun:test has no fake timers. `fire()` runs the handler. */
-export function makeTimer() {
+/** Manual interval scheduler — bun:test has no fake timers. `fire()` runs the handler.
+ * Module-local: `build()` wires it into every client; no suite needs it directly. */
+function makeTimer() {
   let handler: (() => void) | undefined;
   let cleared = false;
   const seam = {
