@@ -1,5 +1,8 @@
 import postgres, { type Options, type Sql } from 'postgres';
 
+/** The value type postgres.js `sql.json()` accepts. One shared home for the cast. */
+export type JsonInput = Parameters<Sql['json']>[0];
+
 export interface DbConfig {
   /** Postgres connection string, e.g. postgres://user:pass@host:5432/db. */
   connectionString: string;

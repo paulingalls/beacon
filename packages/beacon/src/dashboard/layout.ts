@@ -83,6 +83,8 @@ function widgetCard(id: string, title: string): string {
  *     state: { productId, after, before },  // shared filter state; after/before ISO
  *     schema,                         // the full GET /schema body once loaded, else null
  *     getJson(url),                   // fetch(url) → throw on !ok → parsed JSON; the shared fetch helper
+ *     esc(s),                         // HTML-entity escape for untrusted text in a table cell
+ *     pct(n),                         // ratio → "NN.N%" (one shared formatter for all widgets)
  *     queryUrl(endpoint, extra),      // basePath + endpoint + ?product_id(if set)&after&before&...extra
  *     eventTypeNames(productId?),     // distinct names from schema.event_types
  *     registerWidget(fn),             // fn:(Beacon)=>void|Promise; auto-run if schema already loaded
@@ -136,6 +138,15 @@ const BOOTSTRAP_SCRIPT = `(function () {
         return r.json();
       });
     },
+    // Shared browser helpers (M2 hoist): one HTML-escape + one percent-formatter for
+    // every widget, so attribution/funnel/topPages call Beacon.esc/Beacon.pct instead
+    // of each re-declaring the byte-identical map. Pure and stateless.
+    esc: function (s) {
+      return String(s).replace(/[&<>"]/g, function (c) {
+        return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
+      });
+    },
+    pct: function (n) { return (Number(n) * 100).toFixed(1) + '%'; },
     queryUrl: function (endpoint, extra) {
       var p = new URLSearchParams();
       if (Beacon.state.productId) { p.set('product_id', Beacon.state.productId); }

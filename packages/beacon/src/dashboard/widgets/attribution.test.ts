@@ -42,16 +42,16 @@ describe('attributionWidgetScript', () => {
     expect(script).toContain("addEventListener('change'");
   });
 
-  test('renders the conversion rate as a percentage', () => {
+  test('renders the conversion rate as a percentage via the shared Beacon.pct helper', () => {
     expect(script).toContain('conversion_rate');
-    expect(script).toContain("'%'");
+    expect(script).toContain('Beacon.pct(');
   });
 
-  test('escapes the (untrusted, event-derived) group key', () => {
+  test('escapes the (untrusted, event-derived) group key via the shared Beacon.esc helper', () => {
     // attribution->>utm_* values come from request data, so the key must be HTML-escaped
-    // before it lands in a table cell — same guard the Top Pages widget applies to paths.
-    expect(script).toContain('esc(');
-    expect(script).toContain('&amp;');
+    // before it lands in a table cell. The escaping is delegated to window.Beacon.esc
+    // (defined once in layout.ts); the widget must call it, not redefine the map.
+    expect(script).toContain('Beacon.esc(');
   });
 
   test('renders empty and inline-error states', () => {

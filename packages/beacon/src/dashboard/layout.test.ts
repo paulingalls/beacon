@@ -100,6 +100,15 @@ describe('renderShell — window.Beacon bootstrap contract (002-005 consume this
     expect(html).toContain('getJson');
   });
 
+  test('defines shared esc/pct browser helpers on the contract (hoisted from widgets)', () => {
+    // The HTML-escape + percent-format helpers live ONCE on window.Beacon so the
+    // attribution/funnel/topPages widget scripts delegate (Beacon.esc/Beacon.pct)
+    // instead of each re-defining them — the M2 duplication-paydown hoist.
+    expect(html).toContain('esc:');
+    expect(html).toContain('pct:');
+    expect(html).toContain('&amp;'); // the escape map now lives here, not in the widgets
+  });
+
   test('the schema load itself goes through Beacon.getJson (no duplicate fetch plumbing)', () => {
     expect(html).toContain("Beacon.getJson(Beacon.basePath + '/schema')");
   });
