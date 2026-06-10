@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 
-import { verifyExternalDb } from './ensure-test-db';
+import { decideTestDbAction, redactUrl, verifyExternalDb } from './ensure-test-db';
 
 // verifyExternalDb is the CI preflight: when TEST_DATABASE_URL is externally
 // preset (CI service container / explicit override), it probes connectivity and
@@ -23,5 +23,47 @@ describe('verifyExternalDb (CI connectivity preflight)', () => {
     // rejection, not swallow it — construction happens inside the probe's guard.
     const url = 'postgres://u:p@127.0.0.1:99999/db';
     await expect(verifyExternalDb(url)).rejects.toThrow();
+  });
+});
+
+// The branch ordering is load-bearing (AC2/AC3): a preset URL must win even over
+// BEACON_TEST_DB=off so CI probes it, and off-without-preset must skip DB-free
+// rather than booting docker. Asserted on the pure decider so a future reorder
+// can't pass silently.
+describe('decideTestDbAction (preload branch ordering)', () => {
+  test('preset TEST_DATABASE_URL wins — probe — even when BEACON_TEST_DB=off', () => {
+    const url = 'postgres://beacon:beacon@localhost:5544/beacon';
+    expect(decideTestDbAction({ TEST_DATABASE_URL: url, BEACON_TEST_DB: 'off' })).toEqual({
+      kind: 'probe',
+      url,
+    });
+  });
+
+  test('BEACON_TEST_DB=off without a preset URL skips (DB-free), never probes or bootstraps', () => {
+    expect(decideTestDbAction({ BEACON_TEST_DB: 'off' })).toEqual({ kind: 'skip' });
+  });
+
+  test('neither set — bootstrap docker', () => {
+    expect(decideTestDbAction({})).toEqual({ kind: 'bootstrap' });
+  });
+});
+
+// redactUrl is the credential-scrubber for shared CI logs; a regression would leak
+// a real TEST_DATABASE_URL password. Assert both the strip and the fail-safe fallback.
+describe('redactUrl (credential scrubbing for CI logs)', () => {
+  test('strips user:password userinfo from a well-formed URL', () => {
+    const redacted = redactUrl('postgres://beacon:s3cret@localhost:5544/beacon');
+    expect(redacted).not.toContain('s3cret');
+    expect(redacted).not.toContain('beacon:');
+    expect(redacted).toBe('postgres://localhost:5544/beacon');
+  });
+
+  test('strips a password-only userinfo', () => {
+    expect(redactUrl('postgres://:s3cret@localhost:5544/beacon')).not.toContain('s3cret');
+  });
+
+  test('falls back to a constant (never echoes) on an unparseable URL', () => {
+    // Out-of-range port: WHATWG URL throws, so we must not risk echoing the input.
+    expect(redactUrl('postgres://u:s3cret@127.0.0.1:99999/db')).toBe('<unparseable-url>');
   });
 });

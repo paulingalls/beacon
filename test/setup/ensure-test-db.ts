@@ -34,7 +34,7 @@ const REPO_ROOT = join(import.meta.dir, '..', '..');
 // CI logs. TEST_DATABASE_URL can carry a real managed-Postgres password, so we
 // never log the raw string. Falls back to a constant on an unparseable URL
 // rather than risk echoing credentials.
-function redactUrl(url: string): string {
+export function redactUrl(url: string): string {
   try {
     const u = new URL(url);
     if (u.username || u.password) {
@@ -71,14 +71,33 @@ export async function verifyExternalDb(url: string): Promise<void> {
   }
 }
 
+// The preload's branch decision, factored out as a pure function so the ordering
+// invariant is asserted by a unit test, not just observed in CI. The ordering is
+// load-bearing: a preset TEST_DATABASE_URL (CI / explicit override) wins even when
+// BEACON_TEST_DB=off, so it is probed; off-without-preset skips DB-free; otherwise
+// we bootstrap docker. Reordering 'probe' behind 'skip' would silently break AC2/AC3.
+export type TestDbAction =
+  | { kind: 'probe'; url: string } // preset external URL — verify, then skip bootstrap
+  | { kind: 'skip' } // BEACON_TEST_DB=off — stay DB-free
+  | { kind: 'bootstrap' }; // default — docker compose up
+
+export function decideTestDbAction(
+  env: Readonly<Record<string, string | undefined>>,
+): TestDbAction {
+  if (env.TEST_DATABASE_URL) return { kind: 'probe', url: env.TEST_DATABASE_URL };
+  if (env.BEACON_TEST_DB === 'off') return { kind: 'skip' };
+  return { kind: 'bootstrap' };
+}
+
 async function ensureTestDb(): Promise<void> {
-  if (process.env.TEST_DATABASE_URL) {
+  const action = decideTestDbAction(process.env);
+  if (action.kind === 'probe') {
     // Explicit override / CI service container wins — but verify it is reachable
     // and fail loud if not, rather than returning silently into skipped/broken suites.
-    await verifyExternalDb(process.env.TEST_DATABASE_URL);
+    await verifyExternalDb(action.url);
     return;
   }
-  if (process.env.BEACON_TEST_DB === 'off') return; // pre-commit fast path
+  if (action.kind === 'skip') return; // pre-commit fast path
 
   // The compose host port defaults to 5544 (overridable via BEACON_PG_PORT),
   // matching docker-compose.yml; the credentials/db are fixed by that file.
