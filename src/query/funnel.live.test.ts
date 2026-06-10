@@ -3,17 +3,12 @@ import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:tes
 import { Hono } from 'hono';
 import type { Sql } from 'postgres';
 
+import { registerDbCoverageGuard, TEST_DB } from '../../test/dbGuard';
 import { closeDb, createDb } from '../storage/db';
 import { runMigrations } from '../storage/migrate';
-import { createFunnelHandler } from './funnel';
+import { createFunnelHandler, funnelWalkQuery } from './funnel';
 
-const TEST_DB = process.env.TEST_DATABASE_URL;
-
-// db-coverage guard (decision a02afa9ca404): a silent skip hides coverage gaps. Fail loud when
-// the DB is expected but unset; the only sanctioned skip is the explicit BEACON_TEST_DB=off opt-out.
-test('DB coverage: TEST_DATABASE_URL is set unless the DB is explicitly opted out', () => {
-  expect(Boolean(TEST_DB) || process.env.BEACON_TEST_DB === 'off').toBe(true);
-});
+registerDbCoverageGuard();
 
 // The §5.4 response shape (mirrors funnel.test.ts; the shared test-kit extraction
 // is deferred — concern ecfead961fb9 / plan Milestone 2).
@@ -233,8 +228,7 @@ describe.skipIf(!TEST_DB)('createFunnelHandler funnel walk (live Postgres)', () 
 
   test('high-cardinality fixture: many entities resolve correctly', async () => {
     // 50 entities request; the first 30 also sign up. Exercises the entity-step
-    // index over many distinct entities and gives a realistic fixture for the
-    // EXPLAIN-verify step.
+    // index over many distinct entities, asserting correct counts at scale.
     const rows: Array<readonly [string, string, string]> = [];
     for (let i = 0; i < 50; i++) {
       rows.push([`u${i}`, 'request', '2026-03-01T00:00:00Z']);
@@ -243,4 +237,56 @@ describe.skipIf(!TEST_DB)('createFunnelHandler funnel walk (live Postgres)', () 
     await seed(sql, rows);
     expect(await counts('steps=request,signup')).toEqual([50, 30]);
   });
+
+  // EXPLAIN perf-guard (concern 4d859cce846a). The recursive walk performs a per-entity
+  // next-step lookup at each hop — COALESCE(user_id, visitor_token) = entity AND
+  // event_type = <next> AND timestamp in (prev, deadline] — which migration 002's partial
+  // expression index idx_beacon_events_entity_step exists to serve as an index seek. Without
+  // it each hop degrades to a filter/seq scan over every step-typed event in the window. We
+  // EXPLAIN the REAL production query (funnelWalkQuery, the same builder the handler runs) and
+  // assert the recursive hop seeks that index, so a regression that drops or mismatches the
+  // index — or a CTE rewrite that stops using COALESCE(entity) — fails loud here.
+  test('the funnel recursive hop seeks idx_beacon_events_entity_step', async () => {
+    // A perf guard must run at scale: at small row counts a seq scan is trivially cheapest
+    // regardless of the index, so the planner would never choose the seek. Bulk-seed ~2000
+    // distinct entities (each request→signup) and ANALYZE so the planner has real stats.
+    await sql`
+      INSERT INTO beacon_events (product_id, event_type, user_id, timestamp)
+      SELECT 'p', t.event_type, 'u' || g,
+             timestamp '2026-03-01T00:00:00Z' + (t.h || ' hour')::interval
+      FROM generate_series(1, 2000) AS g
+      CROSS JOIN (VALUES ('request', 0), ('signup', 1)) AS t(event_type, h)`;
+    await sql`ANALYZE beacon_events`;
+
+    const common = {
+      after: new Date('2026-01-01T00:00:00Z'),
+      before: new Date('2027-01-01T00:00:00Z'),
+      productId: 'p',
+    };
+    const plan = (await sql`
+      EXPLAIN (FORMAT JSON) ${funnelWalkQuery(sql, common, ['request', 'signup'], 86400)}
+    `) as unknown as Array<{ 'QUERY PLAN': Array<{ Plan: PlanNode }> }>;
+
+    // The anchor CTE legitimately seq-scans (it aggregates over ~half the table to find each
+    // entity's earliest step-1 event), so we do NOT assert "no seq scan anywhere" — only that
+    // the entity-step index appears, which it can only do via the recursive hop's seek.
+    const root = plan[0]?.['QUERY PLAN']?.[0]?.Plan;
+    expect(root).toBeDefined();
+    const indexes = collectIndexNames(root as PlanNode);
+    expect(indexes).toContain('idx_beacon_events_entity_step');
+  });
 });
+
+/** A node in EXPLAIN (FORMAT JSON) output; only the fields this guard inspects. */
+interface PlanNode {
+  'Node Type': string;
+  'Index Name'?: string;
+  Plans?: PlanNode[];
+}
+
+/** Depth-first collect every "Index Name" in an EXPLAIN plan tree. */
+function collectIndexNames(node: PlanNode): string[] {
+  const here = node['Index Name'] ? [node['Index Name']] : [];
+  const below = (node.Plans ?? []).flatMap(collectIndexNames);
+  return [...here, ...below];
+}
