@@ -1,11 +1,11 @@
 import { beforeEach, describe, expect, test } from 'bun:test';
 import { Hono } from 'hono';
 import type { Sql } from 'postgres';
+import { registerDbCoverageGuard, TEST_DB } from '../../test/dbGuard';
 import { withTestDb } from '../../test/helpers';
 import { adminGate } from '../api/auth';
 import { createCreateHandler } from './create';
 
-const TEST_DB = process.env.TEST_DATABASE_URL;
 const SHORT_DOMAIN = 'https://pi.ink';
 
 interface BuildOpts {
@@ -13,11 +13,7 @@ interface BuildOpts {
   rateLimit?: { limit?: number; windowMs?: number };
 }
 
-// db-coverage guard (decision a02afa9ca404): a silent skip hides coverage gaps. Fail loud when
-// the DB is expected but unset; the only sanctioned skip is the explicit BEACON_TEST_DB=off opt-out.
-test('DB coverage: TEST_DATABASE_URL is set unless the DB is explicitly opted out', () => {
-  expect(Boolean(TEST_DB) || process.env.BEACON_TEST_DB === 'off').toBe(true);
-});
+registerDbCoverageGuard();
 
 describe.skipIf(!TEST_DB)('create route POST /short (integration)', () => {
   const getSql = withTestDb(TEST_DB as string);
