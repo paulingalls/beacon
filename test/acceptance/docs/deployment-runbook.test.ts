@@ -9,27 +9,9 @@
 
 import { describe, expect, test } from 'bun:test';
 import { join } from 'node:path';
+import { loadAppSpec, REPO_ROOT } from '../../support/appSpec';
 
-const REPO_ROOT = join(import.meta.dir, '..', '..', '..');
-
-interface EnvVar {
-  key: string;
-}
-interface Service {
-  envs?: EnvVar[];
-}
-interface Job {
-  name?: string;
-  envs?: EnvVar[];
-}
-interface AppSpec {
-  services?: Service[];
-  jobs?: Job[];
-}
-
-const appSpec = Bun.YAML.parse(
-  await Bun.file(join(REPO_ROOT, '.do', 'app.yaml')).text(),
-) as AppSpec;
+const appSpec = await loadAppSpec();
 const runbook = await Bun.file(join(REPO_ROOT, 'docs', 'DEPLOYMENT.md')).text();
 
 // Every env key the spec actually declares (web service + jobs), deduped.
