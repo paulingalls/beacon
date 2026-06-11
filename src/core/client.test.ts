@@ -577,7 +577,7 @@ describe('flushViaBeacon (unload transport seam)', () => {
 
 describe('delivery callbacks (onSent / onDrop / onError)', () => {
   test('onDrop fires with the batch events on a non-429 4xx and does not retry', async () => {
-    const dropped: Array<{ events: BeaconEvent[]; status: number }> = [];
+    const dropped: Array<{ events: BeaconEvent[]; status?: number }> = [];
     const { fetchFn, calls } = makeFetch([{ status: 403 }]); // story-006 allowlist rejection
     const { client } = build(
       { onDrop: (events, info) => dropped.push({ events, status: info.status }) },
@@ -643,5 +643,48 @@ describe('delivery callbacks (onSent / onDrop / onError)', () => {
     await expect(client.flush()).resolves.toBeUndefined(); // drain completes despite the throw
 
     expect(calls).toHaveLength(1);
+  });
+
+  test('onDrop fires with info.exhausted when a batch exhausts its retries', async () => {
+    const dropped: Array<{
+      events: BeaconEvent[];
+      info: { status?: number; exhausted?: boolean };
+    }> = [];
+    const errors: Array<{ status?: number; error?: unknown }> = [];
+    const { fetchFn, calls } = makeFetch([{ status: 500 }]); // always 5xx → transient
+    const { client } = build(
+      {
+        onError: (_e, info) => errors.push(info),
+        onDrop: (events, info) => dropped.push({ events, info }),
+      },
+      { fetch: fetchFn },
+    );
+    client.track('e', { keep: true });
+    await client.flush(); // 500 → onError, re-queued (attempt 1)
+    await client.flush(); // 500 → onError, attempt 2 == MAX → dropped → onDrop{exhausted}
+    await client.flush(); // queue empty → no further POST or callback
+
+    expect(calls).toHaveLength(2); // original attempt + the one retry, then exhausted
+    expect(errors).toHaveLength(2); // onError on BOTH failing attempts (no regression)
+    expect(dropped).toHaveLength(1);
+    expect(dropped[0]?.info.exhausted).toBe(true);
+    expect(dropped[0]?.info.status).toBeUndefined(); // exhaustion drop has no HTTP status
+    expect(dropped[0]?.events.map((e) => e.eventType)).toEqual(['e']);
+    expect(dropped[0]?.events[0]?.properties).toEqual({ keep: true });
+  });
+
+  test('a throwing onDrop on retry exhaustion does not break the drain', async () => {
+    const { fetchFn } = makeFetch([{ status: 500 }]);
+    const { client } = build(
+      {
+        onDrop: () => {
+          throw new Error('host callback boom');
+        },
+      },
+      { fetch: fetchFn },
+    );
+    client.track('e');
+    await client.flush(); // attempt 1 → re-queued
+    await expect(client.flush()).resolves.toBeUndefined(); // attempt 2 exhausts → onDrop throws, drain still resolves
   });
 });
