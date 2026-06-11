@@ -688,3 +688,125 @@ describe('delivery callbacks (onSent / onDrop / onError)', () => {
     await expect(client.flush()).resolves.toBeUndefined(); // attempt 2 exhausts → onDrop throws, drain still resolves
   });
 });
+
+describe('onDrop on queue overflow (reason: overflow)', () => {
+  type OverflowDrop = { events: BeaconEvent[]; reason?: string };
+  const markers = (d: OverflowDrop) => d.events.map((e) => (e.properties as { n: number }).n);
+
+  // A fetch whose FIRST POST blocks on a gate then resolves to `failResponse` (so the queue can
+  // be filled past the cap while that batch is in flight); every later POST succeeds (202).
+  type FakeResponse = { ok: boolean; status: number; headers: { get: () => string | null } };
+  function gatedFetch(failResponse: FakeResponse): { fetchFn: typeof fetch; release: () => void } {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    let first = true;
+    const fetchFn = (async () => {
+      if (first) {
+        first = false;
+        await gate;
+        return failResponse;
+      }
+      return { ok: true, status: 202, headers: { get: () => null } };
+    }) as unknown as typeof fetch;
+    return { fetchFn, release };
+  }
+
+  test('track() into a full queue fires onDrop{reason:overflow} with the evicted oldest event', () => {
+    const dropped: OverflowDrop[] = [];
+    // maxBatchSize 100 keeps the synchronous track loop from auto-flushing mid-fill
+    // (flush is async and can't run until the loop yields), so the queue truly fills to 500.
+    const { client } = build({
+      maxBatchSize: 100,
+      onDrop: (events, info) => dropped.push({ events, reason: info.reason }),
+    });
+    for (let n = 0; n < 501; n++) client.track('e', { n }); // 1 over the 500 cap → evict n=0
+
+    expect(dropped).toHaveLength(1);
+    expect(dropped[0]?.reason).toBe('overflow');
+    expect(markers(dropped[0] as OverflowDrop)).toEqual([0]); // the single oldest event
+    client.shutdown();
+  });
+
+  test('a throwing onDrop on a track() overflow does not break track()', () => {
+    const { client } = build({
+      maxBatchSize: 100,
+      onDrop: () => {
+        throw new Error('host callback boom');
+      },
+    });
+    expect(() => {
+      for (let n = 0; n < 501; n++) client.track('e', { n });
+    }).not.toThrow();
+    client.shutdown();
+  });
+
+  test('a failed batch re-queued past the cap fires onDrop{reason:overflow} for its dropped oldest', async () => {
+    // Mirror the eviction-direction test: gate the failing POST, fill the queue while it is in
+    // flight so room < batch on re-queue, then assert the dropped oldest surface via onDrop.
+    const { fetchFn, release } = gatedFetch({
+      ok: false,
+      status: 500,
+      headers: { get: () => null },
+    });
+
+    const dropped: OverflowDrop[] = [];
+    const { client } = build(
+      { maxBatchSize: 50, onDrop: (events, info) => dropped.push({ events, reason: info.reason }) },
+      { fetch: fetchFn },
+    );
+    for (let n = 0; n < 50; n++) client.track('e', { n }); // failing batch 0..49
+    const flushing = client.flush();
+    await tick(); // first POST starts and blocks on the gate
+    for (let n = 50; n < 525; n++) client.track('e', { n }); // fill to 475 → room = 25 on re-queue
+    release();
+    await flushing; // batch [0..49] fails → re-queue front, drop the 25 oldest
+
+    const overflow = dropped.filter((d) => d.reason === 'overflow');
+    expect(overflow).toHaveLength(1);
+    expect(markers(overflow[0] as OverflowDrop)).toEqual([...Array(25).keys()]); // n=0..24 dropped
+    client.shutdown();
+  });
+
+  test('a 429-paused batch re-queued past the cap fires onDrop{reason:overflow} for its dropped oldest', async () => {
+    const { fetchFn, release } = gatedFetch({
+      ok: false,
+      status: 429,
+      headers: { get: () => '1' }, // Retry-After: 1s
+    });
+
+    const dropped: OverflowDrop[] = [];
+    const { client } = build(
+      { maxBatchSize: 50, onDrop: (events, info) => dropped.push({ events, reason: info.reason }) },
+      { fetch: fetchFn },
+    );
+    for (let n = 0; n < 50; n++) client.track('e', { n }); // paused batch 0..49
+    const flushing = client.flush();
+    await tick();
+    for (let n = 50; n < 525; n++) client.track('e', { n }); // fill to 475 → room = 25 on re-queue
+    release();
+    await flushing; // 429 → re-queue front WITHOUT consuming an attempt, drop the 25 oldest
+
+    const overflow = dropped.filter((d) => d.reason === 'overflow');
+    expect(overflow).toHaveLength(1);
+    expect(markers(overflow[0] as OverflowDrop)).toEqual([...Array(25).keys()]); // n=0..24 dropped
+    client.shutdown();
+  });
+
+  test('restoring a persisted queue past the cap fires onDrop{reason:overflow} for the trimmed oldest', async () => {
+    const dropped: OverflowDrop[] = [];
+    const seed = Array.from({ length: 501 }, (_, n) => ({ eventType: 'e', properties: { n } }));
+    const storage = makeStorage(seed);
+    const { client } = build({
+      storage: storage.adapter,
+      onDrop: (events, info) => dropped.push({ events, reason: info.reason }),
+    });
+    await tick(); // let the restore storage-chain merge + trim settle
+
+    const overflow = dropped.filter((d) => d.reason === 'overflow');
+    expect(overflow).toHaveLength(1);
+    expect(markers(overflow[0] as OverflowDrop)).toEqual([0]); // oldest restored event trimmed
+    client.shutdown();
+  });
+});

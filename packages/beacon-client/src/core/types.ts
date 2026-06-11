@@ -45,17 +45,24 @@ export interface BeaconClientConfig {
    * - `onSent`: the batch was accepted (2xx). `productIdUsed` is the server's resolved
    *   product_id from the 202 body — lets the host detect its events were attributed to a
    *   different product than intended.
-   * - `onDrop`: the batch was permanently dropped — events the SDK will NOT retry. Two
+   * - `onDrop`: the batch was permanently dropped — events the SDK will NOT retry. Three
    *   disjoint triggers, distinguished by `info`: a server REJECTION (non-429 4xx, e.g. a
    *   product-allowlist 403) carries `info.status`; a RETRY EXHAUSTION (a transient failure
-   *   retried up to MAX_RETRY_ATTEMPTS) carries `info.exhausted === true` and no status.
+   *   retried up to MAX_RETRY_ATTEMPTS) carries `info.exhausted === true` and no status; a
+   *   QUEUE OVERFLOW (the bounded queue dropped the oldest event(s) to stay under
+   *   MAX_QUEUE_SIZE — on track(), on re-queue of a failed/paused batch, or on restore of a
+   *   persisted queue) carries `info.reason === 'overflow'`. So a host accounting for every
+   *   event can detect overflow loss via `onDrop`, not just silent eviction.
    * - `onError`: a TRANSIENT failure (5xx → `info.status`; thrown fetch → `info.error`). The
    *   events are retried ONCE (MAX_RETRY_ATTEMPTS); on the second consecutive transient
    *   failure they are dropped and `onDrop` fires with `info.exhausted` — so a host accounting
    *   for every event can detect retry-exhaustion loss via `onDrop`, not just repeated `onError`.
    */
   onSent?: (events: BeaconEvent[], info: { productIdUsed?: string }) => void;
-  onDrop?: (events: BeaconEvent[], info: { status?: number; exhausted?: boolean }) => void;
+  onDrop?: (
+    events: BeaconEvent[],
+    info: { status?: number; exhausted?: boolean; reason?: 'overflow' },
+  ) => void;
   onError?: (events: BeaconEvent[], info: { status?: number; error?: unknown }) => void;
 }
 
