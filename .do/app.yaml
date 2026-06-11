@@ -1,6 +1,5 @@
 # DigitalOcean App Platform spec for Beacon (sprint-012 / Milestone 4).
-# Deploy with: doctl apps create --spec .do/app.yaml  (full runbook: docs/DEPLOYMENT.md,
-# added in Milestone 5 — not present yet).
+# Deploy with: doctl apps create --spec .do/app.yaml  (full runbook: docs/DEPLOYMENT.md).
 #
 # One Dockerfile-backed web service hosts every Beacon surface (ingest, query API,
 # dashboard, and the URL shortener at root) plus the DB-free /health probe. A Managed
