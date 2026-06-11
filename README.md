@@ -209,10 +209,11 @@ const client = new BeaconClient({
     // Accepted (2xx). `productIdUsed` is the server's resolved product_id — lets you
     // detect events attributed to a different product than intended.
     onSent: (events, info) => console.log(`sent ${events.length} (as ${info.productIdUsed})`),
-    // The server permanently rejected the batch (e.g. a product-allowlist 403). Not retried.
+    // The batch was permanently dropped: a server rejection (4xx, info.status) or
+    // retry exhaustion after transient failures (info.exhausted). These events are lost.
     onDrop: (events) => console.warn(`dropped ${events.length} events`),
-    // Transient failure (5xx / network). Retried; treat a repeated onError for the same
-    // batch as a probable loss.
+    // Transient failure (5xx / network), retried. On exhaustion the events are dropped
+    // and onDrop fires with info.exhausted.
     onError: (events, info) => console.warn(`transient send error (status ${info.status ?? 0})`),
 });
 ```

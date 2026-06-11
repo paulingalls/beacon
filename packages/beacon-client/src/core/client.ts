@@ -245,10 +245,17 @@ export class BeaconClient {
 
   /** Re-queue a failed batch to the front; drop events that have exhausted their 1 retry. */
   private requeueFailed(batch: QueuedEvent[]): void {
+    const exhausted: QueuedEvent[] = [];
     const survivors = batch.filter((q) => {
       q.attempts += 1;
-      return q.attempts < MAX_RETRY_ATTEMPTS; // attempt 1 keeps; 2 drops (1 retry total)
+      if (q.attempts < MAX_RETRY_ATTEMPTS) return true; // attempt 1 keeps; 2 drops (1 retry total)
+      exhausted.push(q);
+      return false;
     });
+    // Surface retry-exhaustion loss: a host using onDrop to account for every event would
+    // otherwise miss these (only server rejections fired onDrop before). info.exhausted (no
+    // status) distinguishes them from a 4xx rejection drop.
+    if (exhausted.length > 0) this.notify(this.config.onDrop, exhausted, { exhausted: true });
     // Re-queueing to the FRONT: these survivors are the oldest events in the system.
     // Under the drop-oldest invariant an overflow must drop the OLDEST, so keep the
     // NEWEST `room` survivors (the tail), not the head.
