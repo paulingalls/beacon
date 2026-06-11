@@ -92,7 +92,7 @@ export class BeaconClient {
 
   /** Queue a custom event. Drops the oldest event when the queue is full (§8.1). */
   track(eventType: string, properties?: Record<string, unknown>): void {
-    if (this.queue.length >= MAX_QUEUE_SIZE) this.queue.shift();
+    const evicted = this.queue.length >= MAX_QUEUE_SIZE ? this.queue.shift() : undefined;
     const event: BeaconEvent = {
       eventType,
       ...(properties !== undefined ? { properties } : {}),
@@ -100,6 +100,10 @@ export class BeaconClient {
     };
     this.queue.push({ event, attempts: 0 });
     this.persist();
+    // Fire onDrop AFTER the queue invariant is settled: if a host's onDrop re-enters
+    // track() the queue is already back under the cap, so the nested track can't push
+    // the queue transiently over MAX_QUEUE_SIZE.
+    if (evicted) this.notifyOverflow([evicted]);
     if (this.queue.length >= this.maxBatchSize) void this.flush();
   }
 
@@ -243,6 +247,22 @@ export class BeaconClient {
     this.notify(onSent, batch, { productIdUsed });
   }
 
+  /** Fire onDrop with the overflow reason for events evicted by the drop-oldest cap (§8.1). */
+  private notifyOverflow(dropped: QueuedEvent[]): void {
+    if (dropped.length > 0) this.notify(this.config.onDrop, dropped, { reason: 'overflow' });
+  }
+
+  /**
+   * Re-queue events to the FRONT under the queue cap. These events are the oldest in the
+   * system, so under the drop-oldest invariant an overflow keeps the NEWEST `room` (the tail)
+   * and fires onDrop{overflow} for the dropped head — so a host can account for the loss.
+   */
+  private requeueToFront(events: QueuedEvent[]): void {
+    const room = Math.max(0, MAX_QUEUE_SIZE - this.queue.length);
+    if (events.length > room) this.notifyOverflow(events.slice(0, events.length - room));
+    this.queue.unshift(...events.slice(events.length - room));
+  }
+
   /** Re-queue a failed batch to the front; drop events that have exhausted their 1 retry. */
   private requeueFailed(batch: QueuedEvent[]): void {
     const exhausted: QueuedEvent[] = [];
@@ -256,19 +276,13 @@ export class BeaconClient {
     // otherwise miss these (only server rejections fired onDrop before). info.exhausted (no
     // status) distinguishes them from a 4xx rejection drop.
     if (exhausted.length > 0) this.notify(this.config.onDrop, exhausted, { exhausted: true });
-    // Re-queueing to the FRONT: these survivors are the oldest events in the system.
-    // Under the drop-oldest invariant an overflow must drop the OLDEST, so keep the
-    // NEWEST `room` survivors (the tail), not the head.
-    const room = Math.max(0, MAX_QUEUE_SIZE - this.queue.length);
-    this.queue.unshift(...survivors.slice(survivors.length - room));
+    this.requeueToFront(survivors);
     this.persist();
   }
 
   /** Re-queue a rate-limited batch to the front WITHOUT consuming an attempt, and pause. */
   private requeuePause(batch: QueuedEvent[], retryAfterMs: number): void {
-    // Same drop-oldest reasoning as requeueFailed: keep the NEWEST `room` of the batch.
-    const room = Math.max(0, MAX_QUEUE_SIZE - this.queue.length);
-    this.queue.unshift(...batch.slice(batch.length - room));
+    this.requeueToFront(batch);
     this.pausedUntil = this.now() + retryAfterMs;
     this.persist();
   }
@@ -286,7 +300,14 @@ export class BeaconClient {
         const loaded = await loading;
         // Restored events are older than anything tracked meanwhile → prepend to front.
         this.queue.unshift(...loaded.map((event) => ({ event, attempts: 0 })));
-        while (this.queue.length > MAX_QUEUE_SIZE) this.queue.shift();
+        // Trim oldest-first (front) back under the cap; surface the loss so a host can
+        // account for events a previous session persisted but this one can't hold.
+        const evicted: QueuedEvent[] = [];
+        while (this.queue.length > MAX_QUEUE_SIZE) {
+          const e = this.queue.shift();
+          if (e) evicted.push(e);
+        }
+        this.notifyOverflow(evicted);
         await storage.save(this.queue.map((q) => q.event));
       } catch {
         // Best-effort durability — a failed restore must not break construction.
