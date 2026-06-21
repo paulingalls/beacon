@@ -1,10 +1,16 @@
 import type { Context, MiddlewareHandler } from 'hono';
 
+import type { BeaconRequest } from '../adapter/beaconRequest';
 import type { EventSink } from '../events/sink';
 import type { BeaconEvent } from '../types';
 import { extractAttribution } from '../visitors/attribution';
 import type { VisitorTokenStore } from '../visitors/tokenStore';
-import { buildEventContext, defaultClientAddress, resolveIp } from './requestContext';
+import {
+  buildEventContext,
+  defaultClientAddress,
+  honoRequest,
+  resolveIpFromRequest,
+} from './requestContext';
 
 // Expose the visitor token on the Hono context so the host app can read it
 // (e.g. to append ?_t= to rendered links) via c.get('beaconVisitorToken').
@@ -66,10 +72,15 @@ export function requestLogger(buffer: EventSink, opts: RequestLoggerOptions): Mi
       return;
     }
 
+    // One BeaconRequest for this request — honoRequest threads the (possibly
+    // overridden) getClientAddress through the §1.3 guard. setToken below writes
+    // back to the Hono Context so the host handler can read it while rendering.
+    const req = honoRequest(c, getClientAddress);
+
     // Resolved once, before next(): the IP/UA seed the token record, and the
     // token must be on the context before the handler renders.
-    const ip = resolveIp(c, hashIPs, getClientAddress);
-    const userAgent = c.req.header('user-agent');
+    const ip = resolveIpFromRequest(req, hashIPs);
+    const userAgent = req.header('user-agent');
 
     // getUserId is host-supplied; a throw here drops logging for this request
     // (we can't attribute it) but must never crash the host.
@@ -87,8 +98,8 @@ export function requestLogger(buffer: EventSink, opts: RequestLoggerOptions): Mi
     let visitorToken: string | null = null;
     if (canLog && tokenStore && userId === null) {
       try {
-        visitorToken = resolveVisitorToken(c, tokenStore, ip, userAgent);
-        c.set('beaconVisitorToken', visitorToken);
+        visitorToken = resolveVisitorToken(req, tokenStore, ip, userAgent);
+        req.setToken(visitorToken);
       } catch (err) {
         console.warn(`[beacon] visitor token resolution failed: ${String(err)}`);
         visitorToken = null;
@@ -98,7 +109,7 @@ export function requestLogger(buffer: EventSink, opts: RequestLoggerOptions): Mi
       // or strip the (valid) token from the event/context.
       if (visitorToken !== null) {
         try {
-          captureAttribution(c, tokenStore, visitorToken);
+          captureAttribution(req, tokenStore, visitorToken);
         } catch (err) {
           console.warn(`[beacon] attribution capture failed: ${String(err)}`);
         }
@@ -130,7 +141,7 @@ export function requestLogger(buffer: EventSink, opts: RequestLoggerOptions): Mi
           // true status — including an onError-supplied 4xx/3xx.
           const status = threw ? 500 : c.res.status;
           buffer.push(
-            buildEvent(c, {
+            buildEvent(req, {
               productId,
               userId,
               visitorToken,
@@ -151,12 +162,12 @@ export function requestLogger(buffer: EventSink, opts: RequestLoggerOptions): Mi
 
 /** Mint or reuse a visitor token (§2). Attribution is captured separately. */
 function resolveVisitorToken(
-  c: Context,
+  req: BeaconRequest,
   store: VisitorTokenStore,
   ip: string | undefined,
   userAgent: string | undefined,
 ): string {
-  const param = c.req.query('_t');
+  const param = req.query('_t');
   const existing = param ? store.get(param) : null;
   if (existing) {
     store.touch(existing.token);
@@ -169,8 +180,8 @@ function resolveVisitorToken(
 }
 
 /** Record first-touch attribution for a resolved token (§3). Best-effort. */
-function captureAttribution(c: Context, store: VisitorTokenStore, token: string): void {
-  const attribution = extractAttribution(c.req.url);
+function captureAttribution(req: BeaconRequest, store: VisitorTokenStore, token: string): void {
+  const attribution = extractAttribution(req.url);
   if (attribution) store.setAttribution(token, attribution);
 }
 
@@ -186,12 +197,12 @@ interface BuildArgs {
   status: number;
 }
 
-function buildEvent(c: Context, args: BuildArgs): BeaconEvent {
+function buildEvent(req: BeaconRequest, args: BuildArgs): BeaconEvent {
   const { productId, userId, visitorToken, ip, path, requestTime, responseTimeMs, status } = args;
 
   // Transport `context` + platform come from the shared builder so a track()
   // event and this request event are assembled identically.
-  const { context, platform } = buildEventContext(c, ip);
+  const { context, platform } = buildEventContext(req, ip);
 
   return {
     productId,
@@ -202,7 +213,7 @@ function buildEvent(c: Context, args: BuildArgs): BeaconEvent {
     platform,
     properties: {
       path,
-      method: c.req.method,
+      method: req.method,
       status,
       response_time_ms: responseTimeMs,
     },
