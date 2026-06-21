@@ -10,15 +10,9 @@ import type { BeaconConfig, BufferStats } from '@pi-innovations/beacon';
 import { adminGate } from '@pi-innovations/beacon/internal/api/auth';
 import { createIngestHandler } from '@pi-innovations/beacon/internal/api/ingest';
 import { RateLimiter, rateLimitGate } from '@pi-innovations/beacon/internal/api/rateLimit';
-import { createDashboardHandler } from '@pi-innovations/beacon/internal/dashboard/index';
 import { EventBuffer } from '@pi-innovations/beacon/internal/events/buffer';
 import { track as trackEvent } from '@pi-innovations/beacon/internal/events/track';
 import { requestLogger } from '@pi-innovations/beacon/internal/middleware/requestLogger';
-import { createAggregateHandler } from '@pi-innovations/beacon/internal/query/aggregate';
-import { createAttributionHandler } from '@pi-innovations/beacon/internal/query/attribution';
-import { createEventsHandler } from '@pi-innovations/beacon/internal/query/events';
-import { createFunnelHandler } from '@pi-innovations/beacon/internal/query/funnel';
-import { createSchemaHandler } from '@pi-innovations/beacon/internal/query/schema';
 import { ShortLinkCache } from '@pi-innovations/beacon/internal/shortener/cache';
 import { createCreateHandler } from '@pi-innovations/beacon/internal/shortener/create';
 import { createRedirectHandler } from '@pi-innovations/beacon/internal/shortener/redirect';
@@ -30,6 +24,12 @@ import {
 import { closeDb, createDb } from '@pi-innovations/beacon/internal/storage/db';
 import { VisitorTokenStore } from '@pi-innovations/beacon/internal/visitors/tokenStore';
 import { type Context, Hono, type MiddlewareHandler } from 'hono';
+import { createDashboardHandler } from './dashboard/index';
+import { createAggregateHandler } from './query/aggregate';
+import { createAttributionHandler } from './query/attribution';
+import { createEventsHandler } from './query/events';
+import { createFunnelHandler } from './query/funnel';
+import { createSchemaHandler } from './query/schema';
 
 /** Query-API rate-limit window: requests/min/user (REQUIREMENTS.md §5.2). */
 const QUERY_RATE_WINDOW_MS = 60_000;
