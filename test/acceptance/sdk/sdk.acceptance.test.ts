@@ -128,6 +128,45 @@ describe.skipIf(!TEST_DB)('SDK acceptance — beacon-client → live ingest → 
     }
   });
 
+  test('E2E: the SDK visitorToken (seed + setVisitorToken) round-trips to beacon_events.visitor_token', async () => {
+    // The cookie-free SPA case: the client carries its anonymous handle in the body; the
+    // server (no getUserId) stores it as the visitor identity. Rotating the token mid-session
+    // (setVisitorToken) attributes subsequent events to the new handle.
+    const client = new BeaconClient({
+      endpoint,
+      productId: PRODUCT,
+      appContext: { appVersion: '1.0.0', platform: 'web' },
+      flushInterval: 60_000,
+      visitorToken: 'visitor-1',
+    });
+    try {
+      client.track('page_view', { path: '/home' });
+      await client.flush();
+      await beacon.flush();
+
+      client.setVisitorToken('visitor-2');
+      client.track('page_view', { path: '/pricing' });
+      await client.flush();
+      await beacon.flush();
+
+      const rows = (await sql`
+        SELECT visitor_token, user_id, properties
+        FROM beacon_events WHERE product_id = ${PRODUCT} ORDER BY received_at
+      `) as Array<{
+        visitor_token: string | null;
+        user_id: string | null;
+        properties: { path?: string };
+      }>;
+
+      expect(rows.map((r) => r.visitor_token)).toEqual(['visitor-1', 'visitor-2']);
+      // Anonymous throughout — no getUserId on the server, no body user_id from the client.
+      expect(rows.every((r) => r.user_id === null)).toBe(true);
+      expect(rows.map((r) => r.properties.path)).toEqual(['/home', '/pricing']);
+    } finally {
+      client.shutdown();
+    }
+  });
+
   test('reaching maxBatchSize auto-flushes from the SDK to the live ingest', async () => {
     const before = beacon.stats().buffered + beacon.stats().flushed;
     const client = new BeaconClient({
