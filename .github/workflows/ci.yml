@@ -18,9 +18,17 @@
 name: CI
 
 on:
+  # Run on every push EXCEPT main: main is releases-only, and its CI is the hard
+  # gate inside deploy.yml (which calls this workflow via workflow_call before the
+  # SSH deploy). Excluding main here avoids a redundant second CI run per release.
   push:
+    branches-ignore:
+      - main
   pull_request:
   workflow_dispatch:
+  # Reusable: deploy.yml does `uses: ./.github/workflows/ci.yml` so a production
+  # deploy only runs after this full suite passes on the merged main commit.
+  workflow_call:
 
 # Least-privilege GITHUB_TOKEN: every job only checks out code and runs tests —
 # none write to the repo, releases, or packages. Pin read-only here so the token
@@ -29,11 +37,13 @@ permissions:
   contents: read
 
 # One run per ref; a new push cancels an in-flight run for the same branch —
-# EXCEPT on main, where every commit must keep its own completed run (a cancelled
-# main run would leave a merge commit without a green CI record).
+# EXCEPT on the long-lived branches main and develop, where every commit must keep
+# its own completed run (a cancelled run would leave a commit without a green CI
+# record). main reaches this workflow only via deploy.yml's workflow_call, where
+# github.ref is still refs/heads/main — so the no-cancel rule still applies there.
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' && github.ref != 'refs/heads/develop' }}
 
 jobs:
   lint:

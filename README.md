@@ -375,7 +375,7 @@ hostApp.route('/', hostBeacon.shortener());               // GET /:code — moun
 export default hostApp;
 ```
 
-Deployment of this host app to DigitalOcean App Platform is covered in [`docs/DEPLOYMENT.md`](./docs/DEPLOYMENT.md).
+Deployment of this host app to a DigitalOcean droplet (Caddy + systemd, autodeploy on merge to `main`) is covered in [`docs/DEPLOYMENT.md`](./docs/DEPLOYMENT.md).
 
 ## Agent Integration
 
@@ -439,7 +439,7 @@ Design specs and the phased build plan live in the [`docs/`](./docs) directory:
 | [`docs/BEACON_OVERVIEW.md`](./docs/BEACON_OVERVIEW.md) | Product overview and design rationale |
 | [`docs/REQUIREMENTS.md`](./docs/REQUIREMENTS.md) | The implementation contract — every field, endpoint, and configuration option |
 | [`docs/MILESTONES.md`](./docs/MILESTONES.md) | Master build plan and index to the phase documents |
-| [`docs/DEPLOYMENT.md`](./docs/DEPLOYMENT.md) | DigitalOcean App Platform deployment runbook |
+| [`docs/DEPLOYMENT.md`](./docs/DEPLOYMENT.md) | DigitalOcean droplet deployment runbook |
 | `docs/phases/PHASE_1_FOUNDATION.md` … `docs/phases/PHASE_8_CLIENT_SDK.md` | Detailed milestones for each build phase |
 
 ## License

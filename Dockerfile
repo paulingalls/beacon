@@ -1,6 +1,10 @@
-# Container image for the Beacon host app (apps/server) — sprint-012 / Milestone 4.
-# DigitalOcean App Platform buildpacks don't ship Bun, so we build from oven/bun and run
-# the TypeScript entry directly (Bun executes .ts; the workspace has no build step).
+# Container image for the Beacon host app (apps/server).
+#
+# NOT the production deploy path: the droplet runs `bun run` directly under systemd
+# (see docs/DEPLOYMENT.md, deploy/beacon.service). This image is kept for optional
+# container-based runs — local container testing, or a future container deploy target —
+# so the host app stays runnable as an image. It builds from oven/bun (Bun executes the
+# .ts entry directly; the workspace has no build step).
 FROM oven/bun:1.3.14-alpine
 
 WORKDIR /app
@@ -21,6 +25,6 @@ RUN bun install --frozen-lockfile --production --ignore-scripts
 # Copy the source (bun runs the .ts directly — no compile step).
 COPY . .
 
-# apps/server reads PORT (default 8080); App Platform sets PORT to the service http_port.
+# apps/server reads PORT (default 8080); a container runtime can override it.
 EXPOSE 8080
 CMD ["bun", "run", "apps/server/src/server.ts"]
