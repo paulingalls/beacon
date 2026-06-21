@@ -1,7 +1,8 @@
 import type { Context } from 'hono';
 import { getConnInfo } from 'hono/bun';
 
-// Framework-agnostic request adapter (execution_plan.json §Milestone 3). The
+// Framework-agnostic request adapter (REQUIREMENTS.md §1.1 request-metadata/
+// transport-context; execution_plan.json §Milestone 3). The
 // event-capture layer (requestContext/requestLogger/track/ingest) reads request
 // metadata through Hono's Context today; BeaconRequest is the minimal surface it
 // actually needs, so the same capture logic can run under Bun.serve — which has
@@ -44,9 +45,13 @@ const VISITOR_TOKEN_KEY = 'beaconVisitorToken';
 
 /**
  * Adapt a Hono Context to a BeaconRequest. Each method delegates to `c.req.*`;
- * getToken/setToken proxy the `beaconVisitorToken` Context variable; clientAddress
- * reuses the guarded getConnInfo lookup (returns undefined off-server rather than
- * throwing — the current defaultClientAddress behavior, §1.1).
+ * getToken/setToken proxy the `beaconVisitorToken` Context variable. clientAddress
+ * intentionally inlines the guarded getConnInfo lookup (returns undefined off-server
+ * rather than throwing) instead of importing defaultClientAddress from
+ * middleware/requestContext: story-002 inverts that dependency so requestContext
+ * imports this adapter, and importing back would form a cycle. This is a transient
+ * duplicate — story-002 deletes the copy in requestContext once resolveIp reads
+ * req.clientAddress() (§1.1).
  */
 export function honoToBeaconRequest(c: Context): BeaconRequest {
   return {
@@ -81,13 +86,17 @@ export function requestToBeaconRequest(
 ): BeaconRequest {
   const parsed = new URL(request.url);
   let token: string | null = null;
+  // A Web Request body is a one-shot stream: a second request.json() throws
+  // "Body already read". Hono's c.req.json() memoizes, so cache the parse Promise
+  // here to keep json() callable more than once and identical across transports.
+  let bodyPromise: Promise<unknown> | undefined;
   return {
     header: (name) => request.headers.get(name) ?? undefined,
     query: (name) => parsed.searchParams.get(name) ?? undefined,
     url: request.url,
     path: parsed.pathname,
     method: request.method,
-    json: () => request.json(),
+    json: () => (bodyPromise ??= request.json()),
     clientAddress: () => opts?.clientAddress,
     getToken: () => token,
     setToken: (value) => {

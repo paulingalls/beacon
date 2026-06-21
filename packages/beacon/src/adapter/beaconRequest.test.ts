@@ -115,6 +115,22 @@ describe('requestToBeaconRequest', () => {
     expect(await req.json()).toEqual({ events: [{ event_type: 'tap' }] });
   });
 
+  test('json() is memoized — a second call returns the same value, not "Body already read"', async () => {
+    const request = new Request('https://host.example/ingest', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ events: [{ event_type: 'tap' }] }),
+    });
+    const req = requestToBeaconRequest(request);
+
+    const first = await req.json();
+    // A raw Request body is a one-shot stream; without memoization this throws.
+    const second = await req.json();
+
+    expect(first).toEqual({ events: [{ event_type: 'tap' }] });
+    expect(second).toEqual(first);
+  });
+
   test('clientAddress returns the injected socket address', () => {
     const req = requestToBeaconRequest(new Request('https://host.example/'), {
       clientAddress: '10.0.0.5',
