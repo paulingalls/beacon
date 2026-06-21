@@ -440,6 +440,7 @@ Design specs and the phased build plan live in the [`docs/`](./docs) directory:
 | [`docs/REQUIREMENTS.md`](./docs/REQUIREMENTS.md) | The implementation contract — every field, endpoint, and configuration option |
 | [`docs/MILESTONES.md`](./docs/MILESTONES.md) | Master build plan and index to the phase documents |
 | [`docs/DEPLOYMENT.md`](./docs/DEPLOYMENT.md) | DigitalOcean droplet deployment runbook |
+| [`docs/OPERATIONS.md`](./docs/OPERATIONS.md) | Day-2 operations: shell in, logs, deploys, troubleshooting |
 | `docs/phases/PHASE_1_FOUNDATION.md` … `docs/phases/PHASE_8_CLIENT_SDK.md` | Detailed milestones for each build phase |
 
 ## License
