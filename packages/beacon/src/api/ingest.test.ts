@@ -223,6 +223,106 @@ describe('createIngestHandler — batch product_id', () => {
   });
 });
 
+describe('createIngestHandler — batch visitor_token (body-carried, story-001)', () => {
+  /** Mount the ingest handler behind middleware that seeds a transport beaconVisitorToken. */
+  function appWithTransportToken(
+    buffer: EventBuffer,
+    opts: IngestOptions,
+    transportToken: string,
+  ): Hono {
+    const app = new Hono();
+    app.use('/events', async (c, next) => {
+      c.set('beaconVisitorToken', transportToken);
+      await next();
+    });
+    app.post('/events', createIngestHandler(buffer, opts));
+    return app;
+  }
+
+  test('reads an anonymous visitor_token from the body when no transport token is present', async () => {
+    const { buffer, pushed } = recordingBuffer();
+    const app = appWith(buffer, { productId: 'p' });
+
+    const res = await post(app, {
+      visitor_token: 'v1',
+      events: [{ event_type: 'a' }, { event_type: 'b' }],
+    });
+
+    expect(res.status).toBe(202);
+    expect(pushed.map((e) => e.visitorToken)).toEqual(['v1', 'v1']);
+  });
+
+  test('body visitor_token wins over the transport token', async () => {
+    const { buffer, pushed } = recordingBuffer();
+    const app = appWithTransportToken(buffer, { productId: 'p' }, 't1');
+
+    await post(app, { visitor_token: 'v1', events: [{ event_type: 'a' }] });
+
+    expect(pushed[0]?.visitorToken).toBe('v1');
+  });
+
+  test('falls back to the transport token when the body omits visitor_token', async () => {
+    const { buffer, pushed } = recordingBuffer();
+    const app = appWithTransportToken(buffer, { productId: 'p' }, 't1');
+
+    await post(app, { events: [{ event_type: 'a' }] });
+
+    expect(pushed[0]?.visitorToken).toBe('t1');
+  });
+
+  test('falls back to the transport token on an invalid body visitor_token (skip-not-reject)', async () => {
+    const invalid: unknown[] = ['', '   ', 42, null, { nested: true }, 'x'.repeat(101)];
+    for (const visitor_token of invalid) {
+      const { buffer, pushed } = recordingBuffer();
+      const app = appWithTransportToken(buffer, { productId: 'p' }, 't1');
+
+      const res = await post(app, { visitor_token, events: [{ event_type: 'a' }] });
+
+      expect(res.status).toBe(202); // batch still accepted
+      expect(pushed[0]?.visitorToken).toBe('t1');
+    }
+  });
+
+  test('trims surrounding whitespace from a valid body visitor_token', async () => {
+    const { buffer, pushed } = recordingBuffer();
+    await post(appWith(buffer, { productId: 'p' }), {
+      visitor_token: '  v1  ',
+      events: [{ event_type: 'a' }],
+    });
+    expect(pushed[0]?.visitorToken).toBe('v1');
+  });
+
+  test('with neither body nor transport token, visitorToken is null', async () => {
+    const { buffer, pushed } = recordingBuffer();
+    await post(appWith(buffer, { productId: 'p' }), { events: [{ event_type: 'a' }] });
+    expect(pushed[0]?.visitorToken).toBeNull();
+  });
+
+  test('ignores a body-asserted user_id — anonymous-only until trusted auth (M2)', async () => {
+    const { buffer, pushed } = recordingBuffer();
+    // getUserId resolves the real authenticated identity; the body must not override it.
+    const app = appWith(buffer, { productId: 'p', getUserId: () => 'real-user' });
+
+    await post(app, {
+      visitor_token: 'v1',
+      user_id: 'spoofed-user',
+      events: [{ event_type: 'a' }],
+    });
+
+    expect(pushed[0]?.userId).toBe('real-user');
+    expect(pushed[0]?.visitorToken).toBe('v1');
+  });
+
+  test('a body user_id is ignored even when no auth is configured (stays null)', async () => {
+    const { buffer, pushed } = recordingBuffer();
+    await post(appWith(buffer, { productId: 'p' }), {
+      user_id: 'spoofed-user',
+      events: [{ event_type: 'a' }],
+    });
+    expect(pushed[0]?.userId).toBeNull();
+  });
+});
+
 describe('createIngestHandler — fallback observability (concern 627bc47710fd)', () => {
   test('reports product_id_used and logs nothing on a valid body product_id', async () => {
     const warn = spyOn(console, 'warn').mockImplementation(() => {});
