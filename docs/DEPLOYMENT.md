@@ -140,6 +140,7 @@ committed**; `.env.*` is gitignored and this lives outside the repo:
 ```bash
 DATABASE_URL=postgres://beacon:<password>@private-<cluster-host>:25060/beacon_prod?sslmode=require
 ADMIN_TOKEN=<openssl rand -hex 32>
+TRUSTED_INGEST_TOKEN=<openssl rand -hex 32>
 SHORT_DOMAIN=https://beacon.vodshorter.com
 ```
 
@@ -157,6 +158,7 @@ systemctl enable --now beacon
 |---|---|---|
 | `DATABASE_URL` | yes | Managed Postgres connection string (TLS). Host fails fast if unset. |
 | `ADMIN_TOKEN` | set in prod | Bearer token gating dashboard + query API. **Unset ⇒ those surfaces fail closed (403).** |
+| `TRUSTED_INGEST_TOKEN` | set for s2s | Bearer secret authorizing a trusted caller to assert per-event `user_id`/`context` in the ingest body (M2). **Unset ⇒ trusted ingest disabled (anonymous-only).** See [`OPERATIONS.md`](./OPERATIONS.md) for rotation. |
 | `SHORT_DOMAIN` | no | Absolute base for generated short URLs. Without it the shortener emits relative `/CODE` redirects. |
 | `PRODUCT_ID` | no | Fallback `product_id` for events whose batch omits one (default `beacon`). |
 | `PRODUCT_ALLOWLIST` | no | Comma-separated allowlist of accepted `product_id`s. |

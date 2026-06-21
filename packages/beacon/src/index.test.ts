@@ -3,9 +3,18 @@ import { Hono } from 'hono';
 import { registerDbCoverageGuard, TEST_DB } from '../test/dbGuard';
 
 import { ctxWith, withTestDb } from '../test/helpers';
-import { type BeaconConfig, createBeacon } from './index';
+import { type BeaconConfig, createBeacon, verifyTrustedBearer } from './index';
 
 registerDbCoverageGuard();
+
+describe('public API exports', () => {
+  test('re-exports verifyTrustedBearer for host reuse', () => {
+    expect(typeof verifyTrustedBearer).toBe('function');
+    expect(verifyTrustedBearer('Bearer s3cret', 's3cret')).toBe(true);
+    expect(verifyTrustedBearer('Bearer wrong', 's3cret')).toBe(false);
+    expect(verifyTrustedBearer('Bearer s3cret', undefined)).toBe(false); // fail-closed
+  });
+});
 
 const baseConfig = (overrides: Partial<BeaconConfig> = {}): BeaconConfig => ({
   productId: 'beacon-test',
@@ -412,6 +421,40 @@ describe.skipIf(!TEST_DB)('createBeacon (integration, live Postgres)', () => {
     const rows = await migrator<{ product_id: string }[]>`
       SELECT product_id FROM beacon_events WHERE event_type = 'sdk_ping'`;
     expect(rows.map((r) => r.product_id)).toEqual(['other-app']);
+
+    await beacon.shutdown();
+  });
+
+  test('E2E: config.trustedIngestToken threads into ingest — a trusted bearer stores per-event user_id (story-003)', async () => {
+    const migrator = getDb();
+
+    const beacon = createBeacon({
+      productId: 'trust-host',
+      postgres: { connectionString: TEST_DB as string },
+      trustedIngestToken: 'wiring-secret',
+      flushInterval: 60_000,
+    });
+    const app = new Hono();
+    app.route(beacon.basePath, beacon.router());
+
+    const send = (headers: Record<string, string>, eventType: string) =>
+      app.request('/analytics/events', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', ...headers },
+        body: JSON.stringify({ events: [{ event_type: eventType, user_id: 'wired-user' }] }),
+      });
+
+    const trusted = await send({ authorization: 'Bearer wiring-secret' }, 'trust_wired');
+    expect(trusted.status).toBe(202);
+    const untrusted = await send({}, 'trust_unwired'); // no bearer → body user_id ignored
+    expect(untrusted.status).toBe(202);
+
+    await beacon.flush();
+    const rows = await migrator<{ event_type: string; user_id: string | null }[]>`
+      SELECT event_type, user_id FROM beacon_events WHERE event_type IN ('trust_wired', 'trust_unwired')`;
+    const byType = new Map(rows.map((r) => [r.event_type, r.user_id]));
+    expect(byType.get('trust_wired')).toBe('wired-user'); // config wired the token through
+    expect(byType.get('trust_unwired')).toBeNull(); // untrusted path unchanged
 
     await beacon.shutdown();
   });
