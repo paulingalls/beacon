@@ -1,5 +1,5 @@
+import type { JsonInput } from '@pi-innovations/beacon/internal/storage/db';
 import type { Sql } from 'postgres';
-import type { JsonInput } from '../storage/db';
 import { generateCode } from './codeGen';
 
 /** Max code-generation attempts before giving up on collisions (REQUIREMENTS.md §7.1). */

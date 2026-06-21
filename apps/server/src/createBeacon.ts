@@ -13,14 +13,6 @@ import { RateLimiter, rateLimitGate } from '@pi-innovations/beacon/internal/api/
 import { EventBuffer } from '@pi-innovations/beacon/internal/events/buffer';
 import { track as trackEvent } from '@pi-innovations/beacon/internal/events/track';
 import { requestLogger } from '@pi-innovations/beacon/internal/middleware/requestLogger';
-import { ShortLinkCache } from '@pi-innovations/beacon/internal/shortener/cache';
-import { createCreateHandler } from '@pi-innovations/beacon/internal/shortener/create';
-import { createRedirectHandler } from '@pi-innovations/beacon/internal/shortener/redirect';
-import {
-  type CreatedShortLink,
-  getShortLink,
-  createShortLink as persistShortLink,
-} from '@pi-innovations/beacon/internal/shortener/store';
 import { closeDb, createDb } from '@pi-innovations/beacon/internal/storage/db';
 import { VisitorTokenStore } from '@pi-innovations/beacon/internal/visitors/tokenStore';
 import { type Context, Hono, type MiddlewareHandler } from 'hono';
@@ -30,6 +22,14 @@ import { createAttributionHandler } from './query/attribution';
 import { createEventsHandler } from './query/events';
 import { createFunnelHandler } from './query/funnel';
 import { createSchemaHandler } from './query/schema';
+import { ShortLinkCache } from './shortener/cache';
+import { createCreateHandler } from './shortener/create';
+import { createRedirectHandler } from './shortener/redirect';
+import {
+  type CreatedShortLink,
+  getShortLink,
+  createShortLink as persistShortLink,
+} from './shortener/store';
 
 /** Query-API rate-limit window: requests/min/user (REQUIREMENTS.md §5.2). */
 const QUERY_RATE_WINDOW_MS = 60_000;

@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, test } from 'bun:test';
 import type { Sql } from 'postgres';
-import { registerDbCoverageGuard, TEST_DB } from '../../test/dbGuard';
+import { registerDbCoverageGuard, TEST_DB } from '../../../../packages/beacon/test/dbGuard';
 
-import { withTestDb } from '../../test/helpers';
+import { withTestDb } from '../../../../packages/beacon/test/helpers';
 import { createShortLink, getShortLink, incrementClickCount } from './store';
 
 const SHORT_DOMAIN = 'https://pi.ink';
