@@ -91,7 +91,16 @@ export function resolveIp(
   } catch (err) {
     console.warn(`[beacon] getClientAddress failed: ${String(err)}`);
   }
-  const ip = forwarded || socketAddress;
+  return hashIp(forwarded || socketAddress, hashIPs);
+}
+
+/**
+ * SHA-256 a client IP for storage (§1.1) when `hashIPs` is on; an undefined ip
+ * passes through as undefined. The one home for IP hashing — both `resolveIp` and
+ * the trusted-ingest per-event context path (api/ingest.ts) route through here so
+ * the privacy-sensitive hashing can never diverge.
+ */
+export function hashIp(ip: string | undefined, hashIPs: boolean): string | undefined {
   if (!ip) return undefined;
   return hashIPs ? createHash('sha256').update(ip).digest('hex') : ip;
 }
