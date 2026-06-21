@@ -24,8 +24,8 @@ export interface TrackOptions {
  * Reads user_id via getUserId and the visitor token + transport context the
  * request-logging middleware populated, builds a `<eventType>` event with the
  * given properties (defaulting to `{}` when omitted), and pushes it to the
- * shared EventBuffer. Fire-and-forget: returns void without awaiting — the
- * buffer flushes asynchronously.
+ * EventSink. Fire-and-forget: returns void without awaiting — the deployed
+ * EventBuffer sink flushes asynchronously.
  *
  * Throws only on an invalid event_type (empty/whitespace or >100 chars) — the
  * one intentional throw, validated before any side effect so nothing is pushed.

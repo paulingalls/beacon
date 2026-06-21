@@ -49,9 +49,11 @@ const VISITOR_TOKEN_KEY = 'beaconVisitorToken';
  * intentionally inlines the guarded getConnInfo lookup (returns undefined off-server
  * rather than throwing) instead of importing defaultClientAddress from
  * middleware/requestContext: story-002 inverts that dependency so requestContext
- * imports this adapter, and importing back would form a cycle. This is a transient
- * duplicate — story-002 deletes the copy in requestContext once resolveIp reads
- * req.clientAddress() (§1.1).
+ * imports this adapter, and importing back would form a cycle. This duplication is
+ * therefore PERMANENT, not transient — defaultClientAddress stays as the Hono-Context
+ * socket source for the Hono shims and host getClientAddress defaults (requestLogger,
+ * shortener/create, api/rateLimit), while this inlined copy serves the adapter. The
+ * two are intentionally mirrored, not shared; keep them in sync if the guard changes (§1.1).
  */
 export function honoToBeaconRequest(c: Context): BeaconRequest {
   return {
