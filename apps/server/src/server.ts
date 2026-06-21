@@ -32,7 +32,7 @@ export interface ServerEnv {
 /**
  * Build the constant-time admin predicate for createBeacon's isAdmin gate.
  *
- * Delegates to the package's audited `verifyTrustedBearer` (one constant-time bearer
+ * Delegates to apps/server's audited `verifyTrustedBearer` (one constant-time bearer
  * compare for the whole stack): it SHA-256s both sides and timingSafeEqual-compares, and
  * is fail-closed on an unset token — so with no ADMIN_TOKEN every request is non-admin and
  * the dashboard + query API stay unreachable rather than open.
