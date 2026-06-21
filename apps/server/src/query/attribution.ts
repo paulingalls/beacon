@@ -1,13 +1,12 @@
-import type { Context, Handler } from 'hono';
-import type { Sql } from 'postgres';
-
-import { errorResponse } from '../api/errors';
+import { errorResponse } from '@pi-innovations/beacon/internal/api/errors';
 import {
   buildFilters,
   type CommonQueryParams,
   parseCommonParams,
   QueryParamError,
-} from '../api/params';
+} from '@pi-innovations/beacon/internal/api/params';
+import type { Context, Handler } from 'hono';
+import type { Sql } from 'postgres';
 
 // Campaign/source performance endpoint (REQUIREMENTS.md §5.4 GET /analytics/attribution).
 // Groups attributed events by a UTM dimension (or a derived `channel`), counting
