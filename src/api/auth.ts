@@ -1,3 +1,5 @@
+import { createHash, timingSafeEqual } from 'node:crypto';
+
 import type { Context, MiddlewareHandler } from 'hono';
 
 import { errorResponse } from './errors';
@@ -35,4 +37,28 @@ export function adminGate(opts: AdminGateOptions): MiddlewareHandler {
     }
     await next();
   };
+}
+
+/**
+ * Constant-time check that a request carries the configured trusted-ingest bearer
+ * token (the M2 security cornerstone — see BeaconConfig.trustedIngestToken).
+ * `authorization` is the raw Authorization header value; its `Bearer <token>`
+ * payload is compared to `expected` — both SHA-256'd to fixed 32-byte digests so
+ * timingSafeEqual never throws on a length mismatch and the comparison leaks
+ * neither token length nor content via timing (mirrors makeIsAdmin in apps/server).
+ *
+ * Fail-closed: returns false when no trusted token is configured (trusted ingest
+ * disabled), when the header is absent, or when it is not a Bearer credential. The
+ * token value is never logged.
+ */
+export function verifyTrustedBearer(
+  authorization: string | null | undefined,
+  expected: string | undefined,
+): boolean {
+  if (!expected) return false; // trusted ingest disabled → fail closed
+  const provided = (authorization ?? '').match(/^Bearer\s+(.+)$/i)?.[1];
+  if (provided === undefined) return false; // absent / non-Bearer credential
+  const expectedDigest = createHash('sha256').update(expected).digest();
+  const providedDigest = createHash('sha256').update(provided).digest();
+  return timingSafeEqual(expectedDigest, providedDigest);
 }
