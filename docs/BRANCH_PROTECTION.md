@@ -42,10 +42,18 @@ gh api repos/paulingalls/beacon/branches/main/protection \
 
 Or in the UI: **Settings → Branches → Branch protection rules → `main`**.
 
-## Deferred: `develop`/`main` release split
+## Partially landed: `develop`/`main` release split
 
-A future evolution (tracked as SMM debt) is to introduce a `develop` integration branch as
-the XP primary, keep `main` for releases only, and switch the close flow to `gh pr merge`
-so the required-checks gate binds the admin too (rather than being bypassed by direct
-pushes). Revisit when there's a second contributor or a real release cadence — premature
-while a single maintainer does every integration merge.
+The **workflow-level** half of this split has landed: `develop` is the integration branch and
+`main` is releases-only. `ci.yml` runs on every push except `main` (`branches-ignore: [main]`),
+and [`deploy.yml`](../.github/workflows/deploy.yml) triggers on push to `main`, re-runs the full
+CI suite via `uses: ./.github/workflows/ci.yml` (so the main tip keeps its own completed CI
+record), then SSH-deploys to the droplet only if CI passes.
+
+The **protection-rule** half remains deferred: `enforce_admins` is still `false` and the XP
+close flow still merges locally and pushes directly to `main` as admin. Switching the close
+flow to `gh pr merge` — so the required-checks gate binds the admin too — is the remaining step.
+Note: when `enforce_admins` is flipped to `true`, the required check names must be reconciled
+with the deploy-time reusable CI call, whose checks render as `ci / lint`, `ci / typecheck`,
+etc., not the bare `lint`/`typecheck`/`test`/`e2e` names listed above. Revisit when there's a
+second contributor or a real release cadence.
