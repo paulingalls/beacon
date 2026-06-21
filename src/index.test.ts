@@ -1,18 +1,11 @@
 import { describe, expect, test } from 'bun:test';
-import { createHttpBeacon, verifyTrustedBearer } from './index';
+import { createHttpBeacon } from './index';
 
-// The createBeacon (DB-backed) coverage moved to apps/server/src/createBeacon.test.ts
-// with the factory itself (Milestone 4). This file guards only the postgres-free
-// emit-SDK export surface.
+// The createBeacon (DB-backed) coverage moved to apps/server/src/createBeacon.test.ts and
+// verifyTrustedBearer to apps/server/src/api/auth.test.ts with the factory + auth path
+// (Milestone 4). This file guards only the postgres-free emit-SDK export surface.
 
 describe('public API exports', () => {
-  test('re-exports verifyTrustedBearer for host reuse', () => {
-    expect(typeof verifyTrustedBearer).toBe('function');
-    expect(verifyTrustedBearer('Bearer s3cret', 's3cret')).toBe(true);
-    expect(verifyTrustedBearer('Bearer wrong', 's3cret')).toBe(false);
-    expect(verifyTrustedBearer('Bearer s3cret', undefined)).toBe(false); // fail-closed
-  });
-
   test('re-exports createHttpBeacon (framework-agnostic factory, Milestone 3)', async () => {
     expect(typeof createHttpBeacon).toBe('function');
     // Smoke: constructs without a DB (HTTP single-writer — no postgres) and exposes
