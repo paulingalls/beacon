@@ -19,6 +19,14 @@ export interface BeaconConfig {
    */
   productAllowlist?: string[];
   postgres: { connectionString: string; maxConnections?: number };
+  /**
+   * Shared secret authorizing a trusted server-to-server caller to assert per-event
+   * user_id + context in the ingest body (the M2 security cornerstone). When unset,
+   * trusted ingest is disabled (fail-closed): body user_id/context are never honored
+   * and the public anonymous path is unchanged. Compared in constant time (see
+   * api/auth.ts verifyTrustedBearer); never logged.
+   */
+  trustedIngestToken?: string;
   /** Resolve the authenticated user id from the request, or null. */
   getUserId?: (c: Context) => string | null;
   /**
