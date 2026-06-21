@@ -169,6 +169,10 @@ export function createIngestHandler(buffer: EventBuffer, opts: IngestOptions): H
     // visitor_token wins; the transport token (URL `_t`) is the fallback; an
     // invalid value (non-string / empty / over-length) is treated as absent so
     // the batch is never rejected over it (skip-not-reject, like product_id).
+    // Unlike an invalid product_id, an invalid visitor_token is INTENTIONALLY
+    // silent (no warn): it's anonymous, ephemeral, and arrives from untrusted
+    // high-volume public callers, so a malformed value is expected noise — not a
+    // misconfiguration signal — and warning on it would only invite log-spam.
     const visitorToken =
       validShortString(visitor_token, MAX_VISITOR_TOKEN_LENGTH) ?? transportVisitorToken;
 
