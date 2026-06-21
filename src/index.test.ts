@@ -3,7 +3,7 @@ import { Hono } from 'hono';
 import { registerDbCoverageGuard, TEST_DB } from '../test/dbGuard';
 
 import { ctxWith, withTestDb } from '../test/helpers';
-import { type BeaconConfig, createBeacon, verifyTrustedBearer } from './index';
+import { type BeaconConfig, createBeacon, createHttpBeacon, verifyTrustedBearer } from './index';
 
 registerDbCoverageGuard();
 
@@ -13,6 +13,23 @@ describe('public API exports', () => {
     expect(verifyTrustedBearer('Bearer s3cret', 's3cret')).toBe(true);
     expect(verifyTrustedBearer('Bearer wrong', 's3cret')).toBe(false);
     expect(verifyTrustedBearer('Bearer s3cret', undefined)).toBe(false); // fail-closed
+  });
+
+  test('re-exports createHttpBeacon (framework-agnostic factory, Milestone 3)', async () => {
+    expect(typeof createHttpBeacon).toBe('function');
+    // Smoke: constructs without a DB (HTTP single-writer — no postgres) and exposes
+    // the capture/track/flush/shutdown surface.
+    const b = createHttpBeacon({
+      productId: 'p',
+      endpoint: 'https://beacon.example/analytics/events',
+      trustedIngestToken: 't',
+      fetch: (async () => new Response(null, { status: 202 })) as unknown as typeof fetch,
+    });
+    expect(typeof b.capture).toBe('function');
+    expect(typeof b.track).toBe('function');
+    expect(typeof b.flush).toBe('function');
+    expect(typeof b.shutdown).toBe('function');
+    await b.shutdown(); // clear the flush timer
   });
 });
 

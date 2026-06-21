@@ -33,6 +33,10 @@ const DEFAULT_QUERY_RATE_LIMIT = 60;
 // Re-exported so a host (apps/server) can gate its own surfaces with the same audited
 // constant-time bearer compare instead of forking the logic (e.g. makeIsAdmin).
 export { verifyTrustedBearer } from './api/auth';
+export type { HttpBeacon, HttpBeaconOptions } from './httpBeacon';
+// Framework-agnostic factory (Milestone 3): the Bun.serve counterpart to createBeacon,
+// emitting over the trusted HTTP ingest boundary instead of writing Postgres directly.
+export { createHttpBeacon } from './httpBeacon';
 export type { BeaconConfig, BeaconEvent, BufferStats, CreatedShortLink };
 
 /** Options for the programmatic Beacon.createShortLink() helper (REQUIREMENTS.md §7.2). */
