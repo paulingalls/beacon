@@ -24,6 +24,7 @@ Build the platform-agnostic event collection and batching engine.
   - Constructor accepts `BeaconClientConfig` per `REQUIREMENTS.md` §8.1
   - `track(eventType, properties?)` — creates an event object with timestamp (ISO 8601, `new Date().toISOString()`), pushes to the internal queue
   - `screenView(screenName)` — convenience method, calls `track('screen_view', { screen: screenName })`
+  - `setVisitorToken(token | null)` — set/clear the anonymous visitor handle (story-002, Milestone 1); see "Visitor identity" below
   - `flush()` — sends queued events to the configured endpoint via `POST`, returns `Promise<void>`
   - `reset()` — clears the event queue and cancels the flush timer
 - Internal queue: plain array, max `500` events. When full, oldest events are dropped (shift from front).
@@ -43,12 +44,24 @@ interface BeaconStorageAdapter {
 - When supplied (e.g., an `AsyncStorage`- or `expo-sqlite`-backed adapter the host app provides), the queue survives app kills. The host app owns the adapter; the SDK adds no storage dependency.
 - This is explicitly **permitted** under the "no client-side storage" rule: the buffer holds only undelivered event payloads — no visitor tokens, no user IDs, no cross-session tracking state — and is cleared on flush. See the constraint exception in `CLAUDE.md` → Tech Stack & Conventions.
 
+**Visitor identity (cookie-free SPA, Milestone 1).** A browser SPA POSTs cross-origin to the ingest, so it has no URL `_t` token and no shared transport context — it must carry its own anonymous visitor handle. `BeaconClient` accepts an optional `visitorToken` in `BeaconClientConfig` (the host seeds it from the SPA bootstrap, its one server-rendered touchpoint) and exposes `setVisitorToken(token: string | null)` to rotate it at runtime (after an async bootstrap fetch, or `null` on logout):
+
+```typescript
+const client = new BeaconClient({ endpoint, productId, appContext, visitorToken: seededToken });
+client.setVisitorToken(newToken); // rotate; setVisitorToken(null) clears it
+```
+
+- Sent as a body-level `visitor_token` on **every** batch — the regular flush AND the unload beacon (`flushViaBeacon`) — so the handle survives page-unload. The server reads it (`REQUIREMENTS.md` §6.2): a valid body token wins over the URL `_t` transport token.
+- Held **in memory only** — never written to the `storage` adapter (which persists event payloads alone), so it adds no persisted tracking state and upholds the no-client-storage rule above. A falsy/empty token is omitted from the body (the server then falls back to the transport token).
+- A body-level `user_id` is **never** sent: authenticated identity is resolved server-side, never asserted by the public client.
+
 **Tests (unit, mock fetch):**
 
 - `track()` adds events to the queue with correct shape and timestamp
 - `screenView()` creates a `screen_view` event with `screen` property
 - Queue caps at 500, drops oldest on overflow
 - `reset()` clears the queue
+- `setVisitorToken()` / `config.visitorToken` transmit `body.visitor_token`; an unset/cleared token is omitted; the token is never persisted to the storage adapter
 
 ### 8.2 — Flush Logic
 
