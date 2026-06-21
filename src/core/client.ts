@@ -195,7 +195,13 @@ export class BeaconClient {
     if (hadEvents && this.queue.length === 0) this.clearStore();
   }
 
-  /** The single source of truth for the ingest wire shape: {product_id, visitor_token?, events}. */
+  /**
+   * The single source of truth for the ingest wire shape: {product_id, visitor_token?, events}.
+   * The token is read at SEND time, not track time — a batch re-queued after a 5xx/429 and retried
+   * carries the client's CURRENT handle, so a setVisitorToken() between attempts re-attributes the
+   * retried events. Intended: the token is the client's live handle, not per-event identity (the
+   * latter is deferred to a later milestone).
+   */
   private buildBody(batch: QueuedEvent[]): string {
     return JSON.stringify({
       product_id: this.config.productId,
