@@ -1,8 +1,8 @@
 // First-party Beacon host app (sprint-012 / Milestone 4). Wires createBeacon from the
 // environment and serves Beacon's four surfaces — ingest (REQUIREMENTS.md §6.2), query API
-// (§5), dashboard (§9), and the URL shortener (§7) — plus a DB-free /health probe for App
-// Platform (§1.3 outage-degrade). Config follows REQUIREMENTS.md §10. This is the entry
-// point the Dockerfile + .do/app.yaml (story-002) invoke.
+// (§5), dashboard (§9), and the URL shortener (§7) — plus a DB-free /health probe for the
+// reverse proxy / load balancer (§1.3 outage-degrade). Config follows REQUIREMENTS.md §10.
+// This is the entry point the systemd unit (deploy/beacon.service) and Dockerfile invoke.
 
 import { createHash, timingSafeEqual } from 'node:crypto';
 
@@ -91,8 +91,8 @@ export function buildServer(env: ServerEnv): { app: Hono; beacon: Beacon } {
   return { app, beacon };
 }
 
-// Production entry: read process.env, serve, and drain on shutdown so App Platform's
-// SIGTERM during a deploy/scale flushes buffered events before the process exits.
+// Production entry: read process.env, serve, and drain on shutdown so the systemd SIGTERM
+// during a deploy/restart flushes buffered events before the process exits.
 if (import.meta.main) {
   const { app, beacon } = buildServer(process.env as ServerEnv);
   const port = Number(process.env.PORT ?? 8080);
