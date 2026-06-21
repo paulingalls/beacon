@@ -39,7 +39,6 @@ export {
 // --- Wire-contract types (the ingest boundary's shared shapes).
 export type {
   Attribution,
-  BeaconConfig,
   BeaconEvent,
   BufferStats,
   VisitorTokenRecord,

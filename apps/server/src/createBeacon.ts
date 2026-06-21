@@ -5,7 +5,7 @@
 // framework-agnostic capture cores + wire types and the server-internal DB modules
 // (storage/, events/buffer, visitors/tokenStore) that relocated here in story-005.
 
-import type { BeaconConfig, BufferStats } from '@pi-innovations/beacon-sdk';
+import type { BufferStats } from '@pi-innovations/beacon-sdk';
 import { track as trackEvent } from '@pi-innovations/beacon-sdk';
 import { type Context, Hono, type MiddlewareHandler } from 'hono';
 import { adminGate } from './api/auth';
@@ -28,6 +28,7 @@ import {
   createShortLink as persistShortLink,
 } from './shortener/store';
 import { closeDb, createDb } from './storage/db';
+import type { BeaconConfig } from './types';
 import { VisitorTokenStore } from './visitors/tokenStore';
 
 /** Query-API rate-limit window: requests/min/user (REQUIREMENTS.md §5.2). */

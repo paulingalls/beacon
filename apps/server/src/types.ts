@@ -1,10 +1,81 @@
-// DB/buffer-internal types for the private @pi-innovations/beacon-server.
+// Server-internal types for the private @pi-innovations/beacon-server.
 //
-// These tuning types belong to server internals relocated from the SDK in M4
-// (story-005): the EventBuffer (Postgres flush) and the VisitorTokenStore. They
-// live with their only consumers (events/buffer.ts, visitors/tokenStore.ts) and
-// are deliberately NOT part of the published @pi-innovations/beacon-sdk surface —
-// the wire-contract types stay there.
+// These belong to server internals relocated from the SDK in M4 (story-005):
+// the createBeacon factory config (postgres creds, admin/user gates, query +
+// shortener + dashboard tuning) and the EventBuffer / VisitorTokenStore tuning
+// types. They live with their only consumers (createBeacon.ts, events/buffer.ts,
+// visitors/tokenStore.ts) and are deliberately NOT part of the published
+// @pi-innovations/beacon-sdk surface — only the emit SDK, capture cores, and
+// wire-contract types are exported there.
+
+import type { Context } from 'hono';
+
+/**
+ * Configuration for createBeacon() (REQUIREMENTS.md §10). Only the fields the
+ * server middleware + event buffer consume are defined here; the query-API,
+ * shortener, and dashboard config fields are added by the phases that use them.
+ */
+export interface BeaconConfig {
+  productId: string;
+  /**
+   * Opt-in allowlist of product_ids the shared ingest endpoint accepts (story-006).
+   * When set, a batch whose body.product_id is a present non-allowlisted value is
+   * rejected (403, batch dropped) — stopping cross-product spoofing and bounding the
+   * product dimension surfaced by /analytics/schema + the dashboard. An absent
+   * product_id still defaults to this instance's productId, which MUST itself be in
+   * the allowlist. When unset, any product_id is accepted (current behavior).
+   */
+  productAllowlist?: string[];
+  postgres: { connectionString: string; maxConnections?: number };
+  /**
+   * Shared secret authorizing a trusted server-to-server caller to assert per-event
+   * user_id + context in the ingest body (the M2 security cornerstone). When unset,
+   * trusted ingest is disabled (fail-closed): body user_id/context are never honored
+   * and the public anonymous path is unchanged. Compared in constant time (see
+   * api/auth.ts verifyTrustedBearer); never logged.
+   */
+  trustedIngestToken?: string;
+  /** Resolve the authenticated user id from the request, or null. */
+  getUserId?: (c: Context) => string | null;
+  /**
+   * Gate the query API + dashboard (REQUIREMENTS.md §5.1 / §10). The admin gate
+   * treats a missing callback — or one that throws — as "not admin" (403).
+   */
+  isAdmin?: (c: Context) => boolean;
+  /** Mount prefix for the API router (CLAUDE.md Configuration). Default '/analytics'. */
+  basePath?: string;
+  /** Path prefixes to skip logging (startsWith match). */
+  excludePaths?: string[];
+  /** SHA-256 the client IP before storage. Default true. */
+  hashIPs?: boolean;
+  /** Event-buffer flush timer interval in ms. Default 5000. */
+  flushInterval?: number;
+  /** Max events written per flush. Default 100. */
+  maxBatchSize?: number;
+  /** Max events held in memory before dropping. Default 10000. */
+  maxBufferSize?: number;
+  /** Visitor-token sliding-window TTL in ms (REQUIREMENTS.md §2.2). Default 1800000 (30 min). */
+  visitorTokenTTL?: number;
+  /** Max visitor tokens held in memory before oldest-by-lastSeenAt eviction. Default 50000. */
+  maxVisitorTokens?: number;
+  /** Query API rate limit: max requests/min/user (REQUIREMENTS.md §5.2). Default 60. */
+  queryRateLimit?: number;
+  /**
+   * Maps a channel category (paid/organic/social/referral/email/...) to the
+   * attribution sources that belong to it (REQUIREMENTS.md §5.4 attribution,
+   * §10). Used by the attribution endpoint's `group_by=channel`; unmapped
+   * sources fall into `other`. e.g. `{ paid: ['google', 'bing'], social: ['twitter'] }`.
+   */
+  channelMapping?: Record<string, string[]>;
+  /** Short URL base for the shortener, e.g. 'https://pi.ink' (REQUIREMENTS.md §7.2 §10). */
+  shortDomain?: string;
+  /** Max entries in the short-link LRU cache (REQUIREMENTS.md §7.3 §10). Default 10000. */
+  shortLinkCacheSize?: number;
+  /** Short-link cache entry TTL in ms (REQUIREMENTS.md §7.3 §10). Default 300000 (5 min). */
+  shortLinkCacheTTL?: number;
+  /** Short-link create limit: max creations/hr/admin (REQUIREMENTS.md §7.2). Default 100. */
+  shortLinkCreateRateLimit?: number;
+}
 
 /** Tuning options for EventBuffer (REQUIREMENTS.md §1.2). */
 export interface EventBufferOptions {

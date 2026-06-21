@@ -286,4 +286,4 @@ Beacon's query API is designed for direct use by AI agents. The `/analytics/sche
 | `flushInterval` | `number` | sink default | Emit-buffer flush interval in milliseconds. |
 | `maxBatchSize` | `number` | sink default | Max events per emitted batch. |
 
-The deployed server is configured by environment (see [Deploying the Beacon server](#deploying-the-beacon-server)); its full option set is `BeaconConfig` in `packages/beacon/src/types.ts`.
+The deployed server is configured by environment (see [Deploying the Beacon server](#deploying-the-beacon-server)); its full option set is `BeaconConfig` in `apps/server/src/types.ts`.

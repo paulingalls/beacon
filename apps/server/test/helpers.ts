@@ -1,4 +1,4 @@
-// Shared test helpers for @pi-innovations/beacon.
+// Shared test helpers for the private apps/server (DB-backed integration tests).
 
 import { afterAll, beforeAll, beforeEach } from 'bun:test';
 import type { Context } from 'hono';
