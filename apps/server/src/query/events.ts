@@ -1,8 +1,8 @@
 import { Buffer } from 'node:buffer';
-import { errorResponse } from '@pi-innovations/beacon/internal/api/errors';
-import { parseCommonParams, QueryParamError } from '@pi-innovations/beacon/internal/api/params';
 import type { Context, Handler } from 'hono';
 import type { Sql } from 'postgres';
+import { errorResponse } from '../api/errors';
+import { parseCommonParams, QueryParamError } from '../api/params';
 
 // Paginated event stream (REQUIREMENTS.md §5.4 GET /analytics/events). Accepts the
 // §5.3 common params plus event_type / limit / cursor, and returns events newest

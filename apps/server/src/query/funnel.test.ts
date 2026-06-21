@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
-import { QueryParamError } from '@pi-innovations/beacon/internal/api/params';
 import { Hono } from 'hono';
 import type { Sql } from 'postgres';
+import { QueryParamError } from '../api/params';
 import { createFunnelHandler, MissingParamError, parseSteps, parseWindow } from './funnel';
 
 interface FunnelStep {

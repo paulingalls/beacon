@@ -1,12 +1,12 @@
-import { errorResponse } from '@pi-innovations/beacon/internal/api/errors';
+import type { Context, Handler } from 'hono';
+import type { Sql } from 'postgres';
+import { errorResponse } from '../api/errors';
 import {
   buildFilters,
   type CommonQueryParams,
   parseCommonParams,
   QueryParamError,
-} from '@pi-innovations/beacon/internal/api/params';
-import type { Context, Handler } from 'hono';
-import type { Sql } from 'postgres';
+} from '../api/params';
 
 // Ordered-event conversion funnel (REQUIREMENTS.md §5.4 GET /analytics/funnel).
 // Accepts the §5.3 common params plus `steps` (the ordered event types) and

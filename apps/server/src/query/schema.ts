@@ -1,6 +1,6 @@
-import { errorResponse } from '@pi-innovations/beacon/internal/api/errors';
 import type { Context, Handler } from 'hono';
 import type { Sql } from 'postgres';
+import { errorResponse } from '../api/errors';
 
 // Schema introspection endpoint (REQUIREMENTS.md §5.4 GET /analytics/schema).
 // Returns the full data model so an agent with no prior knowledge can discover
