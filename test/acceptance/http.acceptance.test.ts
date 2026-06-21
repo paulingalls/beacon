@@ -259,3 +259,65 @@ describe.skipIf(!TEST_DB)('http acceptance — query API over the network', () =
     }
   }, 15_000);
 });
+
+// story-001 (Milestone 1): a cookie-free browser SPA carries its anonymous visitor
+// handle in the POST BODY (no URL _t, no shared transport context cross-origin). This
+// proves that handle survives the full client→ingest→query round-trip over a real
+// socket + live Postgres, and that a body-asserted user_id is NOT honored (anonymous
+// until trusted bearer auth, M2). No getUserId is wired — the SPA visitor is anonymous.
+describe.skipIf(!TEST_DB)('http acceptance — body visitor_token round-trip (story-001)', () => {
+  let sql: ReturnType<typeof createDb>;
+  let beacon: ReturnType<typeof createBeacon>;
+  let server: ReturnType<typeof Bun.serve>;
+  let baseUrl: string;
+
+  beforeAll(async () => {
+    sql = createDb({ connectionString: TEST_DB as string });
+    await sql`DROP TABLE IF EXISTS beacon_events, beacon_short_links, beacon_meta, beacon_migrations CASCADE`;
+    await runMigrations(sql);
+
+    beacon = createBeacon({
+      productId: 'spa-acceptance',
+      postgres: { connectionString: TEST_DB as string },
+      isAdmin: () => true,
+      flushInterval: 60_000,
+    });
+    const app = new Hono();
+    app.route(beacon.basePath, beacon.router());
+    server = Bun.serve({ port: 0, fetch: app.fetch });
+    baseUrl = `http://localhost:${server.port}`;
+
+    // Seed the production way: POST a batch whose BODY carries visitor_token (and a
+    // would-be-spoofed user_id), then drain to Postgres.
+    const res = await fetch(`${baseUrl}/analytics/events`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        visitor_token: 'v1',
+        user_id: 'spoofed-user',
+        events: [{ event_type: 'page_view', timestamp: '2026-03-01T00:00:00Z' }],
+      }),
+    });
+    expect(res.status).toBe(202);
+    await beacon.flush();
+  }, 15_000);
+
+  afterAll(async () => {
+    server.stop(true);
+    await beacon.shutdown();
+    await sql`DROP TABLE IF EXISTS beacon_events, beacon_short_links, beacon_meta, beacon_migrations CASCADE`;
+    await closeDb(sql);
+  }, 15_000);
+
+  test('the anonymous body visitor_token persists and reads back; body user_id is ignored', async () => {
+    const res = await fetch(`${baseUrl}/analytics/events?${WINDOW}`);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      events: { event_type: string; visitor_token: string | null; user_id: string | null }[];
+    };
+    expect(body.events).toHaveLength(1);
+    expect(body.events[0]?.event_type).toBe('page_view');
+    expect(body.events[0]?.visitor_token).toBe('v1');
+    expect(body.events[0]?.user_id).toBeNull(); // body user_id never honored on the public path
+  });
+});
