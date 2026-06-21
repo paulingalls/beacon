@@ -1,9 +1,9 @@
 import { beforeEach, describe, expect, test } from 'bun:test';
+import { EventBuffer } from '@pi-innovations/beacon/internal/events/buffer';
 import { Hono } from 'hono';
 import type { Sql } from 'postgres';
-import { registerDbCoverageGuard, TEST_DB } from '../../test/dbGuard';
-import { withTestDb } from '../../test/helpers';
-import { EventBuffer } from '../events/buffer';
+import { registerDbCoverageGuard, TEST_DB } from '../../../../packages/beacon/test/dbGuard';
+import { withTestDb } from '../../../../packages/beacon/test/helpers';
 import { ShortLinkCache } from './cache';
 import { createRedirectHandler } from './redirect';
 import { createShortLink, getShortLink } from './store';
