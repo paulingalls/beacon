@@ -129,15 +129,20 @@ export interface BeaconEvent {
   attribution?: Record<string, unknown>;
 }
 
-/** Snapshot of buffer counters, exposed via EventBuffer.stats(). */
+/**
+ * Snapshot of sink counters, exposed via stats(). Shared by EventBuffer (flushes
+ * to Postgres) and HttpSink (flushes via trusted-bearer POST), so the wording is
+ * sink-agnostic: "flushed/dropped" describe the configured sink, not Postgres
+ * specifically.
+ */
 export interface BufferStats {
   /** Events currently waiting in the in-memory queue. */
   buffered: number;
-  /** Events successfully written to Postgres since creation. */
+  /** Events successfully flushed to the sink since creation. */
   flushed: number;
   /** Events discarded by backpressure (queue at maxBufferSize). */
   dropped: number;
-  /** Events discarded after exhausting retry attempts on write failure. */
+  /** Events discarded after exhausting retry attempts on a flush failure. */
   retryFailures: number;
 }
 

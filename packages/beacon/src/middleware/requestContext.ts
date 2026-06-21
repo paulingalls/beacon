@@ -3,6 +3,8 @@ import { createHash } from 'node:crypto';
 import type { Context } from 'hono';
 import { getConnInfo } from 'hono/bun';
 
+import { type BeaconRequest, honoToBeaconRequest } from '../adapter/beaconRequest';
+
 // Shared request-context builder (REQUIREMENTS.md §1.1, §3.1 event-schema split).
 // Extracted from the request-logging middleware so the server-side track() helper
 // builds an event `context` identically — one source for the privacy-sensitive IP
@@ -42,18 +44,64 @@ export interface ResolveEventFieldsOptions {
 }
 
 /**
+ * Adapt a Hono Context to a BeaconRequest, optionally overriding the socket-address
+ * source. honoToBeaconRequest hard-codes `getConnInfo`; a host or test that supplies
+ * a custom `getClientAddress` needs it re-injected here, wrapped in the §1.3 guard so
+ * a throwing override never propagates (the new `BeaconRequest.clientAddress()`
+ * contract is non-throwing, so the guard lives at this Context boundary, not in the
+ * cores). This is the single Context→BeaconRequest bridge the capture layer and the
+ * Hono shims below all funnel through.
+ */
+export function honoRequest(
+  c: Context,
+  getClientAddress?: (c: Context) => string | undefined,
+): BeaconRequest {
+  const base = honoToBeaconRequest(c);
+  if (!getClientAddress) return base;
+  return {
+    ...base,
+    clientAddress: () => {
+      try {
+        return getClientAddress(c);
+      } catch (err) {
+        console.warn(`[beacon] getClientAddress failed: ${String(err)}`);
+        return undefined;
+      }
+    },
+  };
+}
+
+/**
  * Resolve, in one pass, the per-request fields every logged event shares: the
- * authenticated user id, the visitor token, the (optionally hashed) client IP,
- * and the transport `context` + `platform`. Extracted so the event paths that
- * build all of it in one pass (track and the redirect click logger) do so
- * identically — one home for the §1.3 failure isolation and the privacy-sensitive
- * IP handling. A throwing getUserId yields a null user id rather than propagating
- * (§1.3); `label` names the caller in that warning.
+ * visitor token, the (optionally hashed) client IP, and the transport `context` +
+ * `platform`. The framework-agnostic core — it reads everything off a BeaconRequest
+ * so the same logic serves the Hono host and a Bun.serve product (story-003). The
+ * authenticated `userId` is resolved by the caller (which holds the host-specific
+ * auth source) and passed in: `getUserId` is a Hono-`Context` callback and the §1.3
+ * failure isolation around it is inherently a Context concern, so it stays at the
+ * caller, not here.
  *
  * The batch-ingest endpoint deliberately does NOT use this: it must resolve only
  * the cheap id/ip before its rate-limit gate and build `context` (the attacker-
  * controlled X-App-Context parse) only after the gate passes, so it composes the
- * underlying `resolveIp` / `buildEventContext` primitives directly instead.
+ * underlying `resolveIpFromRequest` / `buildEventContext` primitives directly.
+ */
+export function resolveEventFieldsFromRequest(
+  req: BeaconRequest,
+  opts: { userId: string | null; hashIPs?: boolean },
+): ResolvedEventFields {
+  const visitorToken = req.getToken();
+  const ip = resolveIpFromRequest(req, opts.hashIPs ?? true);
+  const { context, platform } = buildEventContext(req, ip);
+
+  return { userId: opts.userId, visitorToken, ip, platform, context };
+}
+
+/**
+ * Hono-Context shim for `resolveEventFieldsFromRequest`, kept for the shortener
+ * redirect click logger (the one remaining Hono-only caller). Resolves `userId` via
+ * the host `getUserId` callback inside the §1.3 guard (`label` names the caller in
+ * the warning), then delegates to the core through `honoRequest`.
  */
 export function resolveEventFields(
   c: Context,
@@ -66,32 +114,35 @@ export function resolveEventFields(
     console.warn(`[beacon] ${opts.label}: getUserId failed: ${String(err)}`);
   }
 
-  const visitorToken = c.get('beaconVisitorToken') ?? null;
-  const ip = resolveIp(c, opts.hashIPs ?? true, opts.getClientAddress ?? defaultClientAddress);
-  const { context, platform } = buildEventContext(c, ip);
-
-  return { userId, visitorToken, ip, platform, context };
+  return resolveEventFieldsFromRequest(honoRequest(c, opts.getClientAddress), {
+    userId,
+    hashIPs: opts.hashIPs,
+  });
 }
 
 /**
- * Client IP per §1.1: first X-Forwarded-For token, else the socket address.
- * SHA-256 hashed when enabled. Undefined when no source yields an address.
+ * Client IP per §1.1: first X-Forwarded-For token, else the socket address
+ * (`req.clientAddress()`). SHA-256 hashed when enabled; undefined when no source
+ * yields an address. The framework-agnostic core — both the §1.3 guard and the
+ * socket lookup live in the BeaconRequest adapter (and `honoRequest` for the
+ * Context override), so this reads `req.clientAddress()` directly with no try/catch.
+ */
+export function resolveIpFromRequest(req: BeaconRequest, hashIPs: boolean): string | undefined {
+  const forwarded = req.header('x-forwarded-for')?.split(',')[0]?.trim();
+  return hashIp(forwarded || req.clientAddress(), hashIPs);
+}
+
+/**
+ * Hono-Context shim for `resolveIpFromRequest`, kept for the Hono-only callers that
+ * key a rate limiter off the client IP (shortener create, query rate-limit gate).
+ * Threads the host `getClientAddress` override through `honoRequest`.
  */
 export function resolveIp(
   c: Context,
   hashIPs: boolean,
   getClientAddress: (c: Context) => string | undefined,
 ): string | undefined {
-  const forwarded = c.req.header('x-forwarded-for')?.split(',')[0]?.trim();
-  // getClientAddress is host-supplied (default is internally guarded); a throw
-  // from a custom override must not propagate out and crash the host (§1.3).
-  let socketAddress: string | undefined;
-  try {
-    socketAddress = getClientAddress(c);
-  } catch (err) {
-    console.warn(`[beacon] getClientAddress failed: ${String(err)}`);
-  }
-  return hashIp(forwarded || socketAddress, hashIPs);
+  return resolveIpFromRequest(honoRequest(c, getClientAddress), hashIPs);
 }
 
 /**
@@ -105,7 +156,15 @@ export function hashIp(ip: string | undefined, hashIPs: boolean): string | undef
   return hashIPs ? createHash('sha256').update(ip).digest('hex') : ip;
 }
 
-/** Default socket-address source (Bun). Guarded — getConnInfo throws off-server. */
+/**
+ * Default socket-address source (Bun). Guarded — getConnInfo throws off-server.
+ * This is the Hono-Context socket source for the Hono shims (resolveIp/resolveEventFields)
+ * and host getClientAddress defaults (requestLogger, shortener/create, api/rateLimit).
+ * It is intentionally MIRRORED — not shared — with the adapter's inlined clientAddress
+ * guard (adapter/beaconRequest.ts): requestContext imports the adapter, so importing
+ * defaultClientAddress back would form a cycle. The duplication is permanent; keep the
+ * two guards in sync if either changes.
+ */
 export function defaultClientAddress(c: Context): string | undefined {
   try {
     return getConnInfo(c).remote.address;
@@ -116,12 +175,12 @@ export function defaultClientAddress(c: Context): string | undefined {
 
 /**
  * Build an event's transport `context` (UA, referrer, accept-language, ip, optional
- * app_context) and resolve its `platform` from the X-App-Context header. `ip` is
- * passed in already-resolved so a caller that also needs it elsewhere (the
- * middleware seeds the visitor-token record with it) resolves it only once.
+ * app_context) and resolve its `platform` from the X-App-Context header, reading off
+ * a BeaconRequest. `ip` is passed in already-resolved so a caller that also needs it
+ * elsewhere (the middleware seeds the visitor-token record with it) resolves it once.
  */
-export function buildEventContext(c: Context, ip: string | undefined): EventContext {
-  const appContext = parseAppContext(c.req.header('x-app-context'));
+export function buildEventContext(req: BeaconRequest, ip: string | undefined): EventContext {
+  const appContext = parseAppContext(req.header('x-app-context'));
   const declaredPlatform = appContext?.platform;
   const platform =
     typeof declaredPlatform === 'string' && declaredPlatform.trim() !== ''
@@ -129,9 +188,9 @@ export function buildEventContext(c: Context, ip: string | undefined): EventCont
       : 'web';
 
   const context: Record<string, unknown> = {
-    user_agent: c.req.header('user-agent'),
-    referrer: c.req.header('referer'),
-    accept_language: firstLocale(c.req.header('accept-language')),
+    user_agent: req.header('user-agent'),
+    referrer: req.header('referer'),
+    accept_language: firstLocale(req.header('accept-language')),
     ip,
   };
   if (appContext) context.app_context = appContext;

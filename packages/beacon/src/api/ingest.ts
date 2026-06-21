@@ -2,12 +2,12 @@ import { Buffer } from 'node:buffer';
 
 import type { Context, Handler } from 'hono';
 
-import type { EventBuffer } from '../events/buffer';
+import type { EventSink } from '../events/sink';
 import {
   buildEventContext,
-  defaultClientAddress,
   hashIp,
-  resolveIp,
+  honoRequest,
+  resolveIpFromRequest,
 } from '../middleware/requestContext';
 import type { BeaconEvent } from '../types';
 import { verifyTrustedBearer } from './auth';
@@ -78,7 +78,7 @@ interface RawEvent {
  * single RateLimiter so the sliding window persists across requests. story-004
  * mounts the returned handler at `POST {basePath}/events`.
  */
-export function createIngestHandler(buffer: EventBuffer, opts: IngestOptions): Handler {
+export function createIngestHandler(buffer: EventSink, opts: IngestOptions): Handler {
   const limiter = new RateLimiter({
     limit: opts.rateLimit?.limit ?? DEFAULT_RATE_LIMIT,
     windowMs: opts.rateLimit?.windowMs ?? DEFAULT_RATE_WINDOW_MS,
@@ -97,7 +97,11 @@ export function createIngestHandler(buffer: EventBuffer, opts: IngestOptions): H
       console.warn(`[beacon] ingest: getUserId failed: ${String(err)}`);
     }
     const hashIPs = opts.hashIPs ?? true;
-    const ip = resolveIp(c, hashIPs, opts.getClientAddress ?? defaultClientAddress);
+    // One BeaconRequest for the whole handler — honoRequest threads any custom
+    // getClientAddress (the adapter's built-in socket lookup otherwise) through the
+    // §1.3 guard. The capture reads below all go through it.
+    const req = honoRequest(c, opts.getClientAddress);
+    const ip = resolveIpFromRequest(req, hashIPs);
     const identifier = userId ?? ip ?? 'unknown'; // per-user when authed, else per-IP (§6.2)
 
     // Check BEFORE parsing the body so an over-limit caller is rejected without us
@@ -109,17 +113,17 @@ export function createIngestHandler(buffer: EventBuffer, opts: IngestOptions): H
     // event in this batch) and read the visitor token the middleware put on c.
     // This transport token (minted from the URL `_t` param) is the FALLBACK; a
     // body-carried visitor_token (the SPA's only carrier) overrides it below.
-    const transportVisitorToken = c.get('beaconVisitorToken') ?? null;
-    const { context, platform } = buildEventContext(c, ip);
+    const transportVisitorToken = req.getToken();
+    const { context, platform } = buildEventContext(req, ip);
 
     // Trusted-caller gate (M2): only a verified bearer may assert per-event user_id
     // + context below. An untrusted/absent/misconfigured caller resolves to false
     // (fail-closed), leaving the public anonymous path identical to before.
-    const trusted = verifyTrustedBearer(c.req.header('authorization'), opts.trustedIngestToken);
+    const trusted = verifyTrustedBearer(req.header('authorization'), opts.trustedIngestToken);
 
     let body: unknown;
     try {
-      body = await c.req.json();
+      body = await req.json();
     } catch {
       return errorResponse(c, 'INVALID_PARAMETER', 'request body must be valid JSON', 'body');
     }
