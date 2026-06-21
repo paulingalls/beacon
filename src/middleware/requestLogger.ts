@@ -1,6 +1,6 @@
 import type { Context, MiddlewareHandler } from 'hono';
 
-import type { EventBuffer } from '../events/buffer';
+import type { EventSink } from '../events/sink';
 import type { BeaconEvent } from '../types';
 import { extractAttribution } from '../visitors/attribution';
 import type { VisitorTokenStore } from '../visitors/tokenStore';
@@ -49,7 +49,7 @@ export interface RequestLoggerOptions {
  * Beacon step is individually guarded: a failure here never crashes the host and
  * never masks a handler error (§1.3 failure isolation).
  */
-export function requestLogger(buffer: EventBuffer, opts: RequestLoggerOptions): MiddlewareHandler {
+export function requestLogger(buffer: EventSink, opts: RequestLoggerOptions): MiddlewareHandler {
   const {
     productId,
     getUserId,
