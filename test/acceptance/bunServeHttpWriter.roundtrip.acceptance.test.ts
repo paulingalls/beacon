@@ -105,6 +105,9 @@ describe.skipIf(!TEST_DB)(
       const res = await query(`/events?${WINDOW}`);
       expect(res.status).toBe(200);
       const body = (await res.json()) as { events: QueriedEvent[] };
+      // Exactly the two emitted events round-tripped — guards against silent extra/missing events
+      // (a vacuous pass: per-type asserts on a Map would still hold if a third event slipped in).
+      expect(body.events.length).toBe(2);
       const byType = new Map(body.events.map((e) => [e.event_type, e]));
 
       // The captured request event: path/method/status carried, anonymous visitor handle preserved.
