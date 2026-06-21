@@ -37,6 +37,8 @@ export interface BeaconClientConfig {
    * update it at runtime via setVisitorToken(). Held in MEMORY ONLY — never written to the
    * storage adapter (which holds event payloads alone), preserving the no-client-storage posture.
    * A falsy/empty value is omitted from the body so the server falls back to the transport token.
+   * Must be ≤100 chars: the server is the single validation authority and silently drops an
+   * over-length token to its transport fallback, so a longer seed yields unattributed events.
    */
   visitorToken?: string;
   /** Flush-timer interval in ms. Default 30000. */
