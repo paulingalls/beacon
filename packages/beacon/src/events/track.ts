@@ -1,7 +1,7 @@
 import type { Context } from 'hono';
 
-import { resolveEventFields } from '../middleware/requestContext';
-import type { EventBuffer } from './buffer';
+import { honoRequest, resolveEventFieldsFromRequest } from '../middleware/requestContext';
+import type { EventSink } from './sink';
 
 /** Max event_type length (REQUIREMENTS.md §6.1). */
 const MAX_EVENT_TYPE_LENGTH = 100;
@@ -24,8 +24,8 @@ export interface TrackOptions {
  * Reads user_id via getUserId and the visitor token + transport context the
  * request-logging middleware populated, builds a `<eventType>` event with the
  * given properties (defaulting to `{}` when omitted), and pushes it to the
- * shared EventBuffer. Fire-and-forget: returns void without awaiting — the
- * buffer flushes asynchronously.
+ * EventSink. Fire-and-forget: returns void without awaiting — the deployed
+ * EventBuffer sink flushes asynchronously.
  *
  * Throws only on an invalid event_type (empty/whitespace or >100 chars) — the
  * one intentional throw, validated before any side effect so nothing is pushed.
@@ -36,7 +36,7 @@ export interface TrackOptions {
  * simply yield a null visitor token.
  */
 export function track(
-  buffer: EventBuffer,
+  buffer: EventSink,
   c: Context,
   opts: TrackOptions,
   eventType: string,
@@ -51,11 +51,19 @@ export function track(
     );
   }
 
-  const { userId, visitorToken, platform, context } = resolveEventFields(c, {
-    getUserId: opts.getUserId,
+  // userId is resolved here (the host getUserId is a Hono-Context callback) and
+  // passed into the framework-agnostic core as a value. A throwing getUserId is
+  // swallowed to a null user id so a host auth failure can never crash track() (§1.3).
+  let userId: string | null = null;
+  try {
+    userId = opts.getUserId?.(c) ?? null;
+  } catch (err) {
+    console.warn(`[beacon] track: getUserId failed: ${String(err)}`);
+  }
+
+  const fields = resolveEventFieldsFromRequest(honoRequest(c, opts.getClientAddress), {
+    userId,
     hashIPs: opts.hashIPs,
-    getClientAddress: opts.getClientAddress,
-    label: 'track',
   });
 
   buffer.push({
@@ -64,10 +72,10 @@ export function track(
     // Event time stamped at call time (client/event time), distinct from
     // received_at (server ingest time set by the column DEFAULT at flush).
     timestamp: new Date(),
-    userId,
-    visitorToken,
-    platform,
+    userId: fields.userId,
+    visitorToken: fields.visitorToken,
+    platform: fields.platform,
     properties: properties ?? {},
-    context,
+    context: fields.context,
   });
 }
