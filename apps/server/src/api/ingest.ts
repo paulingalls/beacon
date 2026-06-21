@@ -1,15 +1,14 @@
 import { Buffer } from 'node:buffer';
-
-import type { Context, Handler } from 'hono';
-
-import type { EventSink } from '../events/sink';
+import type { EventSink } from '@pi-innovations/beacon/internal/events/sink';
+import { MAX_EVENT_TYPE_LENGTH } from '@pi-innovations/beacon/internal/events/track';
 import {
   buildEventContext,
   hashIp,
   honoRequest,
   resolveIpFromRequest,
-} from '../middleware/requestContext';
-import type { BeaconEvent } from '../types';
+} from '@pi-innovations/beacon/internal/middleware/requestContext';
+import type { BeaconEvent } from '@pi-innovations/beacon/internal/types';
+import type { Context, Handler } from 'hono';
 import { verifyTrustedBearer } from './auth';
 import { errorResponse } from './errors';
 import { applyRateLimit, RateLimiter } from './rateLimit';
@@ -20,7 +19,6 @@ import { applyRateLimit, RateLimiter } from './rateLimit';
 // skipped (not rejected) so one bad event doesn't drop a whole batch.
 
 const MAX_EVENTS_PER_REQUEST = 100;
-const MAX_EVENT_TYPE_LENGTH = 100;
 const MAX_PRODUCT_ID_LENGTH = 100;
 const MAX_VISITOR_TOKEN_LENGTH = 100;
 const MAX_USER_ID_LENGTH = 100;

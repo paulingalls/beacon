@@ -1,11 +1,11 @@
-import { errorResponse } from '@pi-innovations/beacon/internal/api/errors';
-import { applyRateLimit, RateLimiter } from '@pi-innovations/beacon/internal/api/rateLimit';
 import {
   defaultClientAddress,
   resolveIp,
 } from '@pi-innovations/beacon/internal/middleware/requestContext';
 import type { Context, Handler } from 'hono';
 import type { Sql } from 'postgres';
+import { errorResponse } from '../api/errors';
+import { applyRateLimit, RateLimiter } from '../api/rateLimit';
 import { createShortLink, isHttpUrl } from './store';
 
 /** Default create limit: 100 link creations per hour per admin (REQUIREMENTS.md §7.2). */

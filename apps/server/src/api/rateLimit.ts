@@ -1,6 +1,8 @@
+import {
+  defaultClientAddress,
+  resolveIp,
+} from '@pi-innovations/beacon/internal/middleware/requestContext';
 import type { Context, MiddlewareHandler } from 'hono';
-
-import { defaultClientAddress, resolveIp } from '../middleware/requestContext';
 import { errorResponse } from './errors';
 
 // In-memory sliding-window rate limiter (REQUIREMENTS.md §6.2). Keyed by an

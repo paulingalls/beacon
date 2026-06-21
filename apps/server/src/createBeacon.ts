@@ -7,16 +7,16 @@
 // local imports as each subsystem relocates, and story-005 removes the bridge.
 
 import type { BeaconConfig, BufferStats } from '@pi-innovations/beacon';
-import { adminGate } from '@pi-innovations/beacon/internal/api/auth';
-import { createIngestHandler } from '@pi-innovations/beacon/internal/api/ingest';
-import { RateLimiter, rateLimitGate } from '@pi-innovations/beacon/internal/api/rateLimit';
 import { EventBuffer } from '@pi-innovations/beacon/internal/events/buffer';
 import { track as trackEvent } from '@pi-innovations/beacon/internal/events/track';
-import { requestLogger } from '@pi-innovations/beacon/internal/middleware/requestLogger';
 import { closeDb, createDb } from '@pi-innovations/beacon/internal/storage/db';
 import { VisitorTokenStore } from '@pi-innovations/beacon/internal/visitors/tokenStore';
 import { type Context, Hono, type MiddlewareHandler } from 'hono';
+import { adminGate } from './api/auth';
+import { createIngestHandler } from './api/ingest';
+import { RateLimiter, rateLimitGate } from './api/rateLimit';
 import { createDashboardHandler } from './dashboard/index';
+import { requestLogger } from './middleware/requestLogger';
 import { createAggregateHandler } from './query/aggregate';
 import { createAttributionHandler } from './query/attribution';
 import { createEventsHandler } from './query/events';

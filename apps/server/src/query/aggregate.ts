@@ -1,12 +1,8 @@
-import { errorResponse } from '@pi-innovations/beacon/internal/api/errors';
-import type { CommonQueryParams } from '@pi-innovations/beacon/internal/api/params';
-import {
-  buildFilters,
-  parseCommonParams,
-  QueryParamError,
-} from '@pi-innovations/beacon/internal/api/params';
 import type { Context, Handler } from 'hono';
 import type { Sql } from 'postgres';
+import { errorResponse } from '../api/errors';
+import type { CommonQueryParams } from '../api/params';
+import { buildFilters, parseCommonParams, QueryParamError } from '../api/params';
 
 // Aggregate metric endpoint (REQUIREMENTS.md §5.4 GET /analytics/aggregate).
 // Accepts the §5.3 common params plus event_type / metric / group_by, and

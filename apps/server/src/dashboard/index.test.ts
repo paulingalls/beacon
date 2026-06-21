@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
-import { adminGate } from '@pi-innovations/beacon/internal/api/auth';
 import { Hono } from 'hono';
+import { adminGate } from '../api/auth';
 import { createDashboardHandler } from './index';
 
 // The dashboard route handler (REQUIREMENTS.md §9.3). createDashboardHandler is the
