@@ -2,7 +2,7 @@ import { Buffer } from 'node:buffer';
 
 import type { Context, Handler } from 'hono';
 
-import type { EventBuffer } from '../events/buffer';
+import type { EventSink } from '../events/sink';
 import {
   buildEventContext,
   defaultClientAddress,
@@ -78,7 +78,7 @@ interface RawEvent {
  * single RateLimiter so the sliding window persists across requests. story-004
  * mounts the returned handler at `POST {basePath}/events`.
  */
-export function createIngestHandler(buffer: EventBuffer, opts: IngestOptions): Handler {
+export function createIngestHandler(buffer: EventSink, opts: IngestOptions): Handler {
   const limiter = new RateLimiter({
     limit: opts.rateLimit?.limit ?? DEFAULT_RATE_LIMIT,
     windowMs: opts.rateLimit?.windowMs ?? DEFAULT_RATE_WINDOW_MS,

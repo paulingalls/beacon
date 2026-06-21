@@ -1,7 +1,7 @@
 import type { Context } from 'hono';
 
 import { resolveEventFields } from '../middleware/requestContext';
-import type { EventBuffer } from './buffer';
+import type { EventSink } from './sink';
 
 /** Max event_type length (REQUIREMENTS.md §6.1). */
 const MAX_EVENT_TYPE_LENGTH = 100;
@@ -36,7 +36,7 @@ export interface TrackOptions {
  * simply yield a null visitor token.
  */
 export function track(
-  buffer: EventBuffer,
+  buffer: EventSink,
   c: Context,
   opts: TrackOptions,
   eventType: string,
