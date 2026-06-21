@@ -1,5 +1,6 @@
 import { requestToBeaconRequest } from './adapter/beaconRequest';
 import { HttpSink } from './events/httpSink';
+import { MAX_EVENT_TYPE_LENGTH } from './events/track';
 import { resolveEventFieldsFromRequest } from './middleware/requestContext';
 import type { BufferStats } from './types';
 
@@ -9,9 +10,9 @@ import type { BufferStats } from './types';
 // (no Hono, no Postgres) captures requests and custom events and emits them over
 // the M2 trusted ingest boundary. The deployed Beacon stays the only holder of
 // central-DB write credentials (HTTP single-writer).
-
-/** Max event_type length (REQUIREMENTS.md §6.1) — mirrors events/track.ts. */
-const MAX_EVENT_TYPE_LENGTH = 100;
+//
+// MAX_EVENT_TYPE_LENGTH is imported from events/track.ts so the event_type cap
+// is identical across the Hono track() and this HTTP factory (REQUIREMENTS.md §6.1).
 
 export interface HttpBeaconOptions {
   /** Product this instance emits for (beacon_events.product_id). */
@@ -102,13 +103,13 @@ export function createHttpBeacon(opts: HttpBeaconOptions): HttpBeacon {
     } catch (err) {
       console.warn(`[beacon] httpBeacon: getUserId failed: ${String(err)}`);
     }
-    return resolveEventFieldsFromRequest(req, { userId, hashIPs: opts.hashIPs });
+    const fields = resolveEventFieldsFromRequest(req, { userId, hashIPs: opts.hashIPs });
+    return { req, fields };
   };
 
   return {
     capture: (request, captureOpts) => {
-      const fields = prepare(request, captureOpts?.clientAddress);
-      const url = new URL(request.url);
+      const { req, fields } = prepare(request, captureOpts?.clientAddress);
       sink.push({
         productId: opts.productId,
         eventType: 'request',
@@ -117,8 +118,8 @@ export function createHttpBeacon(opts: HttpBeaconOptions): HttpBeacon {
         visitorToken: fields.visitorToken,
         platform: fields.platform,
         properties: {
-          path: url.pathname,
-          method: request.method,
+          path: req.path,
+          method: req.method,
           ...(captureOpts?.status !== undefined ? { status: captureOpts.status } : {}),
           ...(captureOpts?.responseTimeMs !== undefined
             ? { response_time_ms: captureOpts.responseTimeMs }
@@ -135,7 +136,7 @@ export function createHttpBeacon(opts: HttpBeaconOptions): HttpBeacon {
           `[beacon] httpBeacon.track: event_type must be a non-empty string of at most ${MAX_EVENT_TYPE_LENGTH} characters`,
         );
       }
-      const fields = prepare(request, trackOpts?.clientAddress);
+      const { fields } = prepare(request, trackOpts?.clientAddress);
       sink.push({
         productId: opts.productId,
         eventType: trimmed,
