@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { Hono } from 'hono';
-import { type Beacon, createBeacon } from '../src/index';
-import { registerDbCoverageGuard, TEST_DB } from './dbGuard';
-import { withTestDb } from './helpers';
+import { registerDbCoverageGuard, TEST_DB } from '../../../packages/beacon/test/dbGuard';
+import { withTestDb } from '../../../packages/beacon/test/helpers';
+import { type Beacon, createBeacon } from '../src/createBeacon';
 
 registerDbCoverageGuard();
 

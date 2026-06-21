@@ -24,7 +24,9 @@ import { fileURLToPath } from 'node:url';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(HERE, '..', '..', '..'); // test/acceptance/docs -> repo root
-const README = join(REPO_ROOT, 'README.md');
+// Both docs carry type-checked samples: README.md (what/why) is mostly prose, INTEGRATION.md
+// (how-to) holds the bulk of the code. Scan both so neither can drift from the real exports.
+const DOC_FILES = [join(REPO_ROOT, 'README.md'), join(REPO_ROOT, 'INTEGRATION.md')];
 const GEN_DIR = join(HERE, '.generated');
 const SAMPLE_FILE = join(GEN_DIR, 'readme-samples.tsx');
 const TSCONFIG_FILE = join(GEN_DIR, 'tsconfig.json');
@@ -33,20 +35,17 @@ const TSC_BIN = join(REPO_ROOT, 'node_modules', '.bin', 'tsc');
 // Ambient declarations for everything the README's samples lean on but a host app provides.
 // Keeps the type-check focused on whether the BEACON calls are real.
 const PREAMBLE = `
-import type { Beacon } from '@pi-innovations/beacon';
+import type { HttpBeacon } from '@pi-innovations/beacon';
 import type { BeaconClient as BeaconClientType } from '@pi-innovations/beacon-client';
 import type { ReactNativeBindings } from '@pi-innovations/beacon-client/react-native';
 import type { WebBindings } from '@pi-innovations/beacon-client/web';
-import type { Context as HonoContext } from 'hono';
 
-declare const app: import('hono').Hono;
-declare const beacon: Beacon;
+declare const beacon: HttpBeacon;
 declare const client: BeaconClientType;
 declare const rn: ReactNativeBindings;
 declare const web: WebBindings;
+declare const request: Request;
 declare const otherHeaders: Record<string, string>;
-declare function createUser(c: HonoContext): Promise<{ id: string }>;
-declare function createClip(c: HonoContext): Promise<{ id: string; duration: number }>;
 // Minimal JSX namespace so the React Native sample's JSX type-checks without react installed.
 declare namespace JSX {
   interface Element {}
@@ -105,9 +104,8 @@ afterAll(() => {
   rmSync(GEN_DIR, { recursive: true, force: true });
 });
 
-test('every README TypeScript sample compiles against the real exports', async () => {
-  const markdown = readFileSync(README, 'utf8');
-  const blocks = extractBlocks(markdown);
+test('every docs TypeScript sample compiles against the real exports', async () => {
+  const blocks = DOC_FILES.flatMap((file) => extractBlocks(readFileSync(file, 'utf8')));
   expect(blocks.length).toBeGreaterThan(0); // guard: the extractor must actually find samples
 
   mkdirSync(GEN_DIR, { recursive: true });
@@ -139,6 +137,6 @@ test('every README TypeScript sample compiles against the real exports', async (
 
   expect(
     exitCode,
-    `README samples failed to type-check against current exports:\n${stdout}${stderr}`,
+    `Docs samples failed to type-check against current exports:\n${stdout}${stderr}`,
   ).toBe(0);
 });

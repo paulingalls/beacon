@@ -1,7 +1,8 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 
-import { createBeacon, createHttpBeacon } from '@pi-innovations/beacon';
+import { createHttpBeacon } from '@pi-innovations/beacon';
 import { Hono } from 'hono';
+import { createBeacon } from '../../apps/server/src/createBeacon';
 // Live-DB setup via the package's own internals by relative path, as the sibling acceptance suites do.
 import { closeDb, createDb } from '../../packages/beacon/src/storage/db';
 import { runMigrations } from '../../packages/beacon/src/storage/migrate';

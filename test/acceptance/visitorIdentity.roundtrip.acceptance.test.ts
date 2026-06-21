@@ -1,9 +1,9 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { createBeacon } from '@pi-innovations/beacon';
 // The assembled SDK imported BY PACKAGE NAME — exercises the exports map + the whole client,
 // exactly as test/acceptance/sdk/sdk.acceptance.test.ts does.
 import { BeaconClient } from '@pi-innovations/beacon-client';
 import { Hono } from 'hono';
+import { createBeacon } from '../../apps/server/src/createBeacon';
 // Live-DB setup via the package's own internals by relative path, as the sibling acceptance suites do.
 import { closeDb, createDb } from '../../packages/beacon/src/storage/db';
 import { runMigrations } from '../../packages/beacon/src/storage/migrate';
