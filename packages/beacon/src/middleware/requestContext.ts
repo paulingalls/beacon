@@ -156,7 +156,15 @@ export function hashIp(ip: string | undefined, hashIPs: boolean): string | undef
   return hashIPs ? createHash('sha256').update(ip).digest('hex') : ip;
 }
 
-/** Default socket-address source (Bun). Guarded — getConnInfo throws off-server. */
+/**
+ * Default socket-address source (Bun). Guarded — getConnInfo throws off-server.
+ * This is the Hono-Context socket source for the Hono shims (resolveIp/resolveEventFields)
+ * and host getClientAddress defaults (requestLogger, shortener/create, api/rateLimit).
+ * It is intentionally MIRRORED — not shared — with the adapter's inlined clientAddress
+ * guard (adapter/beaconRequest.ts): requestContext imports the adapter, so importing
+ * defaultClientAddress back would form a cycle. The duplication is permanent; keep the
+ * two guards in sync if either changes.
+ */
 export function defaultClientAddress(c: Context): string | undefined {
   try {
     return getConnInfo(c).remote.address;
