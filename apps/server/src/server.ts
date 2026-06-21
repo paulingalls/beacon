@@ -4,9 +4,7 @@
 // reverse proxy / load balancer (§1.3 outage-degrade). Config follows REQUIREMENTS.md §10.
 // This is the entry point the systemd unit (deploy/beacon.service) and Dockerfile invoke.
 
-import { createHash, timingSafeEqual } from 'node:crypto';
-
-import { type Beacon, createBeacon } from '@pi-innovations/beacon';
+import { type Beacon, createBeacon, verifyTrustedBearer } from '@pi-innovations/beacon';
 import { type Context, Hono } from 'hono';
 
 /** Environment the host reads (a subset of process.env, injected for testability). */
@@ -15,6 +13,11 @@ export interface ServerEnv {
   DATABASE_URL?: string;
   /** Bearer token gating the dashboard + query API. Unset ⇒ those surfaces fail closed. */
   ADMIN_TOKEN?: string;
+  /**
+   * Bearer secret authorizing a trusted s2s caller to assert per-event user_id/context
+   * in the ingest body (M2). Unset ⇒ trusted ingest disabled (anonymous-only, fail-closed).
+   */
+  TRUSTED_INGEST_TOKEN?: string;
   /** API mount prefix. Default '/analytics'. */
   BASE_PATH?: string;
   /** Fallback product_id for events whose batch omits one. Default 'beacon'. */
@@ -28,21 +31,13 @@ export interface ServerEnv {
 /**
  * Build the constant-time admin predicate for createBeacon's isAdmin gate.
  *
- * Fail-closed: with no ADMIN_TOKEN configured every request is non-admin, so the
- * dashboard and query API are unreachable rather than open. When a token is set, the
- * presented `Authorization: Bearer <token>` is compared against it in constant time —
- * both sides are SHA-256'd to fixed 32-byte digests so timingSafeEqual never throws on a
- * length mismatch and the comparison leaks neither token length nor content via timing.
+ * Delegates to the package's audited `verifyTrustedBearer` (one constant-time bearer
+ * compare for the whole stack): it SHA-256s both sides and timingSafeEqual-compares, and
+ * is fail-closed on an unset token — so with no ADMIN_TOKEN every request is non-admin and
+ * the dashboard + query API stay unreachable rather than open.
  */
 function makeIsAdmin(adminToken: string | undefined): (c: Context) => boolean {
-  if (!adminToken) return () => false;
-  const expected = createHash('sha256').update(adminToken).digest();
-  return (c) => {
-    const token = (c.req.header('authorization') ?? '').match(/^Bearer\s+(.+)$/i)?.[1];
-    if (token === undefined) return false;
-    const presented = createHash('sha256').update(token).digest();
-    return timingSafeEqual(expected, presented);
-  };
+  return (c) => verifyTrustedBearer(c.req.header('authorization'), adminToken);
 }
 
 /** Parse the comma-separated PRODUCT_ALLOWLIST env into a trimmed, non-empty list. */
@@ -75,6 +70,7 @@ export function buildServer(env: ServerEnv): { app: Hono; beacon: Beacon } {
     productId: env.PRODUCT_ID ?? 'beacon',
     postgres: { connectionString },
     isAdmin: makeIsAdmin(env.ADMIN_TOKEN),
+    trustedIngestToken: env.TRUSTED_INGEST_TOKEN,
     basePath: env.BASE_PATH ?? '/analytics',
     shortDomain: env.SHORT_DOMAIN,
     hashIPs: true,

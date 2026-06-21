@@ -30,6 +30,9 @@ import { VisitorTokenStore } from './visitors/tokenStore';
 const QUERY_RATE_WINDOW_MS = 60_000;
 const DEFAULT_QUERY_RATE_LIMIT = 60;
 
+// Re-exported so a host (apps/server) can gate its own surfaces with the same audited
+// constant-time bearer compare instead of forking the logic (e.g. makeIsAdmin).
+export { verifyTrustedBearer } from './api/auth';
 export type { BeaconConfig, BeaconEvent, BufferStats, CreatedShortLink };
 
 /** Options for the programmatic Beacon.createShortLink() helper (REQUIREMENTS.md §7.2). */
@@ -154,7 +157,11 @@ export function createBeacon(config: BeaconConfig): Beacon {
   // at the call site rather than to the shared eventOptions.
   apiRouter.post(
     '/events',
-    createIngestHandler(buffer, { ...eventOptions, productAllowlist: config.productAllowlist }),
+    createIngestHandler(buffer, {
+      ...eventOptions,
+      productAllowlist: config.productAllowlist,
+      trustedIngestToken: config.trustedIngestToken,
+    }),
   );
 
   // The five read endpoints (REQUIREMENTS.md §5.4), each behind the admin gate

@@ -3,8 +3,14 @@ import { Buffer } from 'node:buffer';
 import type { Context, Handler } from 'hono';
 
 import type { EventBuffer } from '../events/buffer';
-import { buildEventContext, defaultClientAddress, resolveIp } from '../middleware/requestContext';
+import {
+  buildEventContext,
+  defaultClientAddress,
+  hashIp,
+  resolveIp,
+} from '../middleware/requestContext';
 import type { BeaconEvent } from '../types';
+import { verifyTrustedBearer } from './auth';
 import { errorResponse } from './errors';
 import { applyRateLimit, RateLimiter } from './rateLimit';
 
@@ -17,7 +23,9 @@ const MAX_EVENTS_PER_REQUEST = 100;
 const MAX_EVENT_TYPE_LENGTH = 100;
 const MAX_PRODUCT_ID_LENGTH = 100;
 const MAX_VISITOR_TOKEN_LENGTH = 100;
+const MAX_USER_ID_LENGTH = 100;
 const MAX_PROPERTIES_BYTES = 10 * 1024;
+const MAX_CONTEXT_BYTES = 10 * 1024;
 const DEFAULT_RATE_LIMIT = 10;
 const DEFAULT_RATE_WINDOW_MS = 60_000;
 
@@ -32,6 +40,13 @@ export interface IngestOptions {
   productAllowlist?: string[];
   /** Resolve the authenticated user id from the request, or null. */
   getUserId?: (c: Context) => string | null;
+  /**
+   * Shared secret authorizing a trusted server-to-server caller to assert per-event
+   * user_id + context in the batch body (M2). When unset, trusted ingest is disabled
+   * (fail-closed): body user_id/context are ignored and the public anonymous path is
+   * unchanged. Compared in constant time via verifyTrustedBearer; never logged.
+   */
+  trustedIngestToken?: string;
   /** SHA-256 the client IP before storage / rate-limit keying. Default true. */
   hashIPs?: boolean;
   /** Socket-address source when X-Forwarded-For is absent. Default Bun's getConnInfo. */
@@ -53,6 +68,9 @@ interface RawEvent {
   event_type?: unknown;
   properties?: unknown;
   timestamp?: unknown;
+  /** Per-event identity, honored only under a verified trusted bearer (M2). */
+  user_id?: unknown;
+  context?: unknown;
 }
 
 /**
@@ -78,7 +96,8 @@ export function createIngestHandler(buffer: EventBuffer, opts: IngestOptions): H
     } catch (err) {
       console.warn(`[beacon] ingest: getUserId failed: ${String(err)}`);
     }
-    const ip = resolveIp(c, opts.hashIPs ?? true, opts.getClientAddress ?? defaultClientAddress);
+    const hashIPs = opts.hashIPs ?? true;
+    const ip = resolveIp(c, hashIPs, opts.getClientAddress ?? defaultClientAddress);
     const identifier = userId ?? ip ?? 'unknown'; // per-user when authed, else per-IP (§6.2)
 
     // Check BEFORE parsing the body so an over-limit caller is rejected without us
@@ -92,6 +111,11 @@ export function createIngestHandler(buffer: EventBuffer, opts: IngestOptions): H
     // body-carried visitor_token (the SPA's only carrier) overrides it below.
     const transportVisitorToken = c.get('beaconVisitorToken') ?? null;
     const { context, platform } = buildEventContext(c, ip);
+
+    // Trusted-caller gate (M2): only a verified bearer may assert per-event user_id
+    // + context below. An untrusted/absent/misconfigured caller resolves to false
+    // (fail-closed), leaving the public anonymous path identical to before.
+    const trusted = verifyTrustedBearer(c.req.header('authorization'), opts.trustedIngestToken);
 
     let body: unknown;
     try {
@@ -188,7 +212,7 @@ export function createIngestHandler(buffer: EventBuffer, opts: IngestOptions): H
 
     let accepted = 0;
     for (const raw of events as RawEvent[]) {
-      const event = toEvent(raw, shared);
+      const event = toEvent(raw, shared, trusted, hashIPs);
       if (event) {
         buffer.push(event);
         accepted += 1;
@@ -205,7 +229,12 @@ export function createIngestHandler(buffer: EventBuffer, opts: IngestOptions): H
  * a plain object ≤10KB serialized; timestamp, if a valid date string, is the
  * event time, else it defaults to the server ingest time at flush.
  */
-function toEvent(raw: RawEvent, shared: SharedEventFields): BeaconEvent | null {
+function toEvent(
+  raw: RawEvent,
+  shared: SharedEventFields,
+  trusted: boolean,
+  hashIPs: boolean,
+): BeaconEvent | null {
   if (typeof raw !== 'object' || raw === null) return null;
 
   const eventType = validShortString(raw.event_type, MAX_EVENT_TYPE_LENGTH);
@@ -226,17 +255,47 @@ function toEvent(raw: RawEvent, shared: SharedEventFields): BeaconEvent | null {
     properties = raw.properties as Record<string, unknown>;
   }
 
+  // Per-event identity (M2): only under verified trust does the body's user_id +
+  // context override the transport-resolved shared values; otherwise the anonymous
+  // public path is unchanged. An invalid value falls back to the shared default
+  // (skip-not-reject) — a malformed identity never drops the event.
+  const userId = trusted
+    ? (validShortString(raw.user_id, MAX_USER_ID_LENGTH) ?? shared.userId)
+    : shared.userId;
+  const context = trusted
+    ? resolveTrustedContext(raw.context, shared.context, hashIPs)
+    : shared.context;
+
   const timestamp = parseTimestamp(raw.timestamp);
   return {
     productId: shared.productId,
     eventType,
     ...(timestamp ? { timestamp } : {}),
-    userId: shared.userId,
+    userId,
     visitorToken: shared.visitorToken,
     platform: shared.platform,
     properties,
-    context: shared.context,
+    context,
   };
+}
+
+/**
+ * Resolve a trusted caller's per-event `context` (M2). A valid plain object within
+ * the size cap REPLACES the transport context for that event (so a relay's own
+ * ip/user-agent never leak onto end-user events), with `ip` always hashed per the
+ * never-store-raw-IP rule. An invalid/oversized/absent value falls back to the
+ * transport context (skip-not-reject).
+ */
+function resolveTrustedContext(
+  raw: unknown,
+  fallback: Record<string, unknown>,
+  hashIPs: boolean,
+): Record<string, unknown> {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return fallback;
+  if (Buffer.byteLength(JSON.stringify(raw), 'utf8') > MAX_CONTEXT_BYTES) return fallback;
+  const ctx = raw as Record<string, unknown>;
+  const ip = typeof ctx.ip === 'string' ? ctx.ip : undefined;
+  return { ...ctx, ip: hashIp(ip, hashIPs) };
 }
 
 /**

@@ -7,6 +7,7 @@ import {
   buildEventContext,
   defaultClientAddress,
   firstLocale,
+  hashIp,
   parseAppContext,
   resolveEventFields,
   resolveIp,
@@ -83,6 +84,26 @@ describe('resolveIp', () => {
       throw new Error('host override boom');
     };
     expect(resolveIp(ctx(), false, throwing)).toBeUndefined();
+  });
+});
+
+describe('hashIp', () => {
+  test('SHA-256 hashes the ip when hashIPs is on', () => {
+    expect(hashIp('203.0.113.7', true)).toBe(sha256('203.0.113.7'));
+  });
+
+  test('passes the ip through unchanged when hashIPs is off', () => {
+    expect(hashIp('203.0.113.7', false)).toBe('203.0.113.7');
+  });
+
+  test('returns undefined for an undefined ip regardless of hashIPs', () => {
+    expect(hashIp(undefined, true)).toBeUndefined();
+    expect(hashIp(undefined, false)).toBeUndefined();
+  });
+
+  test('never returns the raw ip once hashed', () => {
+    const ip = '203.0.113.7';
+    expect(hashIp(ip, true)).not.toContain(ip);
   });
 });
 

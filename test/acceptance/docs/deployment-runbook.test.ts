@@ -29,11 +29,13 @@ describe('docs/DEPLOYMENT.md droplet runbook', () => {
   });
 
   // Every env var the host (apps/server) reads must be documented so an operator knows what to
-  // put in .env.production. DATABASE_URL/ADMIN_TOKEN/SHORT_DOMAIN are the ones that matter in prod.
+  // put in .env.production. DATABASE_URL/ADMIN_TOKEN/SHORT_DOMAIN are the ones that matter in prod;
+  // TRUSTED_INGEST_TOKEN gates trusted s2s ingest (M2).
   test.each([
     'DATABASE_URL',
     'ADMIN_TOKEN',
     'SHORT_DOMAIN',
+    'TRUSTED_INGEST_TOKEN',
   ])('documents the %s environment variable', (key) => {
     expect(runbook).toContain(key);
   });
