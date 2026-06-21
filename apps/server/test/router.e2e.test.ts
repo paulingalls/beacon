@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { Hono } from 'hono';
 
-import { type Beacon, createBeacon } from '../src/index';
+import { type Beacon, createBeacon } from '../src/createBeacon';
 
 // In-process wiring proof for story-004: beacon.track() + beacon.router() are
 // exposed on the public API and feed the same EventBuffer. Postgres is

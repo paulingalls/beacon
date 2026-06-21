@@ -1,9 +1,9 @@
 import { describe, expect, test } from 'bun:test';
 import type { Context } from 'hono';
 import { Hono } from 'hono';
-import { createBeacon } from '../src/index';
-import { registerDbCoverageGuard, TEST_DB } from './dbGuard';
-import { withTestDb } from './helpers';
+import { registerDbCoverageGuard, TEST_DB } from '../../../packages/beacon/test/dbGuard';
+import { withTestDb } from '../../../packages/beacon/test/helpers';
+import { createBeacon } from '../src/createBeacon';
 
 registerDbCoverageGuard();
 

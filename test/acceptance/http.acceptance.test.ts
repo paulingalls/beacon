@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { createBeacon } from '@pi-innovations/beacon';
 import { Hono } from 'hono';
+import { createBeacon } from '../../apps/server/src/createBeacon';
 // Reach the package's DB internals by relative path for live-DB setup, exactly
 // as the package's own integration suites do (packages/beacon/test/helpers.ts).
 import { closeDb, createDb } from '../../packages/beacon/src/storage/db';
