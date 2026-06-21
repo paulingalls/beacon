@@ -1,166 +1,229 @@
-# Deploying Beacon to DigitalOcean App Platform
+# Deploying Beacon to a DigitalOcean Droplet
 
 This runbook takes the Beacon host app (`apps/server`) from the repository to a
-running deployment on **DigitalOcean App Platform** with a **Managed Postgres**
-database, serving every Beacon surface: event ingest, the query API, the admin
-dashboard, and the URL shortener.
+running production deployment on a **DigitalOcean droplet** behind **Caddy**
+(automatic TLS), backed by a **DigitalOcean Managed Postgres** database — serving
+every Beacon surface: event ingest, the query API, the admin dashboard, the URL
+shortener, and a DB-free `/health` probe.
 
-It is the deploy procedure for the spec committed at [`.do/app.yaml`](../.do/app.yaml).
-Every command and field below is kept in sync with that spec by an automated
-docs-sync check (`test/acceptance/docs/deployment-runbook.test.ts`): if the spec
-gains an environment variable or job, this runbook must document it or the test
-fails.
+The deploy is modeled on the sibling `vodshorter` project. A docs-sync guard
+(`test/acceptance/docs/deployment-runbook.test.ts`) asserts this file keeps
+naming the load-bearing artifacts, env vars, and steps below, so it can't
+silently drift from how Beacon actually deploys.
 
-> **Status — not yet proven against a live account.** As of this writing the
-> image builds and boots `/health` locally, but a full App Platform deploy
-> (Managed-PG binding, the PRE_DEPLOY migrate job, production env/auth wiring)
-> has not been exercised end-to-end against a real DigitalOcean account
-> (tracked as an open risk). Treat this as the intended, spec-validated
-> procedure — verify each step the first time you run it for real.
+> **Status — proven live (free-2026-06-21-live-do-deploy).** Beacon runs at
+> `https://beacon.vodshorter.com` on a dedicated droplet, with autodeploy on
+> merge to `main`. The interim hostname is a subdomain of `vodshorter.com`
+> (Beacon's first integration target); swap it for a dedicated short domain by
+> editing `deploy/Caddyfile` + DNS, or serve both.
 
 ---
 
-## What gets deployed
+## Architecture
 
-The spec describes a single application with three parts:
+- **One droplet** (`s-1vcpu-1gb`, region `sfo3`, in the same VPC as the DB) runs
+  the Bun server as a non-root `beacon` user under **systemd**
+  ([`deploy/beacon.service`](../deploy/beacon.service), `PORT=8080`, drains on
+  SIGTERM via `beacon.shutdown()`).
+- **Caddy** ([`deploy/Caddyfile`](../deploy/Caddyfile)) terminates TLS (auto
+  Let's Encrypt) and reverse-proxies `localhost:8080`.
+- **Managed Postgres** — a `beacon_prod` database + `beacon` user on the shared
+  cluster, reached over the **VPC private network** (`sslmode=require`).
+- **Deploy** is git-pull based: [`scripts/deploy.sh`](../scripts/deploy.sh) runs
+  on the droplet — install → **migrate** → restart → health-check → rollback.
+  Beacon does **not** migrate on server startup (keeps `/health` DB-free), so
+  migrations run in `deploy.sh` before the restart.
 
-- **One Dockerfile-backed web service** (`name: web`). DigitalOcean buildpacks
-  don't ship Bun, so the image is built from [`Dockerfile`](../Dockerfile)
-  (`oven/bun`) and runs `apps/server/src/server.ts` directly. This one service
-  hosts every surface — `/analytics/*` (ingest + query API + dashboard), the
-  shortener at the root (`GET /:code`), and a DB-free `/health` probe.
-- **One Managed Postgres database** (`name: beacon-db`, engine `PG`, version
-  `16`, `production: true`). PG 16 matches `docker-compose.yml` and CI
-  (`postgres:16-alpine`), so the deployed engine equals what the tests exercise.
-- **A PRE_DEPLOY `migrate` job** that runs the schema migrations before every
-  deploy of the web service.
-
-The web service `health_check` points at `/health`, which never touches
-Postgres — so a database outage degrades the app without failing the health
-check and cycling the instance.
+`/health` never touches Postgres, so a database outage degrades the app without
+failing the health check and cycling the service.
 
 ---
 
 ## Prerequisites
 
-- The [`doctl`](https://docs.digitalocean.com/reference/doctl/) CLI, installed
-  and authenticated (`doctl auth init`).
-- This GitHub repository connected to your DigitalOcean team (App Platform reads
-  the `github.repo` named in `.do/app.yaml`, `paulingalls/beacon`, branch
-  `main`).
-- Bun locally, to run migrations or smoke checks by hand if needed.
+- [`doctl`](https://docs.digitalocean.com/reference/doctl/) and `gh`, both
+  authenticated (`doctl auth init`, `gh auth login`).
+- A managed Postgres cluster (Beacon reuses the existing one) and a domain you
+  control on DigitalOcean DNS for the hostname.
+- An SSH keypair for the droplet (its public half uploaded to DO, its private
+  half stored as the `SSH_PRIVATE_KEY` GitHub secret for autodeploy).
 
 ---
 
-## 1. Create the app from the spec
+## 1. Create the database + user
+
+On the managed cluster (`<cluster-id>`), create a dedicated database and user:
 
 ```bash
-doctl apps create --spec .do/app.yaml
+doctl databases db create   <cluster-id> beacon_prod
+doctl databases user create <cluster-id> beacon   # note the generated password
 ```
 
-This provisions the web service, the `beacon-db` Managed Postgres, and the
-`migrate` job in one call. Note the returned **app ID** — you'll use it for
-manual deploys and updates. List apps any time with `doctl apps list`.
+The `DATABASE_URL` uses the cluster's **private** host (VPC), the `beacon` user,
+the `beacon_prod` database, and `sslmode=require`:
 
-## 2. Set the ADMIN_TOKEN secret
-
-`ADMIN_TOKEN` is declared in the spec as `type: SECRET` with **no value
-committed** — you must set it at or after creation, via the DigitalOcean
-dashboard (App → Settings → `web` → Environment Variables) or
-`doctl apps update <app-id> --spec <spec-with-value>`.
-
-`ADMIN_TOKEN` gates the admin dashboard and the query API. **If it is unset, the
-host fails closed** — the dashboard and query endpoints return `403`, rather than
-being exposed. The presented `Authorization: Bearer <token>` is compared against
-it in constant time (see `apps/server/src/server.ts`).
-
-## 3. Managed Postgres
-
-The web service and the migrate job both receive the database connection via the
-DigitalOcean-injected binding:
-
-```yaml
-- key: DATABASE_URL
-  value: ${beacon-db.DATABASE_URL}
+```
+postgres://beacon:<password>@private-<cluster-host>:25060/beacon_prod?sslmode=require
 ```
 
-No connection string is committed; DigitalOcean substitutes the managed
-database's TLS connection string at deploy time. `DATABASE_URL` is the one
-required variable — the host fails fast on boot if it is missing.
+### 1a. Allow the droplet through the DB firewall (trusted sources)
 
-## 4. Migrations (PRE_DEPLOY job)
-
-The `migrate` job runs `bun run migrate` (which executes
-`packages/beacon/src/storage/migrate.ts`) against `DATABASE_URL` **before** each
-deploy of the web service. The migration runner is idempotent and
-advisory-locked: it applies only unapplied SQL files and is safe to run on every
-deploy, including the first. No manual migration step is required — but you can
-run it by hand against any database with:
+The managed DB's firewall lists **trusted sources**; a new droplet is blocked
+(TCP to `:25060` times out) until you add it — do this after the droplet exists
+(step 2):
 
 ```bash
-DATABASE_URL=postgres://... bun run migrate
+doctl databases firewalls append <cluster-id> --rule droplet:<droplet-id>
 ```
 
-## 5. Deploys are manual (deploy_on_push: false)
+### 1b. Grant the `beacon` user schema privileges
 
-The spec sets `deploy_on_push: false` deliberately. `main`'s branch protection
-uses `enforce_admins=false` (see [`BRANCH_PROTECTION.md`](./BRANCH_PROTECTION.md)),
-so an admin close-flow merge can land on `main` with red CI. Auto-deploy would
-ship that straight to production. Instead, trigger a deploy explicitly once you
-have confirmed CI is green on the commit you want to ship:
+PostgreSQL 15+ no longer grants `CREATE` on schema `public` to normal users, so
+migrations fail with `permission denied for schema public` until you grant it.
+Connect **as the admin user** (`doadmin`) to `beacon_prod` and run:
 
-```bash
-doctl apps create-deployment <app-id>
+```sql
+GRANT ALL ON SCHEMA public TO beacon;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO beacon;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO beacon;
 ```
-
-Flip `deploy_on_push` to `true` only once admin merges are gated too (the
-`gh pr merge` follow-up — tracked as an open debt).
 
 ---
 
-## Environment variables
+## 2. Create the droplet + DNS
 
-Set on the `web` service. `DATABASE_URL` is injected by the Managed PG binding;
-`ADMIN_TOKEN` is a secret; the rest have safe defaults.
+```bash
+doctl compute droplet create beacon \
+  --region sfo3 --size s-1vcpu-1gb --image ubuntu-24-04-x64 \
+  --vpc-uuid <vpc-uuid> --ssh-keys <ssh-key-fingerprint> \
+  --enable-monitoring --wait
+```
 
-| Variable | Required | Source | Purpose |
-|---|---|---|---|
-| `DATABASE_URL` | yes | `${beacon-db.DATABASE_URL}` | Managed Postgres connection string (TLS). Host fails fast if unset. |
-| `ADMIN_TOKEN` | no (set in prod) | `SECRET` | Bearer token gating dashboard + query API. **Unset ⇒ those surfaces fail closed (403).** |
-| `PRODUCT_ID` | no | spec value `beacon` | Fallback `product_id` for events whose batch omits one. |
-| `SHORT_DOMAIN` | no | operator-set | Absolute base for generated short URLs (e.g. `https://pi.ink`). Without it, the shortener emits relative `/CODE` redirects. |
-| `PRODUCT_ALLOWLIST` | no | operator-set | Comma-separated allowlist of accepted `product_id`s (`PRODUCT_ID` must be in it). |
-| `BASE_PATH` | no | operator-set | API mount prefix (default `/analytics`). |
+Add the DNS A record **before** Caddy starts (so the ACME challenge resolves):
 
-These map directly to `ServerEnv` in `apps/server/src/server.ts`.
+```bash
+doctl compute domain records create vodshorter.com \
+  --record-type A --record-name beacon --record-data <droplet-public-ip>
+```
+
+---
+
+## 3. Provision the droplet
+
+[`scripts/provision-droplet.sh`](../scripts/provision-droplet.sh) is idempotent
+and run as root. It installs Caddy + Bun, creates the `beacon` user, generates a
+read-only GitHub deploy key, clones the repo, and installs the systemd unit +
+Caddyfile:
+
+```bash
+ssh -i ~/.ssh/<key> root@<droplet-ip> 'bash -s' < scripts/provision-droplet.sh
+```
+
+The first run fails at `git clone` and prints the droplet's deploy public key —
+register it, then re-run:
+
+```bash
+gh repo deploy-key add <key.pub> --repo paulingalls/beacon --title beacon-droplet
+ssh -i ~/.ssh/<key> root@<droplet-ip> 'bash -s' < scripts/provision-droplet.sh
+```
+
+> To bring a droplet up from a branch before it has merged to `main`, set
+> `DEPLOY_BRANCH=<branch>` in the SSH command. Steady-state deploys track `main`.
+
+---
+
+## 4. Configure secrets + start
+
+Create `/home/beacon/.env.production` (chmod 600, owned by `beacon`) — **never
+committed**; `.env.*` is gitignored and this lives outside the repo:
+
+```bash
+DATABASE_URL=postgres://beacon:<password>@private-<cluster-host>:25060/beacon_prod?sslmode=require
+ADMIN_TOKEN=<openssl rand -hex 32>
+SHORT_DOMAIN=https://beacon.vodshorter.com
+```
+
+Then reload Caddy (provision installs the Caddyfile but does not reload the
+running Caddy), install, migrate, and start:
+
+```bash
+systemctl reload caddy        # picks up deploy/Caddyfile → obtains the TLS cert
+sudo -u beacon -H bash -lc 'cd ~/app && ~/.bun/bin/bun install --frozen-lockfile --production --ignore-scripts'
+sudo -u beacon -H bash -lc 'cd ~/app && set -a; . ~/.env.production; set +a; ~/.bun/bin/bun run migrate'
+systemctl enable --now beacon
+```
+
+| Variable | Required | Purpose |
+|---|---|---|
+| `DATABASE_URL` | yes | Managed Postgres connection string (TLS). Host fails fast if unset. |
+| `ADMIN_TOKEN` | set in prod | Bearer token gating dashboard + query API. **Unset ⇒ those surfaces fail closed (403).** |
+| `SHORT_DOMAIN` | no | Absolute base for generated short URLs. Without it the shortener emits relative `/CODE` redirects. |
+| `PRODUCT_ID` | no | Fallback `product_id` for events whose batch omits one (default `beacon`). |
+| `PRODUCT_ALLOWLIST` | no | Comma-separated allowlist of accepted `product_id`s. |
+| `BASE_PATH` | no | API mount prefix (default `/analytics`). |
+
+These map to `ServerEnv` in [`apps/server/src/server.ts`](../apps/server/src/server.ts).
+
+Finally, after confirming `ssh beacon@<ip>` works in a separate session, disable
+root SSH (`PermitRootLogin no`, reload sshd) — last, to avoid a lockout.
+
+---
+
+## 5. Autodeploy on merge to `main`
+
+[`.github/workflows/deploy.yml`](../.github/workflows/deploy.yml) triggers on
+push to `main`, re-runs the full CI suite via the reusable `ci.yml` as a hard
+gate, then SSHes to the droplet and runs `~/deploy.sh` (which fast-forwards
+`~/app` to `origin/main` and runs [`scripts/deploy.sh`](../scripts/deploy.sh)).
+It needs two repo secrets:
+
+```bash
+gh secret set DROPLET_IP --repo paulingalls/beacon --body <droplet-ip>
+gh secret set SSH_PRIVATE_KEY --repo paulingalls/beacon < ~/.ssh/<deploy-key>
+```
+
+`main` is releases-only; integration happens on `develop` (see
+[`BRANCH_PROTECTION.md`](./BRANCH_PROTECTION.md)). A `develop`→`main` PR is a
+release. `scripts/deploy.sh` rolls back to the previous commit (code only) if the
+new commit fails its health check.
 
 ---
 
 ## 6. Smoke checks
 
-After a deploy completes, verify the surfaces (substitute your app's domain):
-
 ```bash
 # Health probe — DB-free, must return {"status":"ok"} even during a DB outage.
-curl https://<your-app>.ondigitalocean.app/health
+curl https://beacon.vodshorter.com/health
 
-# URL shortener — a known code should answer with a 302 redirect to its destination.
-curl -I https://<your-app>.ondigitalocean.app/<code>
-# => HTTP/2 302 ; location: <destination>
+# URL shortener — a known code answers with a 302 redirect to its destination.
+curl -i https://beacon.vodshorter.com/<code>            # => HTTP/2 302 ; location: <destination>
+
+# Ingest accepts SDK batches; 202 + product_id_used confirms the write path.
+curl -X POST https://beacon.vodshorter.com/analytics/events \
+  -H 'content-type: application/json' \
+  -d '{"product_id":"beacon","events":[{"event_type":"smoke","properties":{}}]}'
 
 # Admin surface fails closed without the bearer token.
-curl -i https://<your-app>.ondigitalocean.app/analytics/dashboard
-# => 403 (supply Authorization: Bearer $ADMIN_TOKEN to reach it)
+curl -i https://beacon.vodshorter.com/analytics/dashboard  # => 403
+# (supply Authorization: Bearer $ADMIN_TOKEN to reach it)
 ```
-
-Ingest accepts SDK batches at `POST /analytics/events`; a `202` with a
-`product_id_used` body confirms the write path.
 
 ---
 
+## Operations
+
+```bash
+sudo journalctl -u beacon -f     # app logs
+sudo journalctl -u caddy -f      # proxy / TLS logs
+sudo systemctl restart beacon    # manual restart
+gh workflow disable deploy.yml   # pause autodeploy during maintenance
+```
+
 ## Related
 
-- [`.do/app.yaml`](../.do/app.yaml) — the App Platform spec this runbook deploys.
-- [`Dockerfile`](../Dockerfile) — the `oven/bun` image App Platform builds.
-- [`BRANCH_PROTECTION.md`](./BRANCH_PROTECTION.md) — why deploys are manual.
-- [`../README.md`](../README.md) — integration guide and the host-app template.
+- [`deploy/beacon.service`](../deploy/beacon.service) — systemd unit.
+- [`deploy/Caddyfile`](../deploy/Caddyfile) — reverse proxy / TLS.
+- [`scripts/provision-droplet.sh`](../scripts/provision-droplet.sh) — provisioning.
+- [`scripts/deploy.sh`](../scripts/deploy.sh) — on-droplet deploy + rollback.
+- [`.github/workflows/deploy.yml`](../.github/workflows/deploy.yml) — autodeploy.
+- [`BRANCH_PROTECTION.md`](./BRANCH_PROTECTION.md) — develop/main split.

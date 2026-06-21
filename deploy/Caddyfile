@@ -1,0 +1,19 @@
+# Caddy reverse proxy for Beacon — terminates TLS (auto Let's Encrypt) and
+# proxies to the Bun server on localhost:8080.
+# Install to /etc/caddy/Caddyfile, then: sudo systemctl reload caddy
+#
+# The host below is the interim production hostname. Beacon's first integration
+# target is vodshorter, so it lives at a subdomain of vodshorter.com until a
+# dedicated short domain is chosen — then replace this host (or add the new one
+# as a second site block) and `systemctl reload caddy`. The host's A record must
+# point at the droplet BEFORE Caddy starts, so the ACME HTTP/TLS-ALPN challenge
+# resolves.
+#
+# No on-disk access log block on purpose: Caddy's apt systemd unit ships with
+# ProtectSystem hardening that blocks writes to /var/log/caddy without a
+# ReadWritePaths override. Use journald instead: sudo journalctl -u caddy -f
+beacon.vodshorter.com {
+	reverse_proxy localhost:8080
+	encode gzip zstd
+	header -Server
+}

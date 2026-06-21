@@ -1,53 +1,54 @@
-// Docs-sync check (sprint-013 / Milestone 5, story-002). Proves docs/DEPLOYMENT.md documents
-// the LIVE .do/app.yaml deploy spec — so the runbook can't silently drift from the artifact an
-// operator actually deploys. The teeth are derived from the parsed spec: every env key and job
-// the spec declares MUST appear in the runbook, so a future env/job added to app.yaml without a
-// runbook update turns this test red.
+// Docs-sync guard for the droplet deploy runbook (free-2026-06-21-live-do-deploy; replaces the
+// old App Platform .do/app.yaml parse-driven check, retired with that spec).
 //
-// DB-free (no dbGuard import): pure file reads + Bun.YAML, so it runs in the DB-free pre-commit
-// too. Mirrors the structural contract guard in test/deploy/spec.test.ts.
+// There is no single machine-readable spec for a droplet deploy (the Caddyfile, systemd unit,
+// and deploy scripts are separate artifacts), so instead of parsing a spec this asserts that
+// docs/DEPLOYMENT.md names the load-bearing facts an operator needs — the runtime artifacts, the
+// env vars the host reads, and the non-obvious managed-PG/Caddy steps that bit us live. If the
+// runbook drifts away from how Beacon actually deploys, this fails.
+//
+// DB-free (no dbGuard import): a pure text read, so it runs in the DB-free pre-commit too.
 
 import { describe, expect, test } from 'bun:test';
 import { join } from 'node:path';
-import { loadAppSpec, REPO_ROOT } from '../../support/appSpec';
 
-const appSpec = await loadAppSpec();
+const REPO_ROOT = join(import.meta.dir, '..', '..', '..');
 const runbook = await Bun.file(join(REPO_ROOT, 'docs', 'DEPLOYMENT.md')).text();
 
-// Every env key the spec actually declares (web service + jobs), deduped.
-const specEnvKeys = [
-  ...new Set([
-    ...(appSpec.services ?? []).flatMap((s) => (s.envs ?? []).map((e) => e.key)),
-    ...(appSpec.jobs ?? []).flatMap((j) => (j.envs ?? []).map((e) => e.key)),
-  ]),
-];
-const specJobNames = (appSpec.jobs ?? []).map((j) => j.name).filter((n): n is string => !!n);
-
-describe('docs/DEPLOYMENT.md deploy runbook', () => {
-  test('the runbook exists and is substantial', () => {
-    expect(runbook.length).toBeGreaterThan(500);
+describe('docs/DEPLOYMENT.md droplet runbook', () => {
+  // The runtime artifacts the runbook must point an operator at.
+  test.each([
+    'deploy/beacon.service', // systemd unit
+    'deploy/Caddyfile', // reverse proxy / TLS
+    'scripts/provision-droplet.sh', // one-shot provisioning
+    'scripts/deploy.sh', // on-droplet deploy
+    '/health', // smoke check
+    '.env.production', // where secrets live on the droplet
+  ])('references the deploy artifact %s', (artifact) => {
+    expect(runbook).toContain(artifact);
   });
 
-  test('documents every env key the .do/app.yaml spec declares', () => {
-    expect(specEnvKeys.length).toBeGreaterThan(0); // guard: parsed at least one env
-    for (const key of specEnvKeys) {
-      expect(runbook, `runbook must document env var ${key}`).toContain(key);
-    }
+  // Every env var the host (apps/server) reads must be documented so an operator knows what to
+  // put in .env.production. DATABASE_URL/ADMIN_TOKEN/SHORT_DOMAIN are the ones that matter in prod.
+  test.each([
+    'DATABASE_URL',
+    'ADMIN_TOKEN',
+    'SHORT_DOMAIN',
+  ])('documents the %s environment variable', (key) => {
+    expect(runbook).toContain(key);
   });
 
-  test('documents every job the .do/app.yaml spec declares', () => {
-    expect(specJobNames).toContain('migrate'); // guard: the migrate job is parsed
-    for (const name of specJobNames) {
-      expect(runbook, `runbook must document the ${name} job`).toContain(name);
-    }
+  // The non-obvious managed-PG + Caddy steps discovered during the first live bring-up — omitting
+  // any one of these leaves the deploy broken in a way the happy-path docs would hide.
+  test('documents the managed-PG trusted-sources firewall step', () => {
+    expect(runbook.toLowerCase()).toContain('trusted source');
   });
 
-  test('walks the doctl create-from-spec command', () => {
-    expect(runbook).toContain('doctl apps create --spec .do/app.yaml');
+  test('documents granting the DB user schema privileges (PG15+ has no default CREATE)', () => {
+    expect(runbook).toMatch(/GRANT[\s\S]*SCHEMA public/i);
   });
 
-  test('includes smoke checks for /health and a short-link 302 redirect', () => {
-    expect(runbook).toContain('/health');
-    expect(runbook).toMatch(/302|redirect/i);
+  test('documents reloading Caddy after provisioning installs the Caddyfile', () => {
+    expect(runbook.toLowerCase()).toContain('reload caddy');
   });
 });

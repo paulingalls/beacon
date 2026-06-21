@@ -1,0 +1,45 @@
+# Auto-deploy to the DigitalOcean droplet on every merge to main.
+#
+# main is releases-only and branch-protected (PRs from develop, required checks).
+# We re-run the FULL CI suite here as a hard gate via the reusable ci.yml, then
+# deploy over SSH only if it passes — so a red commit never reaches production.
+#
+# Every external action is pinned to a full commit SHA (supply-chain integrity);
+# the all-workflows guard (test/acceptance/ci/action-pinning.test.ts) enforces it.
+# The `uses: ./.github/workflows/ci.yml` call is a local path (no @ref) and is not
+# an external action, so it is not pinned.
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+
+# Never interrupt an in-flight production deploy; queue instead.
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    uses: ./.github/workflows/ci.yml
+    secrets: inherit
+
+  deploy:
+    needs: ci
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # ~/deploy.sh on the droplet fast-forwards ~/app to origin/main, then runs
+      # scripts/deploy.sh: install → migrate → restart → health-check → rollback
+      # on failure. Both use `set -euo pipefail`, so the remote already fails fast.
+      - name: Deploy over SSH
+        uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
+        with:
+          host: ${{ secrets.DROPLET_IP }}
+          username: beacon
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          command_timeout: 10m
+          script: bash ~/deploy.sh

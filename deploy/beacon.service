@@ -1,0 +1,23 @@
+# systemd unit for the Beacon analytics server.
+# Install to /etc/systemd/system/beacon.service (see docs/DEPLOYMENT.md).
+[Unit]
+Description=Beacon analytics server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=beacon
+WorkingDirectory=/home/beacon/app
+EnvironmentFile=/home/beacon/.env.production
+Environment=PORT=8080
+ExecStart=/home/beacon/.bun/bin/bun run apps/server/src/server.ts
+Restart=on-failure
+RestartSec=5
+# server.ts traps SIGTERM → beacon.shutdown() (flush buffered events) → server.stop();
+# give the drain a moment before SIGKILL.
+KillSignal=SIGTERM
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target
