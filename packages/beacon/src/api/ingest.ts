@@ -16,6 +16,7 @@ import { applyRateLimit, RateLimiter } from './rateLimit';
 const MAX_EVENTS_PER_REQUEST = 100;
 const MAX_EVENT_TYPE_LENGTH = 100;
 const MAX_PRODUCT_ID_LENGTH = 100;
+const MAX_VISITOR_TOKEN_LENGTH = 100;
 const MAX_PROPERTIES_BYTES = 10 * 1024;
 const DEFAULT_RATE_LIMIT = 10;
 const DEFAULT_RATE_WINDOW_MS = 60_000;
@@ -87,7 +88,9 @@ export function createIngestHandler(buffer: EventBuffer, opts: IngestOptions): H
 
     // Past the gate: now build the transport context + platform (shared by every
     // event in this batch) and read the visitor token the middleware put on c.
-    const visitorToken = c.get('beaconVisitorToken') ?? null;
+    // This transport token (minted from the URL `_t` param) is the FALLBACK; a
+    // body-carried visitor_token (the SPA's only carrier) overrides it below.
+    const transportVisitorToken = c.get('beaconVisitorToken') ?? null;
     const { context, platform } = buildEventContext(c, ip);
 
     let body: unknown;
@@ -98,8 +101,14 @@ export function createIngestHandler(buffer: EventBuffer, opts: IngestOptions): H
     }
 
     // Single cast of the request body to its known shape — add new top-level
-    // fields here so the envelope is read in one place.
-    const { events, product_id } = (body ?? {}) as { events?: unknown; product_id?: unknown };
+    // fields here so the envelope is read in one place. (visitor_token is the
+    // anonymous SPA handle; a body user_id is deliberately NOT read — authenticated
+    // identity stays gated behind trusted bearer auth, M2.)
+    const { events, product_id, visitor_token } = (body ?? {}) as {
+      events?: unknown;
+      product_id?: unknown;
+      visitor_token?: unknown;
+    };
     if (events === undefined) {
       return errorResponse(c, 'MISSING_PARAMETER', "missing 'events' array", 'events');
     }
@@ -155,6 +164,17 @@ export function createIngestHandler(buffer: EventBuffer, opts: IngestOptions): H
         `[beacon] ingest: invalid body.product_id ${JSON.stringify(product_id)} — using configured '${opts.productId}'`,
       );
     }
+
+    // Resolve the batch's anonymous visitor token (story-001): a valid body
+    // visitor_token wins; the transport token (URL `_t`) is the fallback; an
+    // invalid value (non-string / empty / over-length) is treated as absent so
+    // the batch is never rejected over it (skip-not-reject, like product_id).
+    // Unlike an invalid product_id, an invalid visitor_token is INTENTIONALLY
+    // silent (no warn): it's anonymous, ephemeral, and arrives from untrusted
+    // high-volume public callers, so a malformed value is expected noise — not a
+    // misconfiguration signal — and warning on it would only invite log-spam.
+    const visitorToken =
+      validShortString(visitor_token, MAX_VISITOR_TOKEN_LENGTH) ?? transportVisitorToken;
 
     // Transport context + platform are the same for every event in this request
     // (resolved once above, after the rate-limit gate passed).
