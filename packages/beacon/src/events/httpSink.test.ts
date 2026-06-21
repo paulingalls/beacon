@@ -163,6 +163,26 @@ describe('HttpSink failure handling', () => {
     }
   });
 
+  test('a 3xx (misconfigured endpoint) is dropped loudly, not retried', async () => {
+    const ff = fakeFetch();
+    ff.setStatus(301); // redirect fetch did not auto-follow — a config error
+    const warn = mock((..._args: unknown[]) => {});
+    const orig = console.warn;
+    console.warn = warn as unknown as typeof console.warn;
+    try {
+      const s = sink(ff.fn);
+      s.push(evt());
+      await s.flush();
+      expect(ff.calls).toHaveLength(1); // not retried
+      expect(s.stats()).toMatchObject({ buffered: 0, retryFailures: 1, flushed: 0 });
+      const logged = warn.mock.calls.map((c) => String(c[0])).join('\n');
+      expect(logged).toContain('301');
+      expect(logged).not.toContain(TOKEN);
+    } finally {
+      console.warn = orig;
+    }
+  });
+
   test('a 5xx requeues for retry; events survive in the buffer', async () => {
     const ff = fakeFetch();
     ff.setStatus(503);

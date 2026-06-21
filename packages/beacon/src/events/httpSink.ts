@@ -136,10 +136,11 @@ export class HttpSink implements EventSink {
       return;
     }
 
-    if (res.status >= 400 && res.status < 500) {
-      // Caller error (bad bearer / non-allowlisted product) — won't succeed on
-      // retry. Fail loud with the status so a misconfiguration surfaces fast;
-      // NEVER log the token. Drop the batch (counted as retry failures).
+    if (res.status >= 300 && res.status < 500) {
+      // Caller/config error: a 3xx (endpoint misconfigured — fetch did not auto-
+      // follow a redirect) or a 4xx (bad bearer / non-allowlisted product). Neither
+      // succeeds on retry. Fail loud with the status so a misconfiguration surfaces
+      // fast; NEVER log the token. Drop the batch (counted as retry failures).
       console.warn(
         `[beacon] HttpSink: ingest rejected batch with ${res.status}; dropped ${group.length} event(s)`,
       );
