@@ -4,15 +4,15 @@ import { createHash } from 'node:crypto';
 import type { Context } from 'hono';
 
 import type { BeaconEvent } from '../types';
-import type { EventBuffer } from './buffer';
+import type { EventSink } from './sink';
 import { track } from './track';
 
 const sha256 = (s: string): string => createHash('sha256').update(s).digest('hex');
 
-/** A recording stand-in for EventBuffer — track() only calls push(). */
-function recordingBuffer(): { buffer: EventBuffer; pushed: BeaconEvent[] } {
+/** A recording stand-in for the EventSink — track() only calls push(). */
+function recordingBuffer(): { buffer: EventSink; pushed: BeaconEvent[] } {
   const pushed: BeaconEvent[] = [];
-  const buffer = { push: (e: BeaconEvent) => pushed.push(e) } as unknown as EventBuffer;
+  const buffer: EventSink = { push: (e: BeaconEvent) => void pushed.push(e) };
   return { buffer, pushed };
 }
 
