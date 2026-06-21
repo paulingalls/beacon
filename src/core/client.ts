@@ -128,7 +128,9 @@ export class BeaconClient {
   /**
    * Set (or clear, with null) the anonymous visitor handle sent on subsequent batches. The host
    * seeds it from the SPA bootstrap and may rotate it (e.g. after an async bootstrap fetch, or
-   * null on logout). In-memory only — never written to the storage adapter.
+   * null on logout). In-memory only — never written to the storage adapter. The token is read at
+   * SEND time (see buildBody), so on logout `await flush()` BEFORE setVisitorToken(null) — otherwise
+   * any still-queued or retrying prior-session events are sent with the cleared handle.
    */
   setVisitorToken(token: string | null): void {
     this.visitorToken = token;
