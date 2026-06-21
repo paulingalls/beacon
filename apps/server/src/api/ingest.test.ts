@@ -1,8 +1,8 @@
 import { describe, expect, spyOn, test } from 'bun:test';
 import { createHash } from 'node:crypto';
-import type { EventBuffer } from '@pi-innovations/beacon/internal/events/buffer';
-import type { BeaconEvent } from '@pi-innovations/beacon/internal/types';
+import type { BeaconEvent } from '@pi-innovations/beacon-sdk';
 import { Hono } from 'hono';
+import type { EventBuffer } from '../events/buffer';
 import { createIngestHandler, type IngestOptions } from './ingest';
 
 const sha256 = (s: string): string => createHash('sha256').update(s).digest('hex');

@@ -1,11 +1,11 @@
 import { describe, expect, test } from 'bun:test';
-import type { BeaconEvent } from '@pi-innovations/beacon';
-import { EventBuffer } from '@pi-innovations/beacon/internal/events/buffer';
+import type { BeaconEvent } from '@pi-innovations/beacon-sdk';
 import { Hono } from 'hono';
 import type { Sql } from 'postgres';
-import { registerDbCoverageGuard, TEST_DB } from '../../../packages/beacon/test/dbGuard';
-import { stubSql, withTestDb } from '../../../packages/beacon/test/helpers';
 import { createBeacon } from '../src/createBeacon';
+import { EventBuffer } from '../src/events/buffer';
+import { registerDbCoverageGuard, TEST_DB } from './dbGuard';
+import { stubSql, withTestDb } from './helpers';
 
 registerDbCoverageGuard();
 

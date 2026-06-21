@@ -1,11 +1,8 @@
 import { randomBytes } from 'node:crypto';
 
-import type {
-  Attribution,
-  VisitorTokenRecord,
-  VisitorTokenStats,
-  VisitorTokenStoreOptions,
-} from '../types';
+import type { Attribution, VisitorTokenRecord } from '@pi-innovations/beacon-sdk';
+
+import type { VisitorTokenStats, VisitorTokenStoreOptions } from '../types';
 
 const DEFAULT_TTL = 1_800_000; // 30 minutes (REQUIREMENTS.md §2.2)
 const DEFAULT_MAX_ENTRIES = 50_000;

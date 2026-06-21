@@ -1,8 +1,8 @@
 import { describe, expect, test } from 'bun:test';
+import type { BeaconEvent } from '@pi-innovations/beacon-sdk';
 import type { Sql } from 'postgres';
 import { registerDbCoverageGuard, TEST_DB } from '../../test/dbGuard';
 import { stubSql, txResolver, withTestDb } from '../../test/helpers';
-import type { BeaconEvent } from '../types';
 import { EventBuffer } from './buffer';
 
 registerDbCoverageGuard();

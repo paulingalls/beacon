@@ -30,7 +30,7 @@ No product — server, browser, or mobile — ever opens a Postgres connection. 
 
 | Package | Role |
 |---|---|
-| `@pi-innovations/beacon` | The **HTTP-emit SDK**: framework-agnostic request capture (`createHttpBeacon`) that emits over the trusted ingest boundary. No Postgres on a consumer's emit path. |
+| `@pi-innovations/beacon-sdk` | The **HTTP-emit SDK**: framework-agnostic request capture (`createHttpBeacon`) that emits over the trusted ingest boundary. No Postgres on a consumer's emit path. |
 | `@pi-innovations/beacon-client` | Lightweight TypeScript client SDK for mobile (React Native/Expo) and optional web-side event tracking. |
 
 The deployed Beacon server itself lives in **`apps/server`** — a private application (never published) that holds the DB credentials and serves ingest, the query API, the admin dashboard, and the URL shortener.

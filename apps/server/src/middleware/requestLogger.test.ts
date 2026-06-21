@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
-import type { EventBuffer } from '@pi-innovations/beacon/internal/events/buffer';
-import type { BeaconEvent } from '@pi-innovations/beacon/internal/types';
-import { VisitorTokenStore } from '@pi-innovations/beacon/internal/visitors/tokenStore';
+import type { BeaconEvent } from '@pi-innovations/beacon-sdk';
 import { Hono } from 'hono';
+import type { EventBuffer } from '../events/buffer';
+import { VisitorTokenStore } from '../visitors/tokenStore';
 import { type RequestLoggerOptions, requestLogger } from './requestLogger';
 
 const sha256 = (s: string): string => createHash('sha256').update(s).digest('hex');

@@ -3,9 +3,9 @@ import { Hono } from 'hono';
 import { createBeacon } from '../../apps/server/src/createBeacon';
 // Reach the package's DB internals by relative path for live-DB setup, exactly
 // as http.acceptance.test.ts and the package's own integration suites do.
-import { closeDb, createDb } from '../../packages/beacon/src/storage/db';
-import { runMigrations } from '../../packages/beacon/src/storage/migrate';
-import { registerDbCoverageGuard, TEST_DB } from '../../packages/beacon/test/dbGuard';
+import { closeDb, createDb } from '../../apps/server/src/storage/db';
+import { runMigrations } from '../../apps/server/src/storage/migrate';
+import { registerDbCoverageGuard, TEST_DB } from '../../apps/server/test/dbGuard';
 
 // Over-network capstone for Milestone 2 (URL shortener). Boots a REAL server
 // (Bun.serve + fetch) with beacon.shortener() mounted against a live migrated

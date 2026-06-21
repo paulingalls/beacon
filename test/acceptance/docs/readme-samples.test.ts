@@ -35,7 +35,7 @@ const TSC_BIN = join(REPO_ROOT, 'node_modules', '.bin', 'tsc');
 // Ambient declarations for everything the README's samples lean on but a host app provides.
 // Keeps the type-check focused on whether the BEACON calls are real.
 const PREAMBLE = `
-import type { HttpBeacon } from '@pi-innovations/beacon';
+import type { HttpBeacon } from '@pi-innovations/beacon-sdk';
 import type { BeaconClient as BeaconClientType } from '@pi-innovations/beacon-client';
 import type { ReactNativeBindings } from '@pi-innovations/beacon-client/react-native';
 import type { WebBindings } from '@pi-innovations/beacon-client/web';

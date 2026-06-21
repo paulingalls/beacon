@@ -1,13 +1,12 @@
 import { Buffer } from 'node:buffer';
-import type { EventSink } from '@pi-innovations/beacon/internal/events/sink';
-import { MAX_EVENT_TYPE_LENGTH } from '@pi-innovations/beacon/internal/events/track';
+import type { BeaconEvent, EventSink } from '@pi-innovations/beacon-sdk';
 import {
   buildEventContext,
   hashIp,
   honoRequest,
+  MAX_EVENT_TYPE_LENGTH,
   resolveIpFromRequest,
-} from '@pi-innovations/beacon/internal/middleware/requestContext';
-import type { BeaconEvent } from '@pi-innovations/beacon/internal/types';
+} from '@pi-innovations/beacon-sdk';
 import type { Context, Handler } from 'hono';
 import { verifyTrustedBearer } from './auth';
 import { errorResponse } from './errors';

@@ -1,7 +1,4 @@
-import {
-  defaultClientAddress,
-  resolveIp,
-} from '@pi-innovations/beacon/internal/middleware/requestContext';
+import { defaultClientAddress, resolveIp } from '@pi-innovations/beacon-sdk';
 import type { Context, Handler } from 'hono';
 import type { Sql } from 'postgres';
 import { errorResponse } from '../api/errors';

@@ -1,21 +1,18 @@
 // The DB-backed Beacon factory for the deployed server (Milestone 4: physical
-// single-writer boundary). Relocated out of the published @pi-innovations/beacon
+// single-writer boundary). Relocated out of the published @pi-innovations/beacon-sdk
 // package — the SDK now ships HTTP-emit only, and this factory (the one holder of
-// central-DB write creds) lives in the private apps/server. During the M4 migration
-// it reaches still-resident server subsystems via the package's interim
-// `@pi-innovations/beacon/internal/*` export bridge; stories 002-004 flip those to
-// local imports as each subsystem relocates, and story-005 removes the bridge.
+// central-DB write creds) lives in the private apps/server. It builds on the SDK's
+// framework-agnostic capture cores + wire types and the server-internal DB modules
+// (storage/, events/buffer, visitors/tokenStore) that relocated here in story-005.
 
-import type { BeaconConfig, BufferStats } from '@pi-innovations/beacon';
-import { EventBuffer } from '@pi-innovations/beacon/internal/events/buffer';
-import { track as trackEvent } from '@pi-innovations/beacon/internal/events/track';
-import { closeDb, createDb } from '@pi-innovations/beacon/internal/storage/db';
-import { VisitorTokenStore } from '@pi-innovations/beacon/internal/visitors/tokenStore';
+import type { BufferStats } from '@pi-innovations/beacon-sdk';
+import { track as trackEvent } from '@pi-innovations/beacon-sdk';
 import { type Context, Hono, type MiddlewareHandler } from 'hono';
 import { adminGate } from './api/auth';
 import { createIngestHandler } from './api/ingest';
 import { RateLimiter, rateLimitGate } from './api/rateLimit';
 import { createDashboardHandler } from './dashboard/index';
+import { EventBuffer } from './events/buffer';
 import { requestLogger } from './middleware/requestLogger';
 import { createAggregateHandler } from './query/aggregate';
 import { createAttributionHandler } from './query/attribution';
@@ -30,6 +27,9 @@ import {
   getShortLink,
   createShortLink as persistShortLink,
 } from './shortener/store';
+import { closeDb, createDb } from './storage/db';
+import type { BeaconConfig } from './types';
+import { VisitorTokenStore } from './visitors/tokenStore';
 
 /** Query-API rate-limit window: requests/min/user (REQUIREMENTS.md §5.2). */
 const QUERY_RATE_WINDOW_MS = 60_000;
