@@ -63,6 +63,75 @@ describe('track / screenView', () => {
   });
 });
 
+describe('visitor_token (in-memory identity, story-002)', () => {
+  /** Read the body-level visitor_token off a recorded call (not in RecordedCall's base type). */
+  const bodyToken = (call: RecordedCall | undefined): unknown =>
+    (call?.body as { visitor_token?: unknown } | undefined)?.visitor_token;
+
+  test('transmits config.visitorToken as body.visitor_token on a flush', async () => {
+    const { client, calls } = build({ visitorToken: 'v-abc' });
+    client.track('e');
+    await client.flush();
+
+    expect(bodyToken(calls[0])).toBe('v-abc');
+  });
+
+  test('omits visitor_token entirely when none is set', async () => {
+    const { client, calls } = build();
+    client.track('e');
+    await client.flush();
+
+    expect(calls[0]?.body).not.toHaveProperty('visitor_token');
+  });
+
+  test('setVisitorToken updates the token sent on the next flush', async () => {
+    const { client, calls } = build({ visitorToken: 'v1' });
+    client.setVisitorToken('v2');
+    client.track('a');
+    await client.flush();
+
+    expect(bodyToken(calls[0])).toBe('v2');
+  });
+
+  test('setVisitorToken(null) clears the token so the next body omits it', async () => {
+    const { client, calls } = build({ visitorToken: 'v1' });
+    client.setVisitorToken(null);
+    client.track('a');
+    await client.flush();
+
+    expect(calls[0]?.body).not.toHaveProperty('visitor_token');
+  });
+
+  test('the unload beacon (flushViaBeacon) also carries visitor_token in the body', async () => {
+    const { client } = build({ visitorToken: 'v-abc' });
+    client.track('a');
+    const sends: Array<{ url: string; body: string }> = [];
+    client.flushViaBeacon((url, body) => {
+      sends.push({ url, body });
+      return true;
+    });
+
+    const payload = JSON.parse(sends[0]?.body ?? '{}');
+    expect(payload.visitor_token).toBe('v-abc');
+  });
+
+  test('never persists the token to the storage adapter (events only)', async () => {
+    const store = makeStorage();
+    const { client } = build({ visitorToken: 'v-secret', storage: store.adapter });
+    client.track('a');
+    await tick(); // let the storage chain settle
+
+    // The saved snapshots are bare event payloads — the identifier is never serialized.
+    expect(JSON.stringify(store.saved)).not.toContain('v-secret');
+    for (const snapshot of store.saved) {
+      for (const e of snapshot) {
+        expect(e).not.toHaveProperty('visitor_token');
+        expect(e).not.toHaveProperty('visitorToken');
+      }
+    }
+  });
+});
+
 describe('queue cap', () => {
   test('caps at 500 events, dropping the oldest on overflow', async () => {
     const { client, calls } = build({ maxBatchSize: 100 });
