@@ -42,6 +42,13 @@ export class BeaconClient {
   /** appContext is invariant — build the header once (sendBatch/getContextHeaders reuse it). */
   private readonly contextHeader: Record<string, string>;
   /**
+   * Anonymous visitor handle for cookie-free SPAs, sent as body.visitor_token on every batch.
+   * In memory ONLY — deliberately never serialized to the storage adapter (which holds event
+   * payloads alone), so it carries no persisted tracking state. Seeded from config.visitorToken,
+   * mutable via setVisitorToken().
+   */
+  private visitorToken: string | null;
+  /**
    * Serializes all durable-store mutations (restore-merge → save → clear) onto one
    * chain so a fire-and-forget save can't land after a clear, or a clear wipe a
    * just-tracked event. Best-effort: each link swallows its own error.
@@ -82,6 +89,7 @@ export class BeaconClient {
     this.clearIntervalFn = deps.clearInterval ?? ((t) => clearInterval(t));
     this.now = deps.now ?? Date.now;
     this.contextHeader = buildAppContextHeader(config.appContext);
+    this.visitorToken = config.visitorToken ?? null;
 
     // Restore a persisted outbound queue (mobile); drain() awaits this so a flush
     // can never race ahead of the load and clear() events that were never sent.
@@ -117,6 +125,15 @@ export class BeaconClient {
     return { ...this.contextHeader };
   }
 
+  /**
+   * Set (or clear, with null) the anonymous visitor handle sent on subsequent batches. The host
+   * seeds it from the SPA bootstrap and may rotate it (e.g. after an async bootstrap fetch, or
+   * null on logout). In-memory only — never written to the storage adapter.
+   */
+  setVisitorToken(token: string | null): void {
+    this.visitorToken = token;
+  }
+
   /** Flush queued events. Concurrent calls coalesce onto the in-flight drain. */
   flush(): Promise<void> {
     if (this.inFlight) return this.inFlight;
@@ -141,7 +158,9 @@ export class BeaconClient {
    * while the page unloads — a plain fetch without keepalive is cancelled on page-discard. The
    * client builds the {product_id, events} body (≤ maxBatchSize ≤ the server's 100-event cap)
    * and clears the sent batch when `send` returns true. A beacon carries no X-App-Context/auth
-   * headers, so the server records platform 'web' with no user association for these events.
+   * headers, so the server records platform 'web' with no authenticated-user association for these
+   * events — but the anonymous visitor_token rides in the BODY (via buildBody), so the unload
+   * batch still preserves the SPA's visitor handle.
    * Empty queue → no-op (returns true). Reads the queue synchronously (no restore await) — the
    * unload path has no time to await, and restore completes at construction.
    */
@@ -176,10 +195,13 @@ export class BeaconClient {
     if (hadEvents && this.queue.length === 0) this.clearStore();
   }
 
-  /** The single source of truth for the ingest wire shape: {product_id, events}. */
+  /** The single source of truth for the ingest wire shape: {product_id, visitor_token?, events}. */
   private buildBody(batch: QueuedEvent[]): string {
     return JSON.stringify({
       product_id: this.config.productId,
+      // Anonymous SPA handle; omitted when unset/empty so the server falls back to the transport
+      // token. A falsy value (null/'') never reaches the wire.
+      ...(this.visitorToken ? { visitor_token: this.visitorToken } : {}),
       events: batch.map((q) => toWire(q.event)),
     });
   }
