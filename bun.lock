@@ -6,8 +6,8 @@
       "name": "beacon-monorepo",
       "devDependencies": {
         "@biomejs/biome": "2.4.15",
-        "@pi-innovations/beacon": "workspace:*",
         "@pi-innovations/beacon-client": "workspace:*",
+        "@pi-innovations/beacon-sdk": "workspace:*",
         "@playwright/test": "1.60.0",
         "@types/bun": "latest",
         "hono": "^4.12.21",
@@ -20,16 +20,16 @@
       "name": "@pi-innovations/beacon-server",
       "version": "0.0.0",
       "dependencies": {
-        "@pi-innovations/beacon": "workspace:*",
+        "@pi-innovations/beacon-sdk": "workspace:*",
         "hono": "^4.12.21",
+        "postgres": "^3.4.5",
       },
     },
     "packages/beacon": {
-      "name": "@pi-innovations/beacon",
+      "name": "@pi-innovations/beacon-sdk",
       "version": "0.0.0",
       "dependencies": {
         "hono": "^4.12.21",
-        "postgres": "^3.4.5",
       },
     },
     "packages/beacon-client": {
@@ -56,9 +56,9 @@
 
     "@biomejs/cli-win32-x64": ["@biomejs/cli-win32-x64@2.4.15", "", { "os": "win32", "cpu": "x64" }, "sha512-zBrGq5mx5wwpnow4+2BxUvleDM+GNd4sLbPaMapsSLQLD0NGRCquqPBTgN+7XkUteHvj7M+BstuI8tmnV7+HgQ=="],
 
-    "@pi-innovations/beacon": ["@pi-innovations/beacon@workspace:packages/beacon"],
-
     "@pi-innovations/beacon-client": ["@pi-innovations/beacon-client@workspace:packages/beacon-client"],
+
+    "@pi-innovations/beacon-sdk": ["@pi-innovations/beacon-sdk@workspace:packages/beacon"],
 
     "@pi-innovations/beacon-server": ["@pi-innovations/beacon-server@workspace:apps/server"],
 

@@ -1,7 +1,7 @@
 import { afterAll, beforeEach, describe, expect, test } from 'bun:test';
 
-import { registerDbCoverageGuard, TEST_DB } from '../../../packages/beacon/test/dbGuard';
-import { withTestDb } from '../../../packages/beacon/test/helpers';
+import { registerDbCoverageGuard, TEST_DB } from '../test/dbGuard';
+import { withTestDb } from '../test/helpers';
 import { buildServer } from './server';
 
 // Smoke test for the first-party host app (sprint-012 story-001). Boots the app via

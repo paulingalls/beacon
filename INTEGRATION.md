@@ -16,7 +16,7 @@ Beacon follows a **single-writer model**: you deploy **one** Beacon server (the 
 
 ## Installation
 
-> **Beacon is not published to npm.** Both packages are private (`"private": true`) and ship TypeScript source — there is no `bun add @pi-innovations/beacon`. Consume Beacon one of three ways:
+> **Beacon is not published to npm.** Both packages are private (`"private": true`) and ship TypeScript source — there is no `bun add @pi-innovations/beacon-sdk`. Consume Beacon one of three ways:
 
 - **Bun workspace (recommended for a monorepo).** Add Beacon as a workspace member and depend on it with the `workspace:*` protocol — exactly how `apps/server` does in this repo:
 
@@ -24,7 +24,7 @@ Beacon follows a **single-writer model**: you deploy **one** Beacon server (the 
   // your-app/package.json
   {
     "dependencies": {
-      "@pi-innovations/beacon": "workspace:*"
+      "@pi-innovations/beacon-sdk": "workspace:*"
     }
   }
   ```
@@ -34,14 +34,14 @@ Beacon follows a **single-writer model**: you deploy **one** Beacon server (the 
   ```jsonc
   {
     "dependencies": {
-      "@pi-innovations/beacon": "git+ssh://git@github.com/paulingalls/beacon.git#main"
+      "@pi-innovations/beacon-sdk": "git+ssh://git@github.com/paulingalls/beacon.git#main"
     }
   }
   ```
 
 - **Vendoring.** Copy `packages/beacon` (and `packages/beacon-client` for mobile) into your tree and reference it by relative path. The packages export `.ts` source, so your bundler/runtime must handle TypeScript (Bun does natively).
 
-The published `@pi-innovations/beacon` package is the **emit SDK** only — it carries no Postgres. The database-writing server is the private `apps/server` app in this repo, which you deploy once (next section).
+The published `@pi-innovations/beacon-sdk` package is the **emit SDK** only — it carries no Postgres. The database-writing server is the private `apps/server` app in this repo, which you deploy once (next section).
 
 ## Deploying the Beacon server
 
@@ -76,7 +76,7 @@ The canonical, deployable wiring lives in [`apps/server/src/server.ts`](./apps/s
 A server-side product captures requests and custom events with `createHttpBeacon` and emits them to the deployed Beacon over the trusted ingest boundary — **no Postgres, no Hono required**. It runs under any runtime that exposes the standard `Request`.
 
 ```typescript
-import { createHttpBeacon } from '@pi-innovations/beacon';
+import { createHttpBeacon } from '@pi-innovations/beacon-sdk';
 
 const beacon = createHttpBeacon({
     productId: 'clipcast',

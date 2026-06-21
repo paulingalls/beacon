@@ -1,10 +1,10 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
-import { closeDb, createDb } from '@pi-innovations/beacon/internal/storage/db';
-import { runMigrations } from '@pi-innovations/beacon/internal/storage/migrate';
 import { Hono } from 'hono';
 import type { Sql } from 'postgres';
-import { registerDbCoverageGuard, TEST_DB } from '../../../../packages/beacon/test/dbGuard';
+import { registerDbCoverageGuard, TEST_DB } from '../../test/dbGuard';
 import { QueryParamError } from '../api/params';
+import { closeDb, createDb } from '../storage/db';
+import { runMigrations } from '../storage/migrate';
 import { createAggregateHandler, parseGroupBy, parseMetric } from './aggregate';
 
 registerDbCoverageGuard();

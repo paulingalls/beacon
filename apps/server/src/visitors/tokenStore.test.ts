@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 
-import type { Attribution } from '../types';
+import type { Attribution } from '@pi-innovations/beacon-sdk';
 import { VisitorTokenStore } from './tokenStore';
 
 /** A mutable fake clock so TTL/sliding-window tests need no real waits. */

@@ -21,7 +21,7 @@
 //                                       exactly as they did before.
 //
 // The preload does NOT migrate: each integration suite already drops + runs
-// migrations in its own beforeAll (see packages/beacon/test/helpers.ts). We only
+// migrations in its own beforeAll (see apps/server/test/helpers.ts). We only
 // guarantee the server is up and reachable.
 
 import { join } from 'node:path';
@@ -48,7 +48,7 @@ export function redactUrl(url: string): string {
 }
 
 // Connectivity preflight for an externally provided TEST_DATABASE_URL (CI service
-// container or explicit override). Unlike createDb (packages/beacon/src/storage/db.ts),
+// container or explicit override). Unlike createDb (apps/server/src/storage/db.ts),
 // which is fail-SOFT by contract (warns, returns a query-rejecting stub, never throws —
 // REQUIREMENTS §1.3), a preflight must be fail-LOUD: an expected DB that cannot be
 // reached should abort `bun test` early with a clear message, not let every integration

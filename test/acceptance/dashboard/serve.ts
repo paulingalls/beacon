@@ -15,8 +15,8 @@ import { createBeacon } from '../../../apps/server/src/createBeacon';
 // below, because a webServer that came up against no DB would render empty widgets and let
 // the e2e pass vacuously (concern f3ce91828b59 / the DB-coverage-guard constraint).
 import '../../setup/ensure-test-db';
-import { closeDb, createDb } from '../../../packages/beacon/src/storage/db';
-import { runMigrations } from '../../../packages/beacon/src/storage/migrate';
+import { closeDb, createDb } from '../../../apps/server/src/storage/db';
+import { runMigrations } from '../../../apps/server/src/storage/migrate';
 
 const TEST_DB = process.env.TEST_DATABASE_URL;
 if (!TEST_DB) {

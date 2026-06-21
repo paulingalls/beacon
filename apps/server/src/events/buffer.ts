@@ -1,7 +1,8 @@
+import type { BeaconEvent, BufferStats } from '@pi-innovations/beacon-sdk';
 import type { Sql } from 'postgres';
 
 import type { JsonInput } from '../storage/db';
-import type { BeaconEvent, BufferStats, EventBufferOptions } from '../types';
+import type { EventBufferOptions } from '../types';
 
 const DEFAULT_FLUSH_INTERVAL = 5000;
 const DEFAULT_MAX_BATCH_SIZE = 100;

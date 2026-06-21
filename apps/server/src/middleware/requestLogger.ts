@@ -1,15 +1,13 @@
-import type { BeaconRequest } from '@pi-innovations/beacon/internal/adapter/beaconRequest';
-import type { EventSink } from '@pi-innovations/beacon/internal/events/sink';
+import type { BeaconEvent, BeaconRequest, EventSink } from '@pi-innovations/beacon-sdk';
 import {
   buildEventContext,
   defaultClientAddress,
+  extractAttribution,
   honoRequest,
   resolveIpFromRequest,
-} from '@pi-innovations/beacon/internal/middleware/requestContext';
-import type { BeaconEvent } from '@pi-innovations/beacon/internal/types';
-import { extractAttribution } from '@pi-innovations/beacon/internal/visitors/attribution';
-import type { VisitorTokenStore } from '@pi-innovations/beacon/internal/visitors/tokenStore';
+} from '@pi-innovations/beacon-sdk';
 import type { Context, MiddlewareHandler } from 'hono';
+import type { VisitorTokenStore } from '../visitors/tokenStore';
 
 // Expose the visitor token on the Hono context so the host app can read it
 // (e.g. to append ?_t= to rendered links) via c.get('beaconVisitorToken').

@@ -1,9 +1,9 @@
 import { describe, expect, test } from 'bun:test';
-import type { BeaconConfig } from '@pi-innovations/beacon';
+import type { BeaconConfig } from '@pi-innovations/beacon-sdk';
 import { Hono } from 'hono';
 
-import { registerDbCoverageGuard, TEST_DB } from '../../../packages/beacon/test/dbGuard';
-import { ctxWith, withTestDb } from '../../../packages/beacon/test/helpers';
+import { registerDbCoverageGuard, TEST_DB } from '../test/dbGuard';
+import { ctxWith, withTestDb } from '../test/helpers';
 import { createBeacon } from './createBeacon';
 
 registerDbCoverageGuard();
