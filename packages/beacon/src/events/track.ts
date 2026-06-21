@@ -1,6 +1,6 @@
 import type { Context } from 'hono';
 
-import { resolveEventFields } from '../middleware/requestContext';
+import { honoRequest, resolveEventFieldsFromRequest } from '../middleware/requestContext';
 import type { EventSink } from './sink';
 
 /** Max event_type length (REQUIREMENTS.md §6.1). */
@@ -51,11 +51,19 @@ export function track(
     );
   }
 
-  const { userId, visitorToken, platform, context } = resolveEventFields(c, {
-    getUserId: opts.getUserId,
+  // userId is resolved here (the host getUserId is a Hono-Context callback) and
+  // passed into the framework-agnostic core as a value. A throwing getUserId is
+  // swallowed to a null user id so a host auth failure can never crash track() (§1.3).
+  let userId: string | null = null;
+  try {
+    userId = opts.getUserId?.(c) ?? null;
+  } catch (err) {
+    console.warn(`[beacon] track: getUserId failed: ${String(err)}`);
+  }
+
+  const fields = resolveEventFieldsFromRequest(honoRequest(c, opts.getClientAddress), {
+    userId,
     hashIPs: opts.hashIPs,
-    getClientAddress: opts.getClientAddress,
-    label: 'track',
   });
 
   buffer.push({
@@ -64,10 +72,10 @@ export function track(
     // Event time stamped at call time (client/event time), distinct from
     // received_at (server ingest time set by the column DEFAULT at flush).
     timestamp: new Date(),
-    userId,
-    visitorToken,
-    platform,
+    userId: fields.userId,
+    visitorToken: fields.visitorToken,
+    platform: fields.platform,
     properties: properties ?? {},
-    context,
+    context: fields.context,
   });
 }
