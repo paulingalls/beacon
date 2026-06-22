@@ -140,7 +140,8 @@ function makeNav(initialPath = '/') {
   const winListeners = new Map<string, () => void>();
   const removed: string[] = [];
   const setPathFromUrl = (url?: string | null) => {
-    if (typeof url === 'string') pathname = url;
+    // Mimic real location.pathname: strip query + hash so a query-string-only nav keeps the path.
+    if (typeof url === 'string') pathname = url.split(/[?#]/)[0] ?? url;
   };
   const nav: NavBindings = {
     history: {
@@ -222,6 +223,17 @@ describe('useBeaconNav', () => {
     nav.push('/home'); // same path — must not emit
     await client.flush();
     expect(pagePaths(calls)).toEqual(['/home']);
+  });
+
+  test('does not emit for a query-string-only navigation (pathname unchanged)', async () => {
+    const { client, calls } = build({ appContext: WEB_CONTEXT });
+    const nav = makeNav('/search');
+    useBeaconNav(client, nav.nav); // initial /search
+
+    nav.push('/search?q=a'); // pathname still /search → no emit (pathname-only granularity)
+    nav.push('/search?q=b'); // still /search → no emit
+    await client.flush();
+    expect(pagePaths(calls)).toEqual(['/search']);
   });
 
   test('cleanup restores the original history methods and removes the popstate listener', () => {

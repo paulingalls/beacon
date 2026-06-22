@@ -31,7 +31,8 @@ function makeNav(initialPath: string) {
   let pathname = initialPath;
   const winListeners = new Map<string, () => void>();
   const setPathFromUrl = (url?: string | null) => {
-    if (typeof url === 'string') pathname = url;
+    // Mimic real location.pathname: strip query + hash so a query-string-only nav keeps the path.
+    if (typeof url === 'string') pathname = url.split(/[?#]/)[0] ?? url;
   };
   const nav: NavBindings = {
     history: {
