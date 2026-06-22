@@ -157,6 +157,31 @@ describe('createIdentifyRelay — Request -> Response handler', () => {
     expect(ff.calls).toHaveLength(0);
   });
 
+  test('forwards the trimmed visitor_token (validator/forwarder symmetry)', async () => {
+    const ff = fakeFetch(204);
+    const handler = createIdentifyRelay({
+      endpoint: ENDPOINT,
+      trustedIngestToken: TOKEN,
+      resolveUserId: () => 'u',
+      fetch: ff.fn,
+    });
+    const res = await handler(loginReq({ visitor_token: '  device-handle  ' }));
+    expect(res.status).toBe(204);
+    expect(bodyOf(nth(ff, 0)).visitor_token).toBe('device-handle');
+  });
+
+  test('whitespace-only visitor_token -> 400, no forward', async () => {
+    const ff = fakeFetch(204);
+    const handler = createIdentifyRelay({
+      endpoint: ENDPOINT,
+      trustedIngestToken: TOKEN,
+      resolveUserId: () => 'u',
+      fetch: ff.fn,
+    });
+    expect((await handler(loginReq({ visitor_token: '   ' }))).status).toBe(400);
+    expect(ff.calls).toHaveLength(0);
+  });
+
   test('null/empty resolved user -> 400, no forward (identify needs a user)', async () => {
     const ff = fakeFetch(204);
     const handlerNull = createIdentifyRelay({
