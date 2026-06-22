@@ -15,6 +15,11 @@ import { join } from 'node:path';
 const REPO_ROOT = join(import.meta.dir, '..', '..', '..');
 const DEPLOY_SH = join(REPO_ROOT, 'scripts', 'deploy.sh');
 
+// Pin the health-loop count we hand deploy.sh (HEALTH_RETRIES) so the curl stub's
+// CURL_HEALTHY_AFTER is derived from it rather than duplicating deploy.sh's default.
+// "First restart fails entirely, post-rollback restart succeeds" == HEALTH_RETRIES.
+const HEALTH_RETRIES = 20;
+
 function git(cwd: string, ...args: string[]): string {
   return execFileSync('git', args, {
     cwd,
@@ -67,10 +72,10 @@ describe('deploy.sh rollback', () => {
     envFile = join(root, 'env.production');
     writeFileSync(envFile, 'DATABASE_URL=postgres://stub/never-used\n');
 
-    // Stub externals on PATH. `sleep` is a no-op so the 20-iteration health loop runs instantly;
-    // `sudo` execs the rest so `sudo systemctl …` hits the systemctl stub. `curl` succeeds once its
-    // call count exceeds CURL_HEALTHY_AFTER — letting a test make the 1st restart's full 20-call
-    // loop fail and a later call succeed. git/bash/seq stay real (binDir is PREPENDED to PATH).
+    // Stub externals on PATH. `sleep` is a no-op so the health loop runs instantly; `sudo` execs the
+    // rest so `sudo systemctl …` hits the systemctl stub. `curl` succeeds once its call count exceeds
+    // CURL_HEALTHY_AFTER — letting a test make the 1st restart's full HEALTH_RETRIES-call loop fail and
+    // a later call succeed. git/bash/seq stay real (binDir is PREPENDED to PATH).
     writeStub(binDir, 'sleep', 'exit 0');
     writeStub(binDir, 'sudo', 'exec "$@"');
     writeStub(binDir, 'systemctl', 'exit 0');
@@ -99,6 +104,7 @@ describe('deploy.sh rollback', () => {
         HEALTH_URL: 'http://localhost:9/health',
         ENV_FILE: envFile,
         BUN: bunStub,
+        HEALTH_RETRIES: String(HEALTH_RETRIES),
         CURL_COUNTER_FILE: counterFile,
         CURL_HEALTHY_AFTER: String(healthyAfter),
       },
@@ -123,9 +129,9 @@ describe('deploy.sh rollback', () => {
     const prev = commit(appDir, 'v', '1', 'A'); // HEAD@{1} after the next commit
     const head = commit(appDir, 'v', '2', 'B');
 
-    // First restart's 20 health checks all fail (calls 1-20 ≤ 20); the post-rollback restart's
-    // call 21 succeeds → rolled back and healthy.
-    const { status, stdout } = run(20);
+    // First restart's HEALTH_RETRIES health checks all fail (calls 1..HEALTH_RETRIES ≤ threshold);
+    // the post-rollback restart's next call succeeds → rolled back and healthy.
+    const { status, stdout } = run(HEALTH_RETRIES);
 
     expect(status).toBe(1);
     expect(stdout).toContain('rolling back');
@@ -139,7 +145,8 @@ describe('deploy.sh rollback', () => {
     commit(appDir, 'v', '1', 'A');
     commit(appDir, 'v', '2', 'B');
 
-    const { status, stdout } = run(10_000); // every health check fails, both restarts
+    // Threshold above both restarts' combined poll counts → every health check fails.
+    const { status, stdout } = run(2 * HEALTH_RETRIES + 1);
 
     expect(status).toBe(2);
     expect(stdout).toContain('manual intervention required');
@@ -152,7 +159,7 @@ describe('deploy.sh rollback', () => {
     const shortHead = head.slice(0, 7);
 
     // Force the rollback path so the resolved PREV is acted on; reset --hard HEAD is a safe no-op.
-    const { status, stdout } = run(20);
+    const { status, stdout } = run(HEALTH_RETRIES);
 
     expect(status).toBe(1); // did not crash on the missing reflog entry
     expect(stdout).toContain(`rollback target: ${shortHead}`);
