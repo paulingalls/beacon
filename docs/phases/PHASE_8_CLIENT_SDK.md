@@ -163,6 +163,9 @@ stops thinking about it. Ships from the same `@pi-innovations/beacon-client/web`
 - Shares the M1 anonymous `visitorToken` automatically — `page_view` rides through `client.track()`,
   which attaches the live token at send time, so nav and in-page `track()` share one handle.
 - Returns a cleanup that restores the patched history methods and removes the popstate listener.
+- **Idempotent** — a second `useBeaconNav` on an already-wired `history` is a no-op, so an
+  accidental double-wire (overlapping wires, hot-reload, a StrictMode remount) can't stack the
+  patch and double-count every `page_view`.
 - **Storage-free** — like the lifecycle wrapper it touches only the injected `nav` bindings
   (`history` / `location` / `window`), never globals and never any storage API.
 
@@ -187,6 +190,7 @@ const stopNav = useBeaconNav(client, { history, location, window });
 - `pushState` to a new path emits a `page_view`; `popstate` emits for the current path
 - A same-path `replaceState` / `pushState` does NOT double-count
 - Cleanup restores the original `history.pushState` / `replaceState` and removes the popstate listener
+- A second wire on the same `history` is a no-op (idempotent — no double-count, first wire stays the owner)
 - The nav-emitted `page_view` carries the client's shared `visitor_token`
 - The nav wrapper itself calls no client-side storage APIs
 

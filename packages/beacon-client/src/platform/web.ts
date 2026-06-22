@@ -63,6 +63,9 @@ export interface NavBindings {
   };
 }
 
+/** Brands the wrapped pushState so a re-wire of the same history detects it (see useBeaconNav). */
+const NAV_PATCHED = Symbol('beaconNavPatched');
+
 /**
  * Wire a BeaconClient to client-side History-API navigation. Emits page_view{path} for the
  * landing path on wire, then on each pushState/replaceState/popstate that CHANGES
@@ -74,10 +77,15 @@ export interface NavBindings {
  * the popstate listener. Storage-free — touches ONLY the injected `nav` bindings, never globals
  * and never any storage API. Export path: @pi-innovations/beacon-client/web.
  *
- * Wire once per history object. The wrapper does not guard against double-patching, so a second
- * useBeaconNav on the same history would stack page_view emissions.
+ * Idempotent: a second useBeaconNav on an already-wired history is a no-op (returns a no-op
+ * cleanup), so an accidental double-wire — overlapping wires, hot-reload, a StrictMode remount
+ * without an intervening cleanup — can't stack the monkey-patch and fire every page_view twice.
  */
 export function useBeaconNav(client: BeaconClient, nav: NavBindings): () => void {
+  // Already wired by an earlier useBeaconNav (its brand survives on the live pushState)? Bail
+  // before tracking/patching — re-patching would double the landing view and every nav emit.
+  if ((nav.history.pushState as { [NAV_PATCHED]?: true })[NAV_PATCHED]) return () => {};
+
   let lastPath = nav.location.pathname;
   const emit = () => {
     const path = nav.location.pathname;
@@ -91,11 +99,14 @@ export function useBeaconNav(client: BeaconClient, nav: NavBindings): () => void
   // pushState/replaceState update location synchronously, so emit() reads the NEW pathname.
   const originalPush = nav.history.pushState;
   const originalReplace = nav.history.replaceState;
-  nav.history.pushState = function (this: unknown, ...args) {
+  const wrappedPush = function (this: unknown, ...args: Parameters<typeof originalPush>) {
     originalPush.apply(this, args);
     emit();
   };
-  nav.history.replaceState = function (this: unknown, ...args) {
+  // Brand the live wrapper so a re-wire detects it; the brand is gone once cleanup restores originalPush.
+  (wrappedPush as { [NAV_PATCHED]?: true })[NAV_PATCHED] = true;
+  nav.history.pushState = wrappedPush;
+  nav.history.replaceState = function (this: unknown, ...args: Parameters<typeof originalReplace>) {
     originalReplace.apply(this, args);
     emit();
   };
