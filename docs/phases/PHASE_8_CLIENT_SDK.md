@@ -150,6 +150,50 @@ client.setVisitorToken(newToken); // rotate; setVisitorToken(null) clears it
 - Cleanup function removes all listeners
 - The web wrapper itself calls no client-side storage APIs
 
+#### Navigation wrapper — `useBeaconNav` (Milestone 6)
+
+For client-rendered SPAs, `useBeaconNav(client, nav)` auto-emits a `page_view` on client-side
+route changes so single-page navigations are visible to analytics — the host wires it once and
+stops thinking about it. Ships from the same `@pi-innovations/beacon-client/web` export.
+
+- Emits `page_view { path }` for the landing path on wire, then on each `pushState` /
+  `replaceState` / `popstate` that **changes** `location.pathname`.
+- **pathname-only** granularity with same-path dedup: a router's `replaceState` (or a repeated
+  `pushState`) to the current path never double-counts; a query-string-only change does not emit.
+- Shares the M1 anonymous `visitorToken` automatically — `page_view` rides through `client.track()`,
+  which attaches the live token at send time, so nav and in-page `track()` share one handle.
+- Returns a cleanup that restores the patched history methods and removes the popstate listener.
+- **Idempotent** — a second `useBeaconNav` on an already-wired `history` is a no-op, so an
+  accidental double-wire (overlapping wires, hot-reload, a StrictMode remount) can't stack the
+  patch and double-count every `page_view`.
+- **Storage-free** — like the lifecycle wrapper it touches only the injected `nav` bindings
+  (`history` / `location` / `window`), never globals and never any storage API.
+
+```ts
+import { BeaconClient } from '@pi-innovations/beacon-client';
+import { useBeaconNav } from '@pi-innovations/beacon-client/web';
+
+const client = new BeaconClient({
+  endpoint: 'https://beacon.example.com/analytics/events',
+  productId: 'clipcast',
+  appContext: { appVersion: '1.0.0', platform: 'web' },
+  visitorToken: window.__BEACON_VISITOR_TOKEN__, // seeded by the SPA bootstrap (in-memory only)
+});
+
+// Wire once at app startup; call the returned cleanup on teardown.
+const stopNav = useBeaconNav(client, { history, location, window });
+```
+
+**Tests (unit):**
+
+- Initial wire emits one `page_view` for the landing path
+- `pushState` to a new path emits a `page_view`; `popstate` emits for the current path
+- A same-path `replaceState` / `pushState` does NOT double-count
+- Cleanup restores the original `history.pushState` / `replaceState` and removes the popstate listener
+- A second wire on the same `history` is a no-op (idempotent — no double-count, first wire stays the owner)
+- The nav-emitted `page_view` carries the client's shared `visitor_token`
+- The nav wrapper itself calls no client-side storage APIs
+
 ### 8.6 — Package Exports & Build
 
 **Deliverables:**
