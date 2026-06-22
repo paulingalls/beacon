@@ -71,10 +71,15 @@ export function createIdentifyRelay(
     try {
       const parsed = (await request.json()) as unknown;
       const raw = (parsed as { visitor_token?: unknown } | null)?.visitor_token;
-      if (typeof raw !== 'string' || raw.trim() === '') {
+      if (typeof raw !== 'string') {
         return new Response(null, { status: 400 });
       }
-      visitorToken = raw;
+      // Forward the same trimmed value we validated (validator/forwarder symmetry);
+      // the server trims identically, so this only removes the asymmetry.
+      visitorToken = raw.trim();
+      if (visitorToken === '') {
+        return new Response(null, { status: 400 });
+      }
     } catch {
       return new Response(null, { status: 400 });
     }
