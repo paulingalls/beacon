@@ -36,6 +36,10 @@ export {
   resolveIp,
   resolveIpFromRequest,
 } from './middleware/requestContext';
+// --- Relay interface (Milestone 7): trusted server-side client-relay ingest + identify.
+// A product backend mounts these to forward a client's batch / stitch a login under the
+// trusted bearer. Also reachable at the '@pi-innovations/beacon-sdk/relay' subpath.
+export * from './relay';
 // --- Wire-contract types (the ingest boundary's shared shapes).
 export type {
   Attribution,

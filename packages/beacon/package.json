@@ -6,7 +6,8 @@
   "main": "src/index.ts",
   "module": "src/index.ts",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./relay": "./src/relay/index.ts"
   },
   "dependencies": {
     "hono": "^4.12.21"
