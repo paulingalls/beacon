@@ -9,6 +9,7 @@ import type { BufferStats } from '@pi-innovations/beacon-sdk';
 import { track as trackEvent } from '@pi-innovations/beacon-sdk';
 import { type Context, Hono, type MiddlewareHandler } from 'hono';
 import { adminGate } from './api/auth';
+import { createIdentifyHandler } from './api/identify';
 import { createIngestHandler } from './api/ingest';
 import { RateLimiter, rateLimitGate } from './api/rateLimit';
 import { createDashboardHandler } from './dashboard/index';
@@ -161,6 +162,20 @@ export function createBeacon(config: BeaconConfig): Beacon {
     createIngestHandler(buffer, {
       ...eventOptions,
       productAllowlist: config.productAllowlist,
+      trustedIngestToken: config.trustedIngestToken,
+    }),
+  );
+
+  // Trusted identify endpoint (REQUIREMENTS.md §2.4): the host relays a login so
+  // Beacon back-fills the anonymous trail to the real user. Gated by the same M2
+  // bearer as ingest (config.trustedIngestToken) and sharing the associate core
+  // with Beacon.associateVisitor below — one implementation for HTTP + in-process.
+  apiRouter.post(
+    '/identify',
+    createIdentifyHandler({
+      sql,
+      store: tokenStore,
+      buffer,
       trustedIngestToken: config.trustedIngestToken,
     }),
   );
