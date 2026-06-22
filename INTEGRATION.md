@@ -273,7 +273,7 @@ await fetch('https://beacon.example.com/analytics/events', {
 
 Once set by either relay, `user_id` is a first-class column read uniformly by the Query API (`/events`, `/aggregate`, `/funnel`, `/attribution`). `visitor_token` links one session; `user_id` is the cross-session key.
 
-> The forward in step 2 is hand-rolled today. A supported, framework-agnostic relay interface is planned (`execution_plan.json` §Milestone 7) to replace this glue with a mountable handler.
+> The forward in step 2 is hand-rolled today. A supported, framework-agnostic relay interface is planned for a future release to replace this glue with a mountable handler.
 
 ## Query API
 
