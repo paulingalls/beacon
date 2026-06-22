@@ -243,6 +243,38 @@ fetch('/api/clips', { headers: { ...headers, ...otherHeaders } });
 
 Populate the optional `os` / `device` / `screen` fields (via the React Native wrapper's `getDeviceContext`, or manually) and they appear in the header too.
 
+### Associating a logged-in user
+
+A mobile app is a distributed binary, so it can't hold the trusted ingest secret — the device stays anonymous (public ingest never honors a body `user_id`). How a user gets attributed depends on whether your product has a backend:
+
+- **Serverless / accountless apps:** there is no cross-session association, by design. The `visitorToken` is in-memory and resets on launch (the no-client-storage rule), so each app session is its own anonymous trail. A persistent device identifier would be a cookie by another name — exactly what Beacon's privacy posture rejects. Measure session-scoped behavior; use accounts when you need a durable cross-session key.
+
+- **Apps with a backend + accounts:** attribution is **server-relayed**. The device talks to your backend, which forwards to Beacon under the `TRUSTED_INGEST_TOKEN` bearer (server-to-server — the same trust boundary the SPA `/identify` relay uses). There are two relays:
+
+**1. Stitch the pre-login trail on login** — one `POST {basePath}/identify` (see [Linking the anonymous trail to a user on login](#linking-the-anonymous-trail-to-a-user-on-login)). It back-fills earlier anonymous events for that `visitor_token` with the real `user_id`.
+
+**2. Attribute events going forward** — your backend forwards the device's batch to `POST {basePath}/events`, stamping `user_id` on each event. Under the bearer, ingest honors per-event `user_id` while preserving the device's `visitor_token` and timestamps:
+
+```typescript
+// Your backend, on an authenticated route. `userId` comes from YOUR session;
+// `events` is the batch the device posted up to your server (point the mobile
+// BeaconClient's `endpoint` at your backend, not at Beacon directly).
+const userId = 'authenticated-user-id';
+const events = [{ event_type: 'screen_view', visitor_token: 'device-handle', properties: { name: 'Home' } }];
+await fetch('https://beacon.example.com/analytics/events', {
+    method: 'POST',
+    headers: {
+        authorization: `Bearer ${process.env.TRUSTED_INGEST_TOKEN}`,
+        'content-type': 'application/json',
+    },
+    body: JSON.stringify({ product_id: 'clipcast', events: events.map((e) => ({ ...e, user_id: userId })) }),
+});
+```
+
+Once set by either relay, `user_id` is a first-class column read uniformly by the Query API (`/events`, `/aggregate`, `/funnel`, `/attribution`). `visitor_token` links one session; `user_id` is the cross-session key.
+
+> The forward in step 2 is hand-rolled today. A supported, framework-agnostic relay interface is planned (`execution_plan.json` §Milestone 7) to replace this glue with a mountable handler.
+
 ## Query API
 
 All endpoints are mounted under the deployed server's base path (default `/analytics`) and are gated by `ADMIN_TOKEN`.
