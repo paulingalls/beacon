@@ -311,6 +311,22 @@ describe('createIngestRelay — Request -> Response handler', () => {
     expect((await make(202, true)).status).toBe(502);
   });
 
+  test('a throwing resolveUserId -> 500, no forward, and its error never reaches the caller', async () => {
+    const ff = fakeFetch(202);
+    const handler = createIngestRelay({
+      endpoint: ENDPOINT,
+      trustedIngestToken: TOKEN,
+      resolveUserId: () => {
+        throw new Error('db connection postgres://secret@host failed');
+      },
+      fetch: ff.fn,
+    });
+    const res = await handler(relayReq(sampleBatch()));
+    expect(res.status).toBe(500);
+    expect(await res.text()).toBe(''); // host internals never sent back
+    expect(ff.calls).toHaveLength(0);
+  });
+
   test('malformed JSON body -> 400, no forward', async () => {
     const ff = fakeFetch(202);
     const handler = createIngestRelay({
