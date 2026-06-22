@@ -112,7 +112,16 @@ export function createIngestRelay(
       return new Response(null, { status: 400 });
     }
 
-    const userId = await opts.resolveUserId(request);
+    // The host owns resolveUserId; a throw there is its bug, not the device's. Isolate it
+    // so the handler still returns a Response (never rejects), and never let its error reach
+    // the caller — it may carry host internals. (mirrors apps/server ingest.ts getUserId guard)
+    let userId: string | null;
+    try {
+      userId = await opts.resolveUserId(request);
+    } catch (err) {
+      console.warn(`[beacon] createIngestRelay: resolveUserId failed: ${String(err)}`);
+      return new Response(null, { status: 500 });
+    }
 
     let result: RelayResult;
     try {
