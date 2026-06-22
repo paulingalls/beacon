@@ -272,4 +272,30 @@ describe('useBeaconNav', () => {
       expect(pagePaths(calls).length).toBeGreaterThan(0);
     });
   });
+
+  test('is idempotent: a second wire on the same history does not double-count', async () => {
+    const { client, calls } = build({ appContext: WEB_CONTEXT });
+    const nav = makeNav('/home');
+    useBeaconNav(client, nav.nav); // wire 1: emits the landing /home + patches history
+    useBeaconNav(client, nav.nav); // wire 2: already patched → no-op (no extra landing emit)
+
+    nav.push('/pricing'); // must emit ONCE, not once per stacked patch
+    await client.flush();
+    expect(pagePaths(calls)).toEqual(['/home', '/pricing']);
+  });
+
+  test('a duplicate wire returns a no-op cleanup that leaves the first wire intact', () => {
+    const { client } = build({ appContext: WEB_CONTEXT });
+    const nav = makeNav('/home');
+    const original = nav.nav.history.pushState;
+
+    const stop1 = useBeaconNav(client, nav.nav);
+    const stop2 = useBeaconNav(client, nav.nav); // no-op wire
+
+    stop2(); // must NOT unpatch — the first wire is still the active owner
+    expect(nav.nav.history.pushState).not.toBe(original);
+
+    stop1(); // the real owner restores
+    expect(nav.nav.history.pushState).toBe(original);
+  });
 });
