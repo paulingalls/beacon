@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 
-import { build, tick } from '../testkit';
-import { useBeaconWeb, type WebBindings } from './web';
+import { allEvents, build, tick } from '../testkit';
+import { type NavBindings, useBeaconNav, useBeaconWeb, type WebBindings } from './web';
 
 /** This suite logs as a web client; the kit's build() defaults to ios, so pass web here. */
 const WEB_CONTEXT = { appVersion: '1.0.0', platform: 'web' as const };
@@ -138,6 +138,176 @@ describe('useBeaconWeb', () => {
       cleanup();
       // Reaching here without throwing proves no storage global was read.
       expect(web.beacons.length + web.removed.length).toBeGreaterThan(0);
+    } finally {
+      Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: undefined });
+      Object.defineProperty(globalThis, 'sessionStorage', {
+        configurable: true,
+        value: undefined,
+      });
+      if (hadDocument) {
+        Object.defineProperty(globalThis, 'document', {
+          configurable: true,
+          value: priorDocument,
+        });
+      } else {
+        delete (globalThis as { document?: unknown }).document;
+      }
+    }
+  });
+});
+
+/**
+ * Fake History-API bindings: a mutable pathname driven by pushState/replaceState (the path arg
+ * mimics location.pathname after the real History API updates synchronously), an external setPath
+ * + firePopState to simulate browser back/forward, and a window listener map. Mirrors makeWeb.
+ */
+function makeNav(initialPath = '/') {
+  let pathname = initialPath;
+  const winListeners = new Map<string, () => void>();
+  const removed: string[] = [];
+  const setPathFromUrl = (url?: string | null) => {
+    if (typeof url === 'string') pathname = url;
+  };
+  const nav: NavBindings = {
+    history: {
+      pushState: (_data, _unused, url) => setPathFromUrl(url),
+      replaceState: (_data, _unused, url) => setPathFromUrl(url),
+    },
+    get location() {
+      return { pathname };
+    },
+    window: {
+      addEventListener: (type, listener) => {
+        winListeners.set(type, listener);
+      },
+      removeEventListener: (type) => {
+        removed.push(`win:${type}`);
+        winListeners.delete(type);
+      },
+    },
+  };
+  return {
+    nav,
+    /** Navigate via the (possibly wrapped) live history method. */
+    push: (path: string) => nav.history.pushState(null, '', path),
+    replace: (path: string) => nav.history.replaceState(null, '', path),
+    /** Simulate browser back/forward: location is already updated when popstate fires. */
+    setPath: (p: string) => {
+      pathname = p;
+    },
+    firePopState: () => winListeners.get('popstate')?.(),
+    removed,
+  };
+}
+
+/** Extract the `path` property of every page_view event POSTed across all recorded calls. */
+function pagePaths(calls: ReturnType<typeof build>['calls']): unknown[] {
+  return allEvents(calls)
+    .filter((e) => e.event_type === 'page_view')
+    .map((e) => (e.properties as { path?: unknown } | undefined)?.path);
+}
+
+describe('useBeaconNav', () => {
+  test('emits an initial page_view for the landing path on wire', async () => {
+    const { client, calls } = build({ appContext: WEB_CONTEXT });
+    const nav = makeNav('/home');
+    useBeaconNav(client, nav.nav);
+
+    await client.flush();
+    expect(pagePaths(calls)).toEqual(['/home']);
+  });
+
+  test('emits a page_view on pushState to a new path', async () => {
+    const { client, calls } = build({ appContext: WEB_CONTEXT });
+    const nav = makeNav('/home');
+    useBeaconNav(client, nav.nav);
+
+    nav.push('/pricing');
+    await client.flush();
+    expect(pagePaths(calls)).toEqual(['/home', '/pricing']);
+  });
+
+  test('emits a page_view on popstate (back/forward) with the current path', async () => {
+    const { client, calls } = build({ appContext: WEB_CONTEXT });
+    const nav = makeNav('/home');
+    useBeaconNav(client, nav.nav);
+
+    nav.push('/pricing'); // forward to /pricing
+    nav.setPath('/home'); // browser back updates location first…
+    nav.firePopState(); // …then fires popstate
+    await client.flush();
+    expect(pagePaths(calls)).toEqual(['/home', '/pricing', '/home']);
+  });
+
+  test('does not double-count a same-path replaceState (no duplicate page_view)', async () => {
+    const { client, calls } = build({ appContext: WEB_CONTEXT });
+    const nav = makeNav('/home');
+    useBeaconNav(client, nav.nav);
+
+    nav.replace('/home'); // same path — must not emit
+    nav.push('/home'); // same path — must not emit
+    await client.flush();
+    expect(pagePaths(calls)).toEqual(['/home']);
+  });
+
+  test('cleanup restores the original history methods and removes the popstate listener', () => {
+    const { client } = build({ appContext: WEB_CONTEXT });
+    const nav = makeNav('/home');
+    const originalPush = nav.nav.history.pushState;
+    const originalReplace = nav.nav.history.replaceState;
+
+    const cleanup = useBeaconNav(client, nav.nav);
+    expect(nav.nav.history.pushState).not.toBe(originalPush); // patched while active
+
+    cleanup();
+    expect(nav.nav.history.pushState).toBe(originalPush);
+    expect(nav.nav.history.replaceState).toBe(originalReplace);
+    expect(nav.removed).toContain('win:popstate');
+  });
+
+  test('a real client carries the shared visitor_token on nav page_views', async () => {
+    // E2E: the nav-emitted page_view rides the same body.visitor_token the client sends for
+    // in-page track() — proving nav + clicks share one handle (M1 identity, via buildBody).
+    const { client, calls } = build({ appContext: WEB_CONTEXT, visitorToken: 'visitor-1' });
+    const nav = makeNav('/home');
+    useBeaconNav(client, nav.nav);
+
+    nav.push('/pricing');
+    client.track('button_tap'); // in-page event on the same client
+    await client.flush();
+
+    expect(pagePaths(calls)).toEqual(['/home', '/pricing']);
+    expect(calls.length).toBeGreaterThan(0);
+    expect(
+      calls.every((c) => (c.body as { visitor_token?: string }).visitor_token === 'visitor-1'),
+    ).toBe(true);
+  });
+
+  test('touches no client-side storage APIs', async () => {
+    // Mirror the lifecycle wrapper's booby-trap: any global storage / document.cookie read throws.
+    const throwingGet = () => {
+      throw new Error('storage access is forbidden in the nav wrapper');
+    };
+    const storageTrap = { configurable: true, get: throwingGet };
+    const hadDocument = 'document' in globalThis;
+    const priorDocument = (globalThis as { document?: unknown }).document;
+    Object.defineProperty(globalThis, 'localStorage', storageTrap);
+    Object.defineProperty(globalThis, 'sessionStorage', storageTrap);
+    Object.defineProperty(globalThis, 'document', {
+      configurable: true,
+      value: Object.defineProperty({}, 'cookie', { configurable: true, get: throwingGet }),
+    });
+    try {
+      const { client, calls } = build({ appContext: WEB_CONTEXT });
+      const nav = makeNav('/home');
+      const cleanup = useBeaconNav(client, nav.nav);
+      nav.push('/pricing');
+      nav.setPath('/home');
+      nav.firePopState();
+      await client.flush();
+      cleanup();
+      // Reaching here without throwing proves no storage global was read.
+      expect(pagePaths(calls).length).toBeGreaterThan(0);
     } finally {
       Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: undefined });
       Object.defineProperty(globalThis, 'sessionStorage', {
