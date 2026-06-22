@@ -155,6 +155,7 @@ const res: Response = await identifyRelay(request);
 
 - **204 No Content** on success. The back-fill is best-effort and idempotent (re-relaying the same token is a safe no-op), so callers don't need a response body — confirm via the Query API.
 - **400** when the request body carries no `visitor_token`, or your `resolveUserId` returns no user (identify needs both).
+- **500** when your `resolveUserId` *throws* — the relay isolates the error (it never reaches the device or the logs) and returns an empty body; treat it as a transient backend fault and retry.
 - **502** when Beacon is unreachable or rejects the bearer — retryable, and the relay never leaks the secret.
 
 ## Mobile (React Native)
@@ -270,8 +271,9 @@ const eventsRelay = createIngestRelay({
     resolveUserId: (req) => req.headers.get('x-user-id'),
 });
 
-// In your route handler. 204 on success, 400 on a malformed batch, 502 (retryable)
-// when Beacon is unreachable — map it straight back to the device.
+// In your route handler. 204 on success, 400 on a malformed batch, 500 if your
+// resolveUserId throws (isolated — no host detail leaks), 502 (retryable) when Beacon
+// is unreachable — map it straight back to the device.
 const res: Response = await eventsRelay(request);
 ```
 
