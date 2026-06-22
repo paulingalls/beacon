@@ -209,7 +209,7 @@ Query semantics: time-series, funnels, and "when did users do X" group on `times
 
 ### 4.2 Migrations
 
-Migrations are plain SQL files in `packages/beacon/src/storage/migrations/`, named with zero-padded sequential numbers:
+Migrations are plain SQL files in `apps/server/src/storage/migrations/`, named with zero-padded sequential numbers:
 
 ```
 001_initial_schema.sql
