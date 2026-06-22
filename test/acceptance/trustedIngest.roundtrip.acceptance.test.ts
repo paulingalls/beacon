@@ -1,12 +1,11 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
-
-import { createBeacon } from '@pi-innovations/beacon';
 import { Hono } from 'hono';
+import { createBeacon } from '../../apps/server/src/createBeacon';
 // Live-DB setup via the package's own internals by relative path, as the sibling acceptance suites do.
-import { closeDb, createDb } from '../../packages/beacon/src/storage/db';
-import { runMigrations } from '../../packages/beacon/src/storage/migrate';
-import { registerDbCoverageGuard, TEST_DB } from '../../packages/beacon/test/dbGuard';
+import { closeDb, createDb } from '../../apps/server/src/storage/db';
+import { runMigrations } from '../../apps/server/src/storage/migrate';
+import { registerDbCoverageGuard, TEST_DB } from '../../apps/server/test/dbGuard';
 
 // story-004 CAPSTONE (Milestone 2): the trusted-caller bearer boundary exercised end to end.
 // A trusted server RELAY (raw HTTP POST carrying `Authorization: Bearer <secret>` — M2 has no

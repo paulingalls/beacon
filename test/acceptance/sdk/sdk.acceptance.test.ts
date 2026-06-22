@@ -1,14 +1,14 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
-import { createBeacon } from '@pi-innovations/beacon';
 // The assembled SDK, imported BY PACKAGE NAME so this exercises the exports map + the whole
 // client end-to-end (story-005's exports → core client → real HTTP → live ingest → Postgres).
 import { BeaconClient } from '@pi-innovations/beacon-client';
 import { Hono } from 'hono';
+import { createBeacon } from '../../../apps/server/src/createBeacon';
 // Live-DB setup via the package's own internals by relative path, exactly as the sibling
 // acceptance suites do (test/acceptance/http.acceptance.test.ts).
-import { closeDb, createDb } from '../../../packages/beacon/src/storage/db';
-import { runMigrations } from '../../../packages/beacon/src/storage/migrate';
-import { registerDbCoverageGuard, TEST_DB } from '../../../packages/beacon/test/dbGuard';
+import { closeDb, createDb } from '../../../apps/server/src/storage/db';
+import { runMigrations } from '../../../apps/server/src/storage/migrate';
+import { registerDbCoverageGuard, TEST_DB } from '../../../apps/server/test/dbGuard';
 
 const PRODUCT = 'sdk-acceptance';
 

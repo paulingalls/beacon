@@ -4,8 +4,9 @@
 // reverse proxy / load balancer (§1.3 outage-degrade). Config follows REQUIREMENTS.md §10.
 // This is the entry point the systemd unit (deploy/beacon.service) and Dockerfile invoke.
 
-import { type Beacon, createBeacon, verifyTrustedBearer } from '@pi-innovations/beacon';
 import { type Context, Hono } from 'hono';
+import { verifyTrustedBearer } from './api/auth';
+import { type Beacon, createBeacon } from './createBeacon';
 
 /** Environment the host reads (a subset of process.env, injected for testability). */
 export interface ServerEnv {
@@ -31,7 +32,7 @@ export interface ServerEnv {
 /**
  * Build the constant-time admin predicate for createBeacon's isAdmin gate.
  *
- * Delegates to the package's audited `verifyTrustedBearer` (one constant-time bearer
+ * Delegates to apps/server's audited `verifyTrustedBearer` (one constant-time bearer
  * compare for the whole stack): it SHA-256s both sides and timingSafeEqual-compares, and
  * is fail-closed on an unset token — so with no ADMIN_TOKEN every request is non-admin and
  * the dashboard + query API stay unreachable rather than open.

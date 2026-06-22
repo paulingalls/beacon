@@ -209,7 +209,7 @@ Query semantics: time-series, funnels, and "when did users do X" group on `times
 
 ### 4.2 Migrations
 
-Migrations are plain SQL files in `packages/beacon/src/storage/migrations/`, named with zero-padded sequential numbers:
+Migrations are plain SQL files in `apps/server/src/storage/migrations/`, named with zero-padded sequential numbers:
 
 ```
 001_initial_schema.sql
@@ -785,19 +785,25 @@ Require a test Postgres instance (use `docker run postgres` or a test container)
 
 ### 11.3 Test Utilities
 
-Beacon exports a test helper:
+Integration tests use the shared DB harness in `apps/server/test/` (the server is the only
+DB-cred holder; the published `@pi-innovations/beacon-sdk` ships no test entry point). The
+bunfig preload (`test/setup/ensure-test-db.ts`, repo root only) starts Postgres and sets
+`TEST_DATABASE_URL`; suites gate on it and register the fail-loud coverage guard:
 
 ```typescript
-import { createTestBeacon } from '@pi-innovations/beacon/test';
+import { registerDbCoverageGuard, TEST_DB } from '../../apps/server/test/dbGuard';
+import { withTestDb } from '../../apps/server/test/helpers';
 
-const { beacon, db, cleanup } = await createTestBeacon({
-    postgres: { connectionString: process.env.TEST_DATABASE_URL },
+registerDbCoverageGuard(); // fails loud if a DB is expected but TEST_DATABASE_URL is unset
+
+describe.skipIf(!TEST_DB)('…', () => {
+    const getDb = withTestDb(TEST_DB as string); // migrated client; TRUNCATE per test; DROP + close in afterAll
+    // ... run tests against getDb() ...
 });
-
-// ... run tests ...
-
-await cleanup(); // drops test tables, closes connections
 ```
+
+`helpers.ts` also provides `stubSql`/`txResolver` (a `postgres.Sql` test double for DB-free unit
+tests) and `ctxWith` (a minimal Hono context). There is no `createTestBeacon` factory.
 
 ---
 

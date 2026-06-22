@@ -1,13 +1,13 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { createBeacon } from '@pi-innovations/beacon';
 // The assembled SDK imported BY PACKAGE NAME — exercises the exports map + the whole client,
 // exactly as test/acceptance/sdk/sdk.acceptance.test.ts does.
 import { BeaconClient } from '@pi-innovations/beacon-client';
 import { Hono } from 'hono';
+import { createBeacon } from '../../apps/server/src/createBeacon';
 // Live-DB setup via the package's own internals by relative path, as the sibling acceptance suites do.
-import { closeDb, createDb } from '../../packages/beacon/src/storage/db';
-import { runMigrations } from '../../packages/beacon/src/storage/migrate';
-import { registerDbCoverageGuard, TEST_DB } from '../../packages/beacon/test/dbGuard';
+import { closeDb, createDb } from '../../apps/server/src/storage/db';
+import { runMigrations } from '../../apps/server/src/storage/migrate';
+import { registerDbCoverageGuard, TEST_DB } from '../../apps/server/test/dbGuard';
 
 // story-003 CAPSTONE (Milestone 1): the cross-package wire contract — the body-level
 // `visitor_token` field name and body-wins precedence — is exercised end to end by a REAL
