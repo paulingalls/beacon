@@ -48,6 +48,12 @@ export async function associateVisitor(
   token: string | null,
   userId: string,
 ): Promise<void> {
+  // Drain BEFORE the null-token check, deliberately: this preserves the prior
+  // in-process behavior (createBeacon's wrapper drained unconditionally, then the
+  // core returned early on a null token). The HTTP /identify path never reaches
+  // here with a null token (the handler validates it first), so the only no-token
+  // caller is a direct in-process login — and an empty buffer makes drainBuffer a
+  // no-op anyway.
   await drainBuffer(buffer);
   if (!token) return; // direct login, no anonymous trail
   try {
