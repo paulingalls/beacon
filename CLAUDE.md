@@ -6,10 +6,11 @@ This file provides context for Claude Code sessions working on Beacon, PI Innova
 
 ## What Is Beacon
 
-Beacon is a privacy-first, cookie-free analytics stack shared across all PI Innovations products. It consists of two packages and a centralized Postgres data store:
+Beacon is a privacy-first, cookie-free analytics stack shared across all PI Innovations products. After Milestone 4 the single-writer boundary is **physical**: it consists of two published packages, one private deployed server, and a centralized Postgres data store:
 
-- `@pi-innovations/beacon` — Server-side Hono middleware, event helpers, query/aggregation engine, API router, and admin dashboard
-- `@pi-innovations/beacon-client` — Lightweight TypeScript client SDK for mobile (React Native/Expo) and optional web-side event tracking
+- `@pi-innovations/beacon-sdk` (`packages/beacon`) — the published **HTTP-emit SDK**: framework-agnostic request capture (`createHttpBeacon`, capture cores) + ingest wire-contract types. Ships **no postgres** — products emit over the authenticated `POST /events` boundary, never writing the DB directly.
+- `apps/server` (`@pi-innovations/beacon-server`, private, never npm-published) — the deployed single-writer server: `createBeacon` factory, Hono middleware, event helpers, storage/migrations, query/aggregation engine, API router, admin dashboard, and shortener. The **only** holder of DB credentials.
+- `@pi-innovations/beacon-client` — Lightweight TypeScript client SDK for mobile (React Native/Expo) and optional web-side event tracking.
 
 All analytics data flows into a single Postgres database with `product_id` as a first-class dimension. The query API is designed to be agent-accessible (and eventually exposed as an MCP server).
 
@@ -21,17 +22,31 @@ All analytics data flows into a single Postgres database with `product_id` as a 
 beacon/
 ├── docs/                           # Specs and phased build plan (see Related Documents)
 │   └── phases/                     # Per-phase build documents (PHASE_1 … PHASE_8)
+├── apps/
+│   └── server/                     # @pi-innovations/beacon-server — private deployed server (the DB-cred holder)
+│       ├── src/
+│       │   ├── createBeacon.ts     # DB-backed factory wiring middleware + buffer + routers
+│       │   ├── storage/            # Postgres adapter, schema, migrations
+│       │   ├── events/buffer.ts    # EventBuffer (in-memory → batched Postgres flush)
+│       │   ├── visitors/tokenStore.ts  # In-memory visitor token store
+│       │   ├── middleware/         # Hono request-logging middleware
+│       │   ├── query/              # Query engine (events, aggregations, funnels, attribution)
+│       │   ├── api/                # Ingest + auth + rate limit (/analytics/* endpoints)
+│       │   ├── dashboard/          # Simple admin dashboard (HTML, served behind auth)
+│       │   ├── shortener/          # URL shortener route and storage
+│       │   ├── types.ts            # Server-internal types (BeaconConfig, buffer/store tuning)
+│       │   └── server.ts           # buildServer(env) entry point
+│       └── package.json
 ├── packages/
-│   ├── beacon/                     # Server package
+│   ├── beacon/                     # @pi-innovations/beacon-sdk — published HTTP-emit SDK (no postgres)
 │   │   ├── src/
-│   │   │   ├── middleware/         # Hono middleware (request logging, visitor token, attribution capture)
-│   │   │   ├── events/            # Event helpers for custom product events
-│   │   │   ├── storage/           # Postgres adapter, schema, migrations
-│   │   │   ├── query/             # Query engine (events, aggregations, funnels, attribution)
-│   │   │   ├── api/               # Hono API router (/analytics/* endpoints)
-│   │   │   ├── dashboard/         # Simple admin dashboard (HTML, served behind auth)
-│   │   │   ├── shortener/         # URL shortener route and storage
-│   │   │   └── index.ts           # Public API exports
+│   │   │   ├── adapter/            # BeaconRequest adapter (framework-agnostic request capture)
+│   │   │   ├── middleware/requestContext.ts  # Capture cores (context/IP/attribution resolution)
+│   │   │   ├── events/            # sink.ts, track.ts, httpSink.ts (trusted-bearer batched POST)
+│   │   │   ├── visitors/attribution.ts  # Attribution extraction (DB-free)
+│   │   │   ├── httpBeacon.ts       # createHttpBeacon — emits over the trusted ingest boundary
+│   │   │   ├── types.ts            # Wire-contract types (BeaconEvent, BufferStats, Attribution, …)
+│   │   │   └── index.ts           # Locked public API surface (emit SDK + cores + wire types)
 │   │   ├── package.json
 │   │   └── tsconfig.json
 │   └── beacon-client/             # Client SDK package
@@ -119,7 +134,7 @@ CREATE INDEX idx_beacon_events_visitor ON beacon_events (visitor_token) WHERE vi
 CREATE INDEX idx_beacon_events_type ON beacon_events (product_id, event_type, timestamp DESC);
 ```
 
-> The authoritative schema lives in `REQUIREMENTS.md` §4.1 and the applied migration `packages/beacon/src/storage/migrations/001_initial_schema.sql`. The blocks here are a quick reference kept in sync with them.
+> The authoritative schema lives in `REQUIREMENTS.md` §4.1 and the applied migration `apps/server/src/storage/migrations/001_initial_schema.sql`. The blocks here are a quick reference kept in sync with them.
 
 ### URL Shortener
 
@@ -214,10 +229,12 @@ interface BeaconEvent {
 
 ## Configuration
 
-The server package is configured at initialization:
+The deployed server (`apps/server`) is configured at initialization via its internal
+`createBeacon` factory — this is **not** exported from the published `@pi-innovations/beacon-sdk`
+(products emit with `createHttpBeacon` instead; see INTEGRATION.md). Within `apps/server`:
 
 ```typescript
-import { createBeacon } from '@pi-innovations/beacon';
+import { createBeacon } from './createBeacon';
 
 const beacon = createBeacon({
     productId: 'clipcast',
@@ -261,7 +278,7 @@ bun run dev
 bun run build
 ```
 
-Database migrations are managed via plain SQL files in `packages/beacon/src/storage/migrations/`. Apply with:
+Database migrations are managed via plain SQL files in `apps/server/src/storage/migrations/`. Apply with:
 
 ```bash
 bun run migrate

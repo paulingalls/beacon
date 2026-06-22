@@ -7,16 +7,16 @@
 // Seeded ~10 days ago: inside the dashboard's default 30-day window but outside the 7d/today
 // presets, so the same fixture exercises both populated and empty states.
 
-import { createBeacon } from '@pi-innovations/beacon';
 import { Hono } from 'hono';
+import { createBeacon } from '../../../apps/server/src/createBeacon';
 
 // Side-effect import: ensure-test-db starts docker Postgres and sets TEST_DATABASE_URL when
 // unset (idempotent). Its own posture is skip-gracefully; we override that to FAIL LOUD
 // below, because a webServer that came up against no DB would render empty widgets and let
 // the e2e pass vacuously (concern f3ce91828b59 / the DB-coverage-guard constraint).
 import '../../setup/ensure-test-db';
-import { closeDb, createDb } from '../../../packages/beacon/src/storage/db';
-import { runMigrations } from '../../../packages/beacon/src/storage/migrate';
+import { closeDb, createDb } from '../../../apps/server/src/storage/db';
+import { runMigrations } from '../../../apps/server/src/storage/migrate';
 
 const TEST_DB = process.env.TEST_DATABASE_URL;
 if (!TEST_DB) {

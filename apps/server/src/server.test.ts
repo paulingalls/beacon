@@ -1,7 +1,7 @@
 import { afterAll, beforeEach, describe, expect, test } from 'bun:test';
 
-import { registerDbCoverageGuard, TEST_DB } from '../../../packages/beacon/test/dbGuard';
-import { withTestDb } from '../../../packages/beacon/test/helpers';
+import { registerDbCoverageGuard, TEST_DB } from '../test/dbGuard';
+import { withTestDb } from '../test/helpers';
 import { buildServer } from './server';
 
 // Smoke test for the first-party host app (sprint-012 story-001). Boots the app via
@@ -102,5 +102,46 @@ describe.skipIf(!TEST_DB)('apps/server host', () => {
       }),
     );
     expect(res.status).toBe(403);
+  });
+
+  test('TRUSTED_INGEST_TOKEN env threads trust into ingest — a bearer-authorized batch stores per-event user_id', async () => {
+    const TRUSTED = 'test-trusted-ingest';
+    const { app, beacon } = build({ DATABASE_URL: TEST_DB, TRUSTED_INGEST_TOKEN: TRUSTED });
+
+    const send = (headers: Record<string, string>, eventType: string) =>
+      app.fetch(
+        new Request('http://host/analytics/events', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', ...headers },
+          body: JSON.stringify({ events: [{ event_type: eventType, user_id: 'host-wired-user' }] }),
+        }),
+      );
+
+    expect((await send({ authorization: `Bearer ${TRUSTED}` }, 'host_trusted')).status).toBe(202);
+    expect((await send({}, 'host_untrusted')).status).toBe(202); // no bearer → body user_id ignored
+
+    await beacon.flush();
+    const rows = await getSql()<{ event_type: string; user_id: string | null }[]>`
+      SELECT event_type, user_id FROM beacon_events WHERE event_type IN ('host_trusted', 'host_untrusted')`;
+    const byType = new Map(rows.map((r) => [r.event_type, r.user_id]));
+    expect(byType.get('host_trusted')).toBe('host-wired-user'); // env → createBeacon → ingest
+    expect(byType.get('host_untrusted')).toBeNull(); // public path unchanged
+  });
+
+  test('trusted ingest fails closed when TRUSTED_INGEST_TOKEN is unset', async () => {
+    const { app, beacon } = build({ DATABASE_URL: TEST_DB });
+    const res = await app.fetch(
+      new Request('http://host/analytics/events', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: 'Bearer anything' },
+        body: JSON.stringify({ events: [{ event_type: 'host_failclosed', user_id: 'spoofed' }] }),
+      }),
+    );
+    expect(res.status).toBe(202);
+
+    await beacon.flush();
+    const rows = await getSql()<{ user_id: string | null }[]>`
+      SELECT user_id FROM beacon_events WHERE event_type = 'host_failclosed'`;
+    expect(rows.map((r) => r.user_id)).toEqual([null]); // unset token ⇒ body user_id ignored
   });
 });
