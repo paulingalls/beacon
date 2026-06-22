@@ -93,7 +93,12 @@ export async function relayBatch(
   const fetchImpl = opts.fetch ?? globalThis.fetch;
 
   const body = JSON.stringify({
-    ...(batch.product_id != null ? { product_id: batch.product_id } : {}),
+    // Omit empty/falsy product_id and visitor_token rather than forward them: an empty
+    // product_id is invalid server-side and, under a configured allowlist, a PRESENT-
+    // but-invalid product_id rejects the whole batch (403) — which would drop valid
+    // events, the one thing this relay must never do. Omitting lets ingest fall back to
+    // its configured product. (An empty visitor_token is likewise skip-not-reject.)
+    ...(batch.product_id ? { product_id: batch.product_id } : {}),
     ...(batch.visitor_token ? { visitor_token: batch.visitor_token } : {}),
     events: batch.events.map((e) => stampUser(e, opts.userId)),
   });
