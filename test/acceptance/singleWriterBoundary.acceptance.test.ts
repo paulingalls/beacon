@@ -122,9 +122,11 @@ describe('single-writer boundary — published SDK graph is postgres-free', () =
   });
 
   test('the SDK runtime export surface is exactly the locked set (no server symbols)', async () => {
-    // Decision beacon-sdk-public-surface: emit SDK + capture cores + wire types only. Types are
+    // Decision beacon-sdk-public-surface: emit SDK + capture cores + wire types, AND (M7
+    // extension, supersedes the original lock) the trusted client-relay interface. Types are
     // erased at runtime, so this asserts the VALUE exports; exact-set equality also catches drift
-    // (any accidental new export fails here).
+    // (any accidental new export fails here). The relay's internal forward helpers
+    // (forwardJson/classify/resultToResponse) stay unexported and must NOT appear here.
     const sdk = (await import('@pi-innovations/beacon-sdk')) as Record<string, unknown>;
     const exported = Object.keys(sdk).sort();
     expect(exported).toEqual(
@@ -132,6 +134,8 @@ describe('single-writer boundary — published SDK graph is postgres-free', () =
         'MAX_EVENT_TYPE_LENGTH',
         'buildEventContext',
         'createHttpBeacon',
+        'createIdentifyRelay',
+        'createIngestRelay',
         'defaultClientAddress',
         'extractAttribution',
         'firstLocale',
@@ -139,6 +143,8 @@ describe('single-writer boundary — published SDK graph is postgres-free', () =
         'honoRequest',
         'honoToBeaconRequest',
         'parseAppContext',
+        'relayBatch',
+        'relayIdentify',
         'requestToBeaconRequest',
         'resolveEventFields',
         'resolveEventFieldsFromRequest',
@@ -147,6 +153,10 @@ describe('single-writer boundary — published SDK graph is postgres-free', () =
         'track',
       ].sort(),
     );
+    // The relay's internal forward helpers stay private — never on the SDK surface.
+    for (const forbidden of ['forwardJson', 'classify', 'resultToResponse']) {
+      expect(exported).not.toContain(forbidden);
+    }
     // The DB write path must be unreachable from the SDK entry.
     for (const forbidden of ['createBeacon', 'createDb', 'closeDb', 'runMigrations']) {
       expect(exported).not.toContain(forbidden);

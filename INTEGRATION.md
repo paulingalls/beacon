@@ -135,24 +135,28 @@ See [Mobile (React Native)](#mobile-react-native) for constructing the `client` 
 
 A browser holds only an anonymous `visitorToken` (no cookies, no stored identity), so it cannot assert a `user_id`. When the user logs in, your **server** relays that fact to Beacon over a trusted `POST {basePath}/identify` — the `associateVisitor` equivalent for SPAs. Beacon back-fills the anonymous trail's events with the `user_id` and copies first-touch attribution onto the earliest event. It is gated by the **same** `TRUSTED_INGEST_TOKEN` bearer that gates trusted ingest (a cross-origin browser can't carry your session, so this is server-to-server only):
 
+Mount the supported `createIdentifyRelay` handler on your login route — it reads the SPA's anonymous `visitor_token` from the request body, resolves the authenticated `user_id` from *your* session, and relays the association under the bearer (the secret stays on your server):
+
 ```typescript
-// On your server, after the user authenticates. `visitorToken` is the SPA's
-// anonymous handle (relayed up from the browser); `userId` is your authenticated user.
-const visitorToken = 'anon-visitor-handle';
-const userId = 'authenticated-user-id';
-await fetch('https://beacon.example.com/analytics/identify', {
-    method: 'POST',
-    headers: {
-        authorization: `Bearer ${process.env.TRUSTED_INGEST_TOKEN}`,
-        'content-type': 'application/json',
-    },
-    body: JSON.stringify({ visitor_token: visitorToken, user_id: userId }),
+import { createIdentifyRelay } from '@pi-innovations/beacon-sdk';
+
+// Mount once. `resolveUserId` is YOUR auth — read it from the session/JWT/cookie on
+// the request (shown here as a header). The browser sends its anonymous handle in the
+// body as `{ visitor_token }`.
+const identifyRelay = createIdentifyRelay({
+    endpoint: 'https://beacon.example.com/analytics/identify',
+    trustedIngestToken: process.env.TRUSTED_INGEST_TOKEN ?? '',
+    resolveUserId: (req) => req.headers.get('x-user-id'),
 });
+
+// In your login handler, after authenticating:
+const res: Response = await identifyRelay(request);
 ```
 
 - **204 No Content** on success. The back-fill is best-effort and idempotent (re-relaying the same token is a safe no-op), so callers don't need a response body — confirm via the Query API.
-- **403** when the bearer is absent/invalid or trusted ingest is disabled.
-- **400** when `visitor_token` or `user_id` is missing or not a non-empty string ≤100 chars.
+- **400** when the request body carries no `visitor_token`, or your `resolveUserId` returns no user (identify needs both).
+- **500** when your `resolveUserId` *throws* — the relay isolates the error (it never reaches the device or the logs) and returns an empty body; treat it as a transient backend fault and retry.
+- **502** when Beacon is unreachable or rejects the bearer — retryable, and the relay never leaks the secret.
 
 ## Mobile (React Native)
 
@@ -253,27 +257,29 @@ A mobile app is a distributed binary, so it can't hold the trusted ingest secret
 
 **1. Stitch the pre-login trail on login** — one `POST {basePath}/identify` (see [Linking the anonymous trail to a user on login](#linking-the-anonymous-trail-to-a-user-on-login)). It back-fills earlier anonymous events for that `visitor_token` with the real `user_id`.
 
-**2. Attribute events going forward** — your backend forwards the device's batch to `POST {basePath}/events`, stamping `user_id` on each event. Under the bearer, ingest honors per-event `user_id` while preserving the device's `visitor_token` and timestamps:
+**2. Attribute events going forward** — mount the supported `createIngestRelay` handler on your backend and point the mobile `BeaconClient`'s `endpoint` at it (not at Beacon directly). It reads the device's batch from the request body, resolves *your* authenticated user, stamps `user_id` on each event, and forwards under the bearer — preserving the device's `visitor_token` and timestamps:
 
 ```typescript
-// Your backend, on an authenticated route. `userId` comes from YOUR session;
-// `events` is the batch the device posted up to your server (point the mobile
-// BeaconClient's `endpoint` at your backend, not at Beacon directly).
-const userId = 'authenticated-user-id';
-const events = [{ event_type: 'screen_view', visitor_token: 'device-handle', properties: { name: 'Home' } }];
-await fetch('https://beacon.example.com/analytics/events', {
-    method: 'POST',
-    headers: {
-        authorization: `Bearer ${process.env.TRUSTED_INGEST_TOKEN}`,
-        'content-type': 'application/json',
-    },
-    body: JSON.stringify({ product_id: 'clipcast', events: events.map((e) => ({ ...e, user_id: userId })) }),
+import { createIngestRelay } from '@pi-innovations/beacon-sdk';
+
+// Mount once on an authenticated route. `resolveUserId` is YOUR auth (session/JWT);
+// the device posts its batch body `{ product_id, visitor_token, events }` here. A
+// device-asserted `user_id` is stripped — only the resolved id rides the bearer.
+const eventsRelay = createIngestRelay({
+    endpoint: 'https://beacon.example.com/analytics/events',
+    trustedIngestToken: process.env.TRUSTED_INGEST_TOKEN ?? '',
+    resolveUserId: (req) => req.headers.get('x-user-id'),
 });
+
+// In your route handler. 204 on success, 400 on a malformed batch, 500 if your
+// resolveUserId throws (isolated — no host detail leaks), 502 (retryable) when Beacon
+// is unreachable — map it straight back to the device.
+const res: Response = await eventsRelay(request);
 ```
 
-Once set by either relay, `user_id` is a first-class column read uniformly by the Query API (`/events`, `/aggregate`, `/funnel`, `/attribution`). `visitor_token` links one session; `user_id` is the cross-session key.
+Both handlers are also importable from the `@pi-innovations/beacon-sdk/relay` subpath, and expose `relayBatch` / `relayIdentify` primitives if you need to forward an already-parsed batch without the `Request` wrapper.
 
-> The forward in step 2 is hand-rolled today. A supported, framework-agnostic relay interface is planned for a future release to replace this glue with a mountable handler.
+Once set by either relay, `user_id` is a first-class column read uniformly by the Query API (`/events`, `/aggregate`, `/funnel`, `/attribution`). `visitor_token` links one session; `user_id` is the cross-session key.
 
 ## Query API
 
