@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 
-import { allEvents, build, tick } from '../testkit';
+import { allEvents, build, tick, withStorageTrap } from '../testkit';
 import { type NavBindings, useBeaconNav, useBeaconWeb, type WebBindings } from './web';
 
 /** This suite logs as a web client; the kit's build() defaults to ios, so pass web here. */
@@ -115,19 +115,7 @@ describe('useBeaconWeb', () => {
     // refactor that reaches for global localStorage/sessionStorage — or, the likeliest cookie
     // mistake, global document.cookie — trips this. The wrapper must touch ONLY the injected
     // `web` bindings, so none of these traps may fire.
-    const throwingGet = () => {
-      throw new Error('storage access is forbidden in the web wrapper');
-    };
-    const storageTrap = { configurable: true, get: throwingGet };
-    const hadDocument = 'document' in globalThis;
-    const priorDocument = (globalThis as { document?: unknown }).document;
-    Object.defineProperty(globalThis, 'localStorage', storageTrap);
-    Object.defineProperty(globalThis, 'sessionStorage', storageTrap);
-    Object.defineProperty(globalThis, 'document', {
-      configurable: true,
-      value: Object.defineProperty({}, 'cookie', { configurable: true, get: throwingGet }),
-    });
-    try {
+    await withStorageTrap('storage access is forbidden in the web wrapper', async () => {
       const { client } = build({ appContext: WEB_CONTEXT });
       const web = makeWeb('hidden');
       const cleanup = useBeaconWeb(client, web.web);
@@ -138,21 +126,7 @@ describe('useBeaconWeb', () => {
       cleanup();
       // Reaching here without throwing proves no storage global was read.
       expect(web.beacons.length + web.removed.length).toBeGreaterThan(0);
-    } finally {
-      Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: undefined });
-      Object.defineProperty(globalThis, 'sessionStorage', {
-        configurable: true,
-        value: undefined,
-      });
-      if (hadDocument) {
-        Object.defineProperty(globalThis, 'document', {
-          configurable: true,
-          value: priorDocument,
-        });
-      } else {
-        delete (globalThis as { document?: unknown }).document;
-      }
-    }
+    });
   });
 });
 
@@ -285,19 +259,7 @@ describe('useBeaconNav', () => {
 
   test('touches no client-side storage APIs', async () => {
     // Mirror the lifecycle wrapper's booby-trap: any global storage / document.cookie read throws.
-    const throwingGet = () => {
-      throw new Error('storage access is forbidden in the nav wrapper');
-    };
-    const storageTrap = { configurable: true, get: throwingGet };
-    const hadDocument = 'document' in globalThis;
-    const priorDocument = (globalThis as { document?: unknown }).document;
-    Object.defineProperty(globalThis, 'localStorage', storageTrap);
-    Object.defineProperty(globalThis, 'sessionStorage', storageTrap);
-    Object.defineProperty(globalThis, 'document', {
-      configurable: true,
-      value: Object.defineProperty({}, 'cookie', { configurable: true, get: throwingGet }),
-    });
-    try {
+    await withStorageTrap('storage access is forbidden in the nav wrapper', async () => {
       const { client, calls } = build({ appContext: WEB_CONTEXT });
       const nav = makeNav('/home');
       const cleanup = useBeaconNav(client, nav.nav);
@@ -308,20 +270,6 @@ describe('useBeaconNav', () => {
       cleanup();
       // Reaching here without throwing proves no storage global was read.
       expect(pagePaths(calls).length).toBeGreaterThan(0);
-    } finally {
-      Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: undefined });
-      Object.defineProperty(globalThis, 'sessionStorage', {
-        configurable: true,
-        value: undefined,
-      });
-      if (hadDocument) {
-        Object.defineProperty(globalThis, 'document', {
-          configurable: true,
-          value: priorDocument,
-        });
-      } else {
-        delete (globalThis as { document?: unknown }).document;
-      }
-    }
+    });
   });
 });
