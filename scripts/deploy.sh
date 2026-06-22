@@ -18,7 +18,7 @@ APP_DIR="${APP_DIR:-$HOME/app}"
 SERVICE="${SERVICE:-beacon}"
 HEALTH_URL="${HEALTH_URL:-http://localhost:8080/health}"
 ENV_FILE="${ENV_FILE:-$HOME/.env.production}"
-BUN="$HOME/.bun/bin/bun"
+BUN="${BUN:-$HOME/.bun/bin/bun}"
 
 cd "$APP_DIR"
 
