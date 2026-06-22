@@ -107,6 +107,17 @@ describe('relayBatch — wire shape under the trusted bearer', () => {
     expect(evt(1, nth(ff, 0)).user_id).toBe('user-42');
   });
 
+  test('omits an empty-string product_id rather than forwarding it (allowlist-mode 403 would drop valid events)', async () => {
+    const ff = fakeFetch();
+    await relayBatch(
+      { product_id: '', visitor_token: '', events: [{ event_type: 'tap' }] },
+      { endpoint: ENDPOINT, trustedIngestToken: TOKEN, userId: 'u', fetch: ff.fn },
+    );
+    const body = bodyOf(nth(ff, 0));
+    expect('product_id' in body).toBe(false);
+    expect('visitor_token' in body).toBe(false);
+  });
+
   test('userId null forwards anonymously (no user_id) but still under the bearer', async () => {
     const ff = fakeFetch();
     await relayBatch(sampleBatch(), {
