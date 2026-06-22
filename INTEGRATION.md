@@ -131,6 +131,29 @@ const cleanup = useBeaconWeb(client, web);
 
 See [Mobile (React Native)](#mobile-react-native) for constructing the `client` and tracking events — the client API is identical on the web.
 
+### Linking the anonymous trail to a user on login
+
+A browser holds only an anonymous `visitorToken` (no cookies, no stored identity), so it cannot assert a `user_id`. When the user logs in, your **server** relays that fact to Beacon over a trusted `POST {basePath}/identify` — the `associateVisitor` equivalent for SPAs. Beacon back-fills the anonymous trail's events with the `user_id` and copies first-touch attribution onto the earliest event. It is gated by the **same** `TRUSTED_INGEST_TOKEN` bearer that gates trusted ingest (a cross-origin browser can't carry your session, so this is server-to-server only):
+
+```typescript
+// On your server, after the user authenticates. `visitorToken` is the SPA's
+// anonymous handle (relayed up from the browser); `userId` is your authenticated user.
+const visitorToken = 'anon-visitor-handle';
+const userId = 'authenticated-user-id';
+await fetch('https://beacon.example.com/analytics/identify', {
+    method: 'POST',
+    headers: {
+        authorization: `Bearer ${process.env.TRUSTED_INGEST_TOKEN}`,
+        'content-type': 'application/json',
+    },
+    body: JSON.stringify({ visitor_token: visitorToken, user_id: userId }),
+});
+```
+
+- **204 No Content** on success. The back-fill is best-effort and idempotent (re-relaying the same token is a safe no-op), so callers don't need a response body — confirm via the Query API.
+- **403** when the bearer is absent/invalid or trusted ingest is disabled.
+- **400** when `visitor_token` or `user_id` is missing or not a non-empty string ≤100 chars.
+
 ## Mobile (React Native)
 
 ### Setup
