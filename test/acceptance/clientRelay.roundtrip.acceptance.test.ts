@@ -176,7 +176,9 @@ describe.skipIf(!TEST_DB)(
       });
       expect(seed.status).toBe(204);
       await beacon.flush();
-      expect((await eventsFor('device-login')).every((e) => e.user_id === null)).toBe(true);
+      const preIdentify = await eventsFor('device-login');
+      expect(preIdentify).toHaveLength(2); // guard: the seed batch persisted before asserting anonymity
+      expect(preIdentify.every((e) => e.user_id === null)).toBe(true);
 
       // On login, the backend relays the association.
       const res = await devicePost(identifyRelay, { visitor_token: 'device-login' }, 'user-99');
