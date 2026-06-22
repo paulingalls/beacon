@@ -12,6 +12,13 @@
 //   createIngestRelay — a framework-agnostic Request -> Response handler that resolves
 //                       the user, calls relayBatch, and maps the result to a status the
 //                       device's HttpSink can act on (retry vs drop).
+//
+// The trusted-forward contract (fail-closed POST + outcome classification + response
+// mapping) lives in ./result so this relay and the identify relay can never drift.
+
+import { forwardJson, type RelayResult, resultToResponse } from './result';
+
+export type { RelayResult } from './result';
 
 /** The wire envelope a beacon-client device POSTs (core/client.ts buildBody). */
 export interface ClientBatch {
@@ -19,20 +26,6 @@ export interface ClientBatch {
   visitor_token?: string;
   events: unknown[];
 }
-
-/** Forward-and-await result: tells the caller whether to retry or give up. */
-export type RelayResult = {
-  /**
-   * `ok` — upstream accepted the batch.
-   * `caller_error` — a genuine device-fault (malformed batch, 400); retrying won't help.
-   * `retryable` — a relay/operator fault (bad bearer, non-allowlisted product, 5xx) or a
-   *   network error; the events are valid and must NOT be dropped (lesson: never lose
-   *   valid events) — the device should retry until the operator fixes the config.
-   */
-  outcome: 'ok' | 'caller_error' | 'retryable';
-  /** Upstream HTTP status, or 0 for a network/transport error. */
-  status: number;
-};
 
 export interface RelayBatchOptions {
   /** Full ingest URL to forward to, e.g. https://beacon.example/analytics/events. */
@@ -68,31 +61,14 @@ function stampUser(event: unknown, userId: string | null): unknown {
   return userId != null ? { ...rest, user_id: userId } : rest;
 }
 
-function classify(status: number): RelayResult {
-  if (status >= 200 && status < 300) return { outcome: 'ok', status };
-  // Only a malformed batch (400) is the device's fault and unfixable by retry. Any
-  // other non-2xx (401/403 bad bearer or non-allowlisted product, 429, 3xx, 5xx) is a
-  // relay/operator/transient fault: keep the valid events retryable, never drop them.
-  if (status === 400) return { outcome: 'caller_error', status };
-  return { outcome: 'retryable', status };
-}
-
 /**
  * Forward a parsed client batch to the trusted ingest endpoint, attributing each event
  * to `userId`. Forward-and-await (not fire-and-forget): the caller gets a real result.
  * Fails closed — throws if the trusted token is unset, never forwarding a resolved user
  * over an unauthenticated path. The token never appears in a thrown message or a log.
  */
-export async function relayBatch(
-  batch: ClientBatch,
-  opts: RelayBatchOptions,
-): Promise<RelayResult> {
-  if (!opts.trustedIngestToken) {
-    throw new Error('[beacon] relayBatch: trustedIngestToken is required (fail-closed)');
-  }
-  const fetchImpl = opts.fetch ?? globalThis.fetch;
-
-  const body = JSON.stringify({
+export function relayBatch(batch: ClientBatch, opts: RelayBatchOptions): Promise<RelayResult> {
+  const body: Record<string, unknown> = {
     // Omit empty/falsy product_id and visitor_token rather than forward them: an empty
     // product_id is invalid server-side and, under a configured allowlist, a PRESENT-
     // but-invalid product_id rejects the whole batch (403) — which would drop valid
@@ -101,29 +77,8 @@ export async function relayBatch(
     ...(batch.product_id ? { product_id: batch.product_id } : {}),
     ...(batch.visitor_token ? { visitor_token: batch.visitor_token } : {}),
     events: batch.events.map((e) => stampUser(e, opts.userId)),
-  });
-
-  let res: Response;
-  try {
-    res = await fetchImpl(opts.endpoint, {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        authorization: `Bearer ${opts.trustedIngestToken}`,
-      },
-      body,
-    });
-  } catch (err) {
-    // Network/transport error — transient, retryable. (token never in the message)
-    console.warn(`[beacon] relayBatch: POST failed (network): ${String(err)}`);
-    return { outcome: 'retryable', status: 0 };
-  }
-
-  const result = classify(res.status);
-  if (result.outcome === 'retryable') {
-    console.warn(`[beacon] relayBatch: ingest returned ${res.status}; retryable`);
-  }
-  return result;
+  };
+  return forwardJson(opts.endpoint, opts.trustedIngestToken, body, opts.fetch, 'relayBatch');
 }
 
 /**
@@ -173,8 +128,6 @@ export function createIngestRelay(
       return new Response(null, { status: 500 });
     }
 
-    if (result.outcome === 'ok') return new Response(null, { status: 204 });
-    if (result.outcome === 'caller_error') return new Response(null, { status: 400 });
-    return new Response(null, { status: 502 });
+    return resultToResponse(result);
   };
 }
