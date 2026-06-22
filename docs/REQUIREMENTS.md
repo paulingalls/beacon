@@ -209,7 +209,7 @@ Query semantics: time-series, funnels, and "when did users do X" group on `times
 
 ### 4.2 Migrations
 
-Migrations are plain SQL files in `packages/beacon/src/storage/migrations/`, named with zero-padded sequential numbers:
+Migrations are plain SQL files in `apps/server/src/storage/migrations/`, named with zero-padded sequential numbers:
 
 ```
 001_initial_schema.sql
@@ -488,6 +488,7 @@ Content-Type: application/json
 
 ```json
 {
+    "visitor_token": "a1b2c3d4e5f6",
     "events": [
         {
             "event_type": "screen_view",
@@ -511,8 +512,9 @@ Content-Type: application/json
 - `timestamp` (event time) is optional; when omitted it defaults to `received_at`. `received_at` is always set server-side at ingest and is never accepted from the client (see §4.1, Event time vs. ingest time)
 - `product_id` is honored from the request body when present and valid (a non-empty trimmed string ≤100 chars), enabling a shared multi-product ingest endpoint; an absent or invalid value falls back to the host app's configured product (a present-but-invalid value is logged but never rejects the batch)
 - When `productAllowlist` is configured (§10), a **present** `product_id` that is invalid-shape or not in the allowlist rejects the whole batch: `403 UNAUTHORIZED`, batch dropped, nothing stored, and the dropped event count is logged. An **absent** `product_id` is unaffected — it still falls back to the configured product (which must itself be in the allowlist). When `productAllowlist` is unset, any `product_id` is accepted (the fallback behavior above)
+- `visitor_token` is an **optional, anonymous** body-level field that lets a cookie-free browser SPA carry its own pre-auth visitor handle (a SPA POSTs cross-origin, so it has no URL `_t` and no shared transport context). A valid body value (a non-empty trimmed string ≤100 chars) **wins**; the transport token minted from the URL `_t` param is the fallback; an invalid value is treated as absent and never rejects the batch (skip-not-reject, like `product_id`). The host seeds this token into the SPA bootstrap and the client holds it in memory only — no cookie, no storage
 - `platform` is inferred from the `X-App-Context` header or the host app's config
-- `user_id` is inferred from auth context if present
+- `user_id` is inferred from the auth context only; a body-level `user_id` is **not** honored on this public endpoint (a browser must not be able to assert another user's identity). Authenticated server-to-server callers asserting `user_id` are introduced separately behind a trusted bearer auth mode (see Milestone 2)
 
 Returns `202 Accepted` with `{ "accepted": <count>, "product_id_used": <product_id> }`, where `product_id_used` is the product the batch was attributed to (the resolved body or configured fallback) so a caller can detect a mismatch. Events are buffered, not written synchronously.
 
@@ -783,19 +785,25 @@ Require a test Postgres instance (use `docker run postgres` or a test container)
 
 ### 11.3 Test Utilities
 
-Beacon exports a test helper:
+Integration tests use the shared DB harness in `apps/server/test/` (the server is the only
+DB-cred holder; the published `@pi-innovations/beacon-sdk` ships no test entry point). The
+bunfig preload (`test/setup/ensure-test-db.ts`, repo root only) starts Postgres and sets
+`TEST_DATABASE_URL`; suites gate on it and register the fail-loud coverage guard:
 
 ```typescript
-import { createTestBeacon } from '@pi-innovations/beacon/test';
+import { registerDbCoverageGuard, TEST_DB } from '../../apps/server/test/dbGuard';
+import { withTestDb } from '../../apps/server/test/helpers';
 
-const { beacon, db, cleanup } = await createTestBeacon({
-    postgres: { connectionString: process.env.TEST_DATABASE_URL },
+registerDbCoverageGuard(); // fails loud if a DB is expected but TEST_DATABASE_URL is unset
+
+describe.skipIf(!TEST_DB)('…', () => {
+    const getDb = withTestDb(TEST_DB as string); // migrated client; TRUNCATE per test; DROP + close in afterAll
+    // ... run tests against getDb() ...
 });
-
-// ... run tests ...
-
-await cleanup(); // drops test tables, closes connections
 ```
+
+`helpers.ts` also provides `stubSql`/`txResolver` (a `postgres.Sql` test double for DB-free unit
+tests) and `ctxWith` (a minimal Hono context). There is no `createTestBeacon` factory.
 
 ---
 

@@ -129,6 +129,39 @@ export function allEvents(calls: RecordedCall[]): Array<Record<string, unknown>>
 }
 
 /**
+ * Run `fn` with the client-side storage globals booby-trapped: any read of `localStorage`,
+ * `sessionStorage`, or `document.cookie` throws. Proves a storage-free wrapper touches ONLY its
+ * injected bindings — the likeliest cookie mistake (global `document.cookie`) and any reach for
+ * global web storage trip immediately. Restores the prior globals in a finally, so a single edit
+ * here keeps every storage-free wrapper's guarantee in lockstep. `message` names the wrapper.
+ */
+export async function withStorageTrap(message: string, fn: () => Promise<void>): Promise<void> {
+  const throwingGet = () => {
+    throw new Error(message);
+  };
+  const storageTrap = { configurable: true, get: throwingGet };
+  const hadDocument = 'document' in globalThis;
+  const priorDocument = (globalThis as { document?: unknown }).document;
+  Object.defineProperty(globalThis, 'localStorage', storageTrap);
+  Object.defineProperty(globalThis, 'sessionStorage', storageTrap);
+  Object.defineProperty(globalThis, 'document', {
+    configurable: true,
+    value: Object.defineProperty({}, 'cookie', { configurable: true, get: throwingGet }),
+  });
+  try {
+    await fn();
+  } finally {
+    Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: undefined });
+    Object.defineProperty(globalThis, 'sessionStorage', { configurable: true, value: undefined });
+    if (hadDocument) {
+      Object.defineProperty(globalThis, 'document', { configurable: true, value: priorDocument });
+    } else {
+      delete (globalThis as { document?: unknown }).document;
+    }
+  }
+}
+
+/**
  * Construct a BeaconClient with test defaults and the scripted fetch + firing timer seams.
  * Pass `deps.fetch` to drive a custom transport (and track its calls yourself); otherwise an
  * internal `makeFetch()` is wired and its `calls` are returned. `config` merges over the

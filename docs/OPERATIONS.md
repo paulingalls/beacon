@@ -148,6 +148,23 @@ ssh beacon
 sudo systemctl restart beacon
 ```
 
+### Rotate `TRUSTED_INGEST_TOKEN`
+
+The shared secret a trusted s2s caller (e.g. the VodShorter relay) presents to assert
+per-event `user_id`/`context` on the ingest boundary (M2). Rotate it on both ends:
+
+```bash
+NEW=$(openssl rand -hex 32)
+ssh beacon
+# set TRUSTED_INGEST_TOKEN=$NEW in ~/.env.production, then:
+sudo systemctl restart beacon
+# then roll the same value on the trusted caller's config.
+```
+
+Rotation is fail-safe, not an outage: while the two ends disagree, Beacon simply
+ignores the body-asserted `user_id`/`context` and falls back to the anonymous path
+(fail-closed) — no events are lost. Roll the caller promptly to restore trusted asserts.
+
 ---
 
 ## Quick reference
@@ -157,7 +174,7 @@ sudo systemctl restart beacon
 | URL | https://beacon.vodshorter.com |
 | Droplet | `beacon`, `165.232.141.200`, sfo3 |
 | App dir | `~/app` (user `beacon`) |
-| Env file | `~/.env.production` (DATABASE_URL, ADMIN_TOKEN, SHORT_DOMAIN) |
+| Env file | `~/.env.production` (DATABASE_URL, ADMIN_TOKEN, TRUSTED_INGEST_TOKEN, SHORT_DOMAIN) |
 | Port | `8080` (behind Caddy) |
 | DB | `beacon_prod` on `simplyhuman-db` (VPC private host, `sslmode=require`) |
 | Autodeploy | merge to `main` → `.github/workflows/deploy.yml` |

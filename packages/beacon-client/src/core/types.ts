@@ -31,6 +31,16 @@ export interface BeaconClientConfig {
   productId: string;
   /** Device/app context serialized into the X-App-Context header on every POST. */
   appContext: AppContext;
+  /**
+   * Optional anonymous visitor handle for cookie-free SPAs, sent as body.visitor_token on
+   * every batch. The host seeds it from the SPA bootstrap (its one server-rendered touchpoint);
+   * update it at runtime via setVisitorToken(). Held in MEMORY ONLY — never written to the
+   * storage adapter (which holds event payloads alone), preserving the no-client-storage posture.
+   * A falsy/empty value is omitted from the body so the server falls back to the transport token.
+   * Must be ≤100 chars: the server is the single validation authority and silently drops an
+   * over-length token to its transport fallback, so a longer seed yields unattributed events.
+   */
+  visitorToken?: string;
   /** Flush-timer interval in ms. Default 30000. */
   flushInterval?: number;
   /** Flush also fires when the queue reaches this size. Default 50. Must be ≤ 100 (server cap). */

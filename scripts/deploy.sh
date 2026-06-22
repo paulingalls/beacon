@@ -18,7 +18,10 @@ APP_DIR="${APP_DIR:-$HOME/app}"
 SERVICE="${SERVICE:-beacon}"
 HEALTH_URL="${HEALTH_URL:-http://localhost:8080/health}"
 ENV_FILE="${ENV_FILE:-$HOME/.env.production}"
-BUN="$HOME/.bun/bin/bun"
+BUN="${BUN:-$HOME/.bun/bin/bun}"
+# Health-check poll count after each restart (1s sleep between attempts). Tunable so
+# the rollback test can pin its curl stub to the exact loop count without a magic number.
+HEALTH_RETRIES="${HEALTH_RETRIES:-20}"
 
 cd "$APP_DIR"
 
@@ -40,7 +43,7 @@ run_migrations() {
 
 restart_and_check() {
   sudo systemctl restart "$SERVICE"
-  for _ in $(seq 1 20); do
+  for _ in $(seq 1 "$HEALTH_RETRIES"); do
     if curl -sf "$HEALTH_URL" >/dev/null 2>&1; then return 0; fi
     sleep 1
   done
