@@ -68,6 +68,12 @@ interface RawEvent {
   /** Per-event identity, honored only under a verified trusted bearer (M2). */
   user_id?: unknown;
   context?: unknown;
+  /**
+   * Per-event anonymous visitor handle, honored only under a verified trusted bearer. Lets a
+   * trusted relay (HttpSink) carry events for many distinct visitors in ONE batch instead of one
+   * POST per token. Untrusted callers (a browser SPA) carry a single envelope-level visitor_token.
+   */
+  visitor_token?: unknown;
 }
 
 /**
@@ -257,15 +263,21 @@ function toEvent(
   }
 
   // Per-event identity (M2): only under verified trust does the body's user_id +
-  // context override the transport-resolved shared values; otherwise the anonymous
-  // public path is unchanged. An invalid value falls back to the shared default
-  // (skip-not-reject) — a malformed identity never drops the event.
+  // context + visitor_token override the transport-resolved shared values; otherwise
+  // the anonymous public path is unchanged. An invalid value falls back to the shared
+  // default (skip-not-reject) — a malformed identity never drops the event.
   const userId = trusted
     ? (validShortString(raw.user_id, MAX_USER_ID_LENGTH) ?? shared.userId)
     : shared.userId;
   const context = trusted
     ? resolveTrustedContext(raw.context, shared.context, hashIPs)
     : shared.context;
+  // A trusted relay batches many anonymous visitors into one request; a per-event
+  // visitor_token (valid → wins, invalid → shared/envelope fallback) lets ingest
+  // attribute each event without the relay fanning out one POST per token.
+  const visitorToken = trusted
+    ? (validShortString(raw.visitor_token, MAX_VISITOR_TOKEN_LENGTH) ?? shared.visitorToken)
+    : shared.visitorToken;
 
   const timestamp = parseTimestamp(raw.timestamp);
   return {
@@ -273,7 +285,7 @@ function toEvent(
     eventType,
     ...(timestamp ? { timestamp } : {}),
     userId,
-    visitorToken: shared.visitorToken,
+    visitorToken,
     platform: shared.platform,
     properties,
     context,

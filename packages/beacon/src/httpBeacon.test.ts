@@ -48,8 +48,8 @@ describe('createHttpBeacon.capture', () => {
 
     const body = lastBody(ff.calls);
     expect(body.product_id).toBe('clipcast');
-    expect(body.visitor_token).toBe('v9');
     const ev = firstEvent(body);
+    expect(ev.visitor_token).toBe('v9'); // per-event now (honored under trust by ingest)
     expect(ev.event_type).toBe('request');
     expect(ev.properties).toMatchObject({
       path: '/dashboard',
@@ -108,7 +108,7 @@ describe('createHttpBeacon.track', () => {
     await b.flush();
     const ev = firstEvent(lastBody(ff.calls));
     expect(ev.user_id).toBeUndefined(); // null userId → omitted from the wire
-    expect(lastBody(ff.calls).visitor_token).toBe('v1');
+    expect(ev.visitor_token).toBe('v1'); // per-event now
   });
 });
 

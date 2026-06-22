@@ -76,7 +76,7 @@ describe('HttpSink wire shape', () => {
     expect(h['content-type']).toBe('application/json');
   });
 
-  test('envelope carries product_id + visitor_token; events use snake_case wire shape with ISO timestamp', async () => {
+  test('envelope carries product_id only; events use snake_case wire shape with per-event visitor_token + ISO timestamp', async () => {
     const ff = fakeFetch();
     const s = sink(ff.fn);
     s.push(
@@ -93,29 +93,32 @@ describe('HttpSink wire shape', () => {
 
     const body = bodyOf(nth(ff, 0));
     expect(body.product_id).toBe('clipcast');
-    expect(body.visitor_token).toBe('v1');
+    // visitor_token rides per-event now (honored under trust by ingest), not on the envelope.
+    expect('visitor_token' in body).toBe(false);
     expect(body.events).toEqual([
       {
         event_type: 'purchase',
         properties: { sku: 'x1' },
         timestamp: '2026-01-02T03:04:05.000Z',
         user_id: 'user-9',
+        visitor_token: 'v1',
         context: { user_agent: 'UA/1' },
       },
     ]);
   });
 
-  test('omits visitor_token from the envelope when the event has none', async () => {
+  test('omits visitor_token from an event that has none', async () => {
     const ff = fakeFetch();
     const s = sink(ff.fn);
     s.push(evt({ userId: 'user-1' })); // authenticated, no visitor token
     await s.flush();
-    expect('visitor_token' in bodyOf(nth(ff, 0))).toBe(false);
+    const events = bodyOf(nth(ff, 0)).events as Record<string, unknown>[];
+    expect('visitor_token' in (events[0] as object)).toBe(false);
   });
 });
 
-describe('HttpSink visitor_token grouping', () => {
-  test('splits a batch into one POST per distinct visitor_token', async () => {
+describe('HttpSink per-event visitor_token', () => {
+  test('sends ONE POST for a batch spanning multiple visitors, each event carrying its own token', async () => {
     const ff = fakeFetch();
     const s = sink(ff.fn);
     s.push(evt({ eventType: 'a', visitorToken: 'v1' }));
@@ -123,10 +126,15 @@ describe('HttpSink visitor_token grouping', () => {
     s.push(evt({ eventType: 'c', visitorToken: 'v1' }));
     await s.flush();
 
-    expect(ff.calls).toHaveLength(2);
-    const byToken = new Map(ff.calls.map((c) => [bodyOf(c).visitor_token, bodyOf(c)]));
-    expect((byToken.get('v1')?.events as unknown[]).length).toBe(2);
-    expect((byToken.get('v2')?.events as unknown[]).length).toBe(1);
+    // One request regardless of distinct visitor tokens — ingest honors per-event visitor_token
+    // under trust, so the relay no longer fans out one POST per token.
+    expect(ff.calls).toHaveLength(1);
+    const events = bodyOf(nth(ff, 0)).events as Record<string, unknown>[];
+    expect(events.map((e) => [e.event_type, e.visitor_token])).toEqual([
+      ['a', 'v1'],
+      ['b', 'v2'],
+      ['c', 'v1'],
+    ]);
   });
 });
 

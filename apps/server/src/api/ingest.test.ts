@@ -542,6 +542,50 @@ describe('createIngestHandler — trusted bearer identity (M2)', () => {
     expect(pushed[1]?.userId).toBe('u2'); // trimmed
   });
 
+  test('honors distinct per-event visitor_token under a valid bearer (multi-visitor relay batch)', async () => {
+    // The relay (HttpSink) drains events from many anonymous visitors into one batch; under trust
+    // each event asserts its own visitor_token, so a single POST no longer needs per-token fan-out.
+    const { buffer, pushed } = recordingBuffer();
+    await post(
+      appWith(buffer, trustedOpts),
+      {
+        events: [
+          { event_type: 'a', visitor_token: 'v1' },
+          { event_type: 'b', visitor_token: 'v2' },
+          { event_type: 'c', visitor_token: 'v1' },
+        ],
+      },
+      auth(TRUSTED),
+    );
+    expect(pushed.map((e) => e.visitorToken)).toEqual(['v1', 'v2', 'v1']);
+  });
+
+  test('per-event visitor_token falls back to the envelope token when omitted or invalid', async () => {
+    const { buffer, pushed } = recordingBuffer();
+    await post(
+      appWith(buffer, trustedOpts),
+      {
+        visitor_token: 'env-v', // envelope/shared default
+        events: [
+          { event_type: 'a', visitor_token: 'pe-v' }, // per-event wins
+          { event_type: 'b' }, // omitted → envelope
+          { event_type: 'c', visitor_token: 'x'.repeat(101) }, // over-length → envelope (skip-not-reject)
+        ],
+      },
+      auth(TRUSTED),
+    );
+    expect(pushed.map((e) => e.visitorToken)).toEqual(['pe-v', 'env-v', 'env-v']);
+  });
+
+  test('an UNtrusted caller never honors a per-event visitor_token (envelope token wins)', async () => {
+    const { buffer, pushed } = recordingBuffer();
+    await post(appWith(buffer, { productId: 'p' }), {
+      visitor_token: 'env-v',
+      events: [{ event_type: 'a', visitor_token: 'spoof' }],
+    });
+    expect(pushed[0]?.visitorToken).toBe('env-v');
+  });
+
   test('an UNtrusted caller (no Authorization) never honors body user_id or context', async () => {
     const { buffer, pushed } = recordingBuffer();
     const app = appWith(buffer, { ...trustedOpts, getUserId: () => 'real-user' });
