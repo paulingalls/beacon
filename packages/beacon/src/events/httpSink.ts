@@ -41,11 +41,11 @@ interface QueuedEvent {
 
 /**
  * Batches events and POSTs them to a Beacon ingest endpoint over the trusted
- * bearer boundary. push() never blocks or throws. A batch is grouped by
- * visitor_token (the ingest envelope carries one token per request; per-event
- * user_id/context ride in the body and are honored under the bearer), so one POST
- * is sent per distinct token. Failure handling distinguishes a caller error from a
- * transient outage: a 4xx (bad token / non-allowlisted product — won't fix on
+ * bearer boundary. push() never blocks or throws. A drained batch is sent as ONE
+ * request: user_id, context, and visitor_token all ride per-event in the body and
+ * are honored under the bearer, so events from many anonymous visitors share a
+ * single POST (no per-token fan-out). Failure handling distinguishes a caller error
+ * from a transient outage: a 4xx (bad token / non-allowlisted product — won't fix on
  * retry) drops the batch loudly with the status (never the token); a 5xx or network
  * error re-queues for retry up to maxRetries.
  */
@@ -91,7 +91,7 @@ export class HttpSink implements EventSink {
     }
   }
 
-  /** POST one batch (up to maxBatchSize), grouped by visitor_token. Concurrent calls coalesce. */
+  /** POST one batch (up to maxBatchSize) as a single request. Concurrent calls coalesce. */
   flush(): Promise<void> {
     if (this.inFlight) return this.inFlight;
     if (this.queue.length === 0) return Promise.resolve();
@@ -103,17 +103,15 @@ export class HttpSink implements EventSink {
 
   private async drainOneBatch(): Promise<void> {
     const batch = this.queue.splice(0, this.maxBatchSize);
-    // One POST per distinct visitor_token: the ingest envelope carries a single
-    // token applied to all its events, so events from different visitors can't
-    // share a request. Groups are independent — send them concurrently.
-    const groups = groupByToken(batch);
-    await Promise.all([...groups].map(([token, group]) => this.sendGroup(token, group)));
+    // One POST for the whole batch: ingest honors a per-event visitor_token under the
+    // trusted bearer, so events from different anonymous visitors ride in a single
+    // request (each carrying its own token in the wire shape) — no per-token fan-out.
+    await this.sendBatch(batch);
   }
 
-  private async sendGroup(token: string | undefined, group: QueuedEvent[]): Promise<void> {
+  private async sendBatch(group: QueuedEvent[]): Promise<void> {
     const body = JSON.stringify({
       product_id: this.productId,
-      ...(token ? { visitor_token: token } : {}),
       events: group.map((q) => toWire(q.event)),
     });
 
@@ -215,22 +213,11 @@ export class HttpSink implements EventSink {
   }
 }
 
-/** Group queued events by visitor token (null/undefined collapse to one anonymous group). */
-function groupByToken(batch: QueuedEvent[]): Map<string | undefined, QueuedEvent[]> {
-  const groups = new Map<string | undefined, QueuedEvent[]>();
-  for (const q of batch) {
-    const token = q.event.visitorToken ?? undefined;
-    const existing = groups.get(token);
-    if (existing) existing.push(q);
-    else groups.set(token, [q]);
-  }
-  return groups;
-}
-
 /**
  * Serialize a server BeaconEvent to the ingest wire shape (api/ingest.ts RawEvent):
- * snake_case per-event fields, ISO-8601 timestamp. product_id and visitor_token are
- * envelope-level (set in sendGroup), so they are not repeated per event.
+ * snake_case per-event fields, ISO-8601 timestamp. product_id is envelope-level (set in
+ * sendBatch); user_id, context, and visitor_token ride per-event and are honored under the
+ * trusted bearer, so a single batch can span multiple visitors.
  */
 function toWire(e: BeaconEvent): Record<string, unknown> {
   return {
@@ -238,6 +225,7 @@ function toWire(e: BeaconEvent): Record<string, unknown> {
     ...(e.properties !== undefined ? { properties: e.properties } : {}),
     ...(e.timestamp !== undefined ? { timestamp: e.timestamp.toISOString() } : {}),
     ...(e.userId != null ? { user_id: e.userId } : {}),
+    ...(e.visitorToken != null ? { visitor_token: e.visitorToken } : {}),
     ...(e.context !== undefined ? { context: e.context } : {}),
   };
 }

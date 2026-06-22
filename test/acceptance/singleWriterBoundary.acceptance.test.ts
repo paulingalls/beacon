@@ -160,6 +160,7 @@ describe('single-writer boundary — published SDK graph is postgres-free', () =
 const PRODUCT = 'single-writer-capstone';
 const SECRET = 'capstone-boundary-secret';
 const TOKEN = 'v-boundary';
+const TOKEN2 = 'v-other'; // a second anonymous visitor in the same drained batch
 const WINDOW = 'after=2020-01-01T00:00:00Z&before=2030-01-01T00:00:00Z';
 
 interface QueriedEvent {
@@ -231,6 +232,9 @@ describe.skipIf(!TEST_DB)(
         'purchase',
         { sku: 'sku-9' },
       );
+      // A SECOND anonymous visitor in the SAME drained batch — proves per-event visitor_token
+      // end to end: HttpSink sends one trusted POST, ingest attributes each event to its own token.
+      httpBeacon.track(new Request(`${baseUrl}/welcome?_t=${TOKEN2}`), 'signup', {});
 
       await httpBeacon.flush();
       await beacon.flush();
@@ -238,7 +242,7 @@ describe.skipIf(!TEST_DB)(
       const res = await query(`/events?${WINDOW}`);
       expect(res.status).toBe(200);
       const body = (await res.json()) as { events: QueriedEvent[] };
-      expect(body.events.length).toBe(2);
+      expect(body.events.length).toBe(3);
       const byType = new Map(body.events.map((e) => [e.event_type, e]));
 
       const request = byType.get('request');
@@ -250,6 +254,12 @@ describe.skipIf(!TEST_DB)(
       expect(purchase?.user_id).toBe('alice');
       expect(purchase?.visitor_token).toBe(TOKEN);
       expect(purchase?.properties.sku).toBe('sku-9');
+
+      // The second visitor's event landed with ITS token, not TOKEN — distinct per-event
+      // attribution survived the single-batch trusted round-trip.
+      const signup = byType.get('signup');
+      expect(signup?.visitor_token).toBe(TOKEN2);
+      expect(signup?.user_id).toBeNull();
     }, 15_000);
   },
 );

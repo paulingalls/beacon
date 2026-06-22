@@ -97,8 +97,8 @@ describe.skipIf(!TEST_DB)(
         { sku: 'a1' },
       );
 
-      // Product flushes over the wire (both events share _t → one grouped POST with Bearer), then the
-      // deployed Beacon drains its buffer to Postgres.
+      // Product flushes over the wire (the drained batch is a single Bearer POST, each event carrying
+      // its own visitor_token in the body), then the deployed Beacon drains its buffer to Postgres.
       await httpBeacon.flush();
       await beacon.flush();
 
