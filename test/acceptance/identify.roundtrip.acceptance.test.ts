@@ -42,7 +42,12 @@ describe.skipIf(!TEST_DB)(
     async function mintTrail(): Promise<string> {
       const first = await fetch(`${baseUrl}/p?utm_source=newsletter`);
       const token = await first.text();
-      await Bun.sleep(2); // distinct event-time so the earliest-event attribution assert is deterministic
+      // Separate the two hits by a wide enough margin that their millisecond-precision
+      // event timestamps cannot collide — the DB back-fills attribution onto the
+      // earliest (timestamp ASC, received_at ASC) event, but the query API returns no
+      // received_at tiebreaker, so distinct timestamps are what make the earliest-event
+      // assert deterministic.
+      await Bun.sleep(50);
       await fetch(`${baseUrl}/p?_t=${token}`);
       await beacon.flush();
       return token;
@@ -99,6 +104,9 @@ describe.skipIf(!TEST_DB)(
       const trail = await trailFor(token);
       expect(trail).toHaveLength(2); // the two page hits on this token (identify's own log uses a fresh token)
       expect(trail.every((e) => e.user_id === 'user-42')).toBe(true); // whole trail back-filled
+      // First-touch lands on exactly ONE event, and it is the earliest (oldest-first sort).
+      const attributed = trail.filter((e) => e.attribution.utm_source === 'newsletter');
+      expect(attributed).toHaveLength(1);
       expect(trail[0]?.attribution.utm_source).toBe('newsletter'); // first-touch on the earliest event
       expect(trail[1]?.attribution.utm_source).toBeUndefined(); // only the earliest
     }, 15_000);
@@ -115,7 +123,7 @@ describe.skipIf(!TEST_DB)(
       await beacon.flush();
 
       const trail = await trailFor(token);
-      expect(trail.length).toBeGreaterThanOrEqual(1);
+      expect(trail).toHaveLength(2); // both minted hits persist — a rejected identify drops nothing
       expect(trail.every((e) => e.user_id === null)).toBe(true); // untrusted caller never back-fills
     }, 15_000);
   },
