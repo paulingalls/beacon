@@ -1,0 +1,51 @@
+# Release subtree artifacts (sprint-022 / Milestone 2, story-001).
+#
+# Beacon's two SDK packages live inside this Bun monorepo, so they can't be `bun add`-ed
+# directly: Bun git deps are committish-only (no subdirectory syntax) and a git dep of the
+# monorepo root installs `beacon-monorepo`, leaving `import { createHttpBeacon }` unresolved.
+# On every push to main this workflow republishes each package as the ROOT of its own
+# git-installable branch via `git subtree split`, force-pushed so the branch root IS the package:
+#   packages/beacon         -> sdk-release     (@pi-innovations/beacon-sdk)
+#   packages/beacon-client  -> client-release  (@pi-innovations/beacon-client)
+#
+# No retrigger: a subtree split carries no .github/, so the force-pushed release branches hold no
+# workflow files and trigger nothing; deploy.yml is main-only regardless; and pushes authored by
+# GITHUB_TOKEN do not recursively start workflows. Every external action is SHA-pinned with a
+# trailing # vX.Y.Z comment — the all-workflows action-pinning guard
+# (test/acceptance/ci/action-pinning.test.ts) fails the build if any pin reverts to a mutable tag.
+name: Release subtree artifacts
+
+on:
+  push:
+    branches: [main]
+
+# Never interleave two splits; queue instead of cancelling an in-flight republish.
+concurrency:
+  group: release-subtree
+  cancel-in-progress: false
+
+# The first writing workflow in the repo: force-pushing the release branches needs write scope
+# on the default GITHUB_TOKEN, which actions/checkout persists as the push credential.
+permissions:
+  contents: write
+
+jobs:
+  split:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # fetch-depth: 0 — git subtree split walks the full history of each prefix.
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          fetch-depth: 0
+      # split prints the synthesized commit SHA; push it straight to the branch ref with --force.
+      # The SHA+refspec form is idempotent across reruns — unlike `subtree split -b sdk-release`,
+      # which fails once the local branch already exists.
+      - name: Split and force-push sdk-release
+        run: |
+          SDK_SHA=$(git subtree split --prefix=packages/beacon)
+          git push origin --force "$SDK_SHA:refs/heads/sdk-release"
+      - name: Split and force-push client-release
+        run: |
+          CLIENT_SHA=$(git subtree split --prefix=packages/beacon-client)
+          git push origin --force "$CLIENT_SHA:refs/heads/client-release"
