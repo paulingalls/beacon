@@ -13,13 +13,24 @@ import type { BeaconRequest } from '../adapter/beaconRequest';
 const VISITOR_TOKEN_KEY = 'beaconVisitorToken';
 
 /**
+ * Bun socket address via getConnInfo, guarded — returns undefined off-server (e.g.
+ * in tests, where getConnInfo throws) rather than propagating (§1.1). The single
+ * home for the guard now that both Hono socket-address callers (honoToBeaconRequest
+ * here and defaultClientAddress in requestContext) live in this ./hono module — no
+ * import cycle to force a duplicated copy.
+ */
+export function socketAddress(c: Context): string | undefined {
+  try {
+    return getConnInfo(c).remote.address;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * Adapt a Hono Context to a BeaconRequest. Each method delegates to `c.req.*`;
  * getToken/setToken proxy the `beaconVisitorToken` Context variable. clientAddress
- * inlines the guarded getConnInfo lookup (returns undefined off-server rather than
- * throwing). The mirrored guard in adapter/beaconRequest.ts is gone now that the
- * Hono adapter lives here, but defaultClientAddress (requestContext below) keeps an
- * intentionally identical copy for the Hono-Context socket source; keep the two in
- * sync if the guard changes (§1.1).
+ * resolves the guarded Bun socket address via socketAddress (undefined off-server).
  */
 export function honoToBeaconRequest(c: Context): BeaconRequest {
   return {
@@ -29,13 +40,7 @@ export function honoToBeaconRequest(c: Context): BeaconRequest {
     path: c.req.path,
     method: c.req.method,
     json: () => c.req.json(),
-    clientAddress: () => {
-      try {
-        return getConnInfo(c).remote.address;
-      } catch {
-        return undefined;
-      }
-    },
+    clientAddress: () => socketAddress(c),
     getToken: () => c.get(VISITOR_TOKEN_KEY) ?? null,
     setToken: (token) => c.set(VISITOR_TOKEN_KEY, token),
   };

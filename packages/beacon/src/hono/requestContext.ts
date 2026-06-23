@@ -1,5 +1,4 @@
 import type { Context } from 'hono';
-import { getConnInfo } from 'hono/bun';
 
 import type { BeaconRequest } from '../adapter/beaconRequest';
 import {
@@ -7,7 +6,7 @@ import {
   resolveEventFieldsFromRequest,
   resolveIpFromRequest,
 } from '../middleware/requestContext';
-import { honoToBeaconRequest } from './requestAdapter';
+import { honoToBeaconRequest, socketAddress } from './requestAdapter';
 
 // Hono-Context shims over the framework-agnostic request-context cores
 // (middleware/requestContext.ts). They live behind the ./hono subpath so the
@@ -90,16 +89,11 @@ export function resolveIp(
 }
 
 /**
- * Default socket-address source (Bun). Guarded — getConnInfo throws off-server.
- * The Hono-Context socket source for the Hono shims (resolveIp/resolveEventFields)
+ * Default socket-address source (Bun) for the Hono shims (resolveIp/resolveEventFields)
  * and host getClientAddress defaults (requestLogger, shortener/create, api/rateLimit).
- * Intentionally mirrors the inlined guard in honoToBeaconRequest; keep the two in
- * sync if either changes (§1.1).
+ * Delegates to the shared guarded socketAddress in requestAdapter — one home for the
+ * getConnInfo guard across this ./hono module (§1.1).
  */
 export function defaultClientAddress(c: Context): string | undefined {
-  try {
-    return getConnInfo(c).remote.address;
-  } catch {
-    return undefined;
-  }
+  return socketAddress(c);
 }
