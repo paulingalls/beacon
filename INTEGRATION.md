@@ -115,6 +115,19 @@ process.on('SIGTERM', async () => {
 
 Visitor identity is carried automatically: `capture`/`track` adopt the `_t` query parameter as the visitor handle (the deployed Beacon owns minting; a product only forwards it).
 
+### Import boundary: agnostic root vs the `./hono` subpath
+
+The package root (`@pi-innovations/beacon-sdk`) is **hono-free** — importing `createHttpBeacon`, the capture cores, or the relay interface pulls in **no hono** (an import-isolation test enforces this). `hono` is an *optional* peer dependency, so an agnostic `Bun.serve` consumer never installs it.
+
+The Hono-`Context` adapters live behind the opt-in `@pi-innovations/beacon-sdk/hono` subpath — for a host built **on Hono** that wants in-process capture rather than HTTP emit:
+
+```typescript
+import { honoRequest, track, resolveEventFields } from '@pi-innovations/beacon-sdk/hono';
+// also: resolveIp, defaultClientAddress, honoToBeaconRequest
+```
+
+Importing the subpath requires `hono` (the optional peer). Most products want the agnostic `createHttpBeacon` above; reach for `./hono` only when you hold a Hono `Context`.
+
 ## Browser SPAs
 
 A browser SPA reports events with the client SDK, posting to the deployed Beacon's `POST /events`. The optional web wrapper flushes on `visibilitychange → hidden` and delivers the final batch via `navigator.sendBeacon` on `beforeunload`. Like the React Native wrapper it takes an injected `web` bindings object (`{ document, window, navigator }`) and uses no cookies or storage:

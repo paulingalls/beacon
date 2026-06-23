@@ -6,7 +6,7 @@
 // (storage/, events/buffer, visitors/tokenStore) that relocated here in story-005.
 
 import type { BufferStats } from '@pi-innovations/beacon-sdk';
-import { track as trackEvent } from '@pi-innovations/beacon-sdk';
+import { track as trackEvent } from '@pi-innovations/beacon-sdk/hono';
 import { type Context, Hono, type MiddlewareHandler } from 'hono';
 import { adminGate } from './api/auth';
 import { createIdentifyHandler } from './api/identify';

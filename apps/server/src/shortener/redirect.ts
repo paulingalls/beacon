@@ -1,4 +1,5 @@
-import { extractAttribution, resolveEventFields } from '@pi-innovations/beacon-sdk';
+import { extractAttribution } from '@pi-innovations/beacon-sdk';
+import { resolveEventFields } from '@pi-innovations/beacon-sdk/hono';
 import type { Context, Handler } from 'hono';
 import type { Sql } from 'postgres';
 import type { EventBuffer } from '../events/buffer';

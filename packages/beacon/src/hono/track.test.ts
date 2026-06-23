@@ -3,8 +3,8 @@ import { createHash } from 'node:crypto';
 
 import type { Context } from 'hono';
 
+import type { EventSink } from '../events/sink';
 import type { BeaconEvent } from '../types';
-import type { EventSink } from './sink';
 import { track } from './track';
 
 const sha256 = (s: string): string => createHash('sha256').update(s).digest('hex');
