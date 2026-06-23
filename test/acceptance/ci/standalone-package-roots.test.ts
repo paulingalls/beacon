@@ -40,9 +40,13 @@ describe('standalone package roots', () => {
     { name: 'beacon-client', dir: client.dir, pkg: client.pkg },
   ]) {
     test(`${name}: every exports target resolves relative to the package root`, () => {
-      const targets = Object.values(pkg.exports ?? {});
-      expect(targets.length).toBeGreaterThan(0);
-      for (const target of targets) {
+      const entries = Object.entries(pkg.exports ?? {});
+      expect(entries.length).toBeGreaterThan(0);
+      for (const [subpath, target] of entries) {
+        // Today every target is a flat string. A future conditional-exports object
+        // ({ import: '…' }) would make join(dir, target) throw a cryptic TypeError; assert the
+        // shape first so the failure names the offending export instead.
+        expect(typeof target, `${name}: export "${subpath}" is not a string target`).toBe('string');
         expect(existsSync(join(dir, target)), `${name}: missing export target ${target}`).toBe(
           true,
         );
