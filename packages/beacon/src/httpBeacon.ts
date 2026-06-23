@@ -1,6 +1,6 @@
 import { requestToBeaconRequest } from './adapter/beaconRequest';
 import { HttpSink } from './events/httpSink';
-import { MAX_EVENT_TYPE_LENGTH } from './events/track';
+import { MAX_EVENT_TYPE_LENGTH } from './events/limits';
 import { resolveEventFieldsFromRequest } from './middleware/requestContext';
 import type { BufferStats } from './types';
 
@@ -11,7 +11,7 @@ import type { BufferStats } from './types';
 // the M2 trusted ingest boundary. The deployed Beacon stays the only holder of
 // central-DB write credentials (HTTP single-writer).
 //
-// MAX_EVENT_TYPE_LENGTH is imported from events/track.ts so the event_type cap
+// MAX_EVENT_TYPE_LENGTH is imported from events/limits.ts so the event_type cap
 // is identical across the Hono track() and this HTTP factory (REQUIREMENTS.md §6.1).
 
 export interface HttpBeaconOptions {

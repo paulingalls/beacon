@@ -121,12 +121,13 @@ describe('single-writer boundary — published SDK graph is postgres-free', () =
     expect(offenders).toEqual([]);
   });
 
-  test('the SDK runtime export surface is exactly the locked set (no server symbols)', async () => {
-    // Decision beacon-sdk-public-surface: emit SDK + capture cores + wire types, AND (M7
-    // extension, supersedes the original lock) the trusted client-relay interface. Types are
-    // erased at runtime, so this asserts the VALUE exports; exact-set equality also catches drift
-    // (any accidental new export fails here). The relay's internal forward helpers
-    // (forwardJson/classify/resultToResponse) stay unexported and must NOT appear here.
+  test('the SDK runtime export surface is exactly the locked AGNOSTIC set (no hono, no server symbols)', async () => {
+    // Decision beacon-sdk-public-surface: emit SDK + capture cores + wire types + the trusted
+    // client-relay interface (M7). M1 extends the lock: every Hono-Context-coupled symbol moved off
+    // the root onto the ./hono subpath so importing createHttpBeacon loads zero hono — so the root
+    // surface drops honoRequest/honoToBeaconRequest/resolveEventFields/resolveIp/defaultClientAddress/
+    // track. Types are erased at runtime, so this asserts the VALUE exports; exact-set equality also
+    // catches drift. The relay's internal forward helpers stay unexported and must NOT appear here.
     const sdk = (await import('@pi-innovations/beacon-sdk')) as Record<string, unknown>;
     const exported = Object.keys(sdk).sort();
     expect(exported).toEqual(
@@ -136,21 +137,15 @@ describe('single-writer boundary — published SDK graph is postgres-free', () =
         'createHttpBeacon',
         'createIdentifyRelay',
         'createIngestRelay',
-        'defaultClientAddress',
         'extractAttribution',
         'firstLocale',
         'hashIp',
-        'honoRequest',
-        'honoToBeaconRequest',
         'parseAppContext',
         'relayBatch',
         'relayIdentify',
         'requestToBeaconRequest',
-        'resolveEventFields',
         'resolveEventFieldsFromRequest',
-        'resolveIp',
         'resolveIpFromRequest',
-        'track',
       ].sort(),
     );
     // The relay's internal forward helpers stay private — never on the SDK surface.
@@ -161,8 +156,36 @@ describe('single-writer boundary — published SDK graph is postgres-free', () =
     for (const forbidden of ['createBeacon', 'createDb', 'closeDb', 'runMigrations']) {
       expect(exported).not.toContain(forbidden);
     }
+    // The Hono-coupled adapters are NOT on the agnostic root — only on ./hono.
+    for (const forbidden of [
+      'honoRequest',
+      'honoToBeaconRequest',
+      'resolveEventFields',
+      'resolveIp',
+      'defaultClientAddress',
+      'track',
+    ]) {
+      expect(exported).not.toContain(forbidden);
+    }
     // No query/dashboard/handler builders leaked onto the surface.
     expect(exported.filter((k) => /dashboard|query|Handler/i.test(k))).toEqual([]);
+  });
+
+  test('the ./hono subpath runtime export surface is exactly the locked Hono adapter set (M1)', async () => {
+    // The opt-in Hono adapter: the Context-coupled symbols that left the agnostic root live here and
+    // nowhere else. Exact-set equality locks the boundary — neither side may drift symbols across it.
+    const hono = (await import('@pi-innovations/beacon-sdk/hono')) as Record<string, unknown>;
+    const exported = Object.keys(hono).sort();
+    expect(exported).toEqual(
+      [
+        'defaultClientAddress',
+        'honoRequest',
+        'honoToBeaconRequest',
+        'resolveEventFields',
+        'resolveIp',
+        'track',
+      ].sort(),
+    );
   });
 });
 

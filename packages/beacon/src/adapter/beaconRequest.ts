@@ -1,14 +1,10 @@
-import type { Context } from 'hono';
-import { getConnInfo } from 'hono/bun';
-
 // Framework-agnostic request adapter (REQUIREMENTS.md §1.1 request-metadata/
-// transport-context; execution_plan.json §Milestone 3). The
-// event-capture layer (requestContext/requestLogger/track/ingest) reads request
-// metadata through Hono's Context today; BeaconRequest is the minimal surface it
-// actually needs, so the same capture logic can run under Bun.serve — which has
-// no Context and no per-request variable bag — while the deployed Hono host stays
-// byte-identical via honoToBeaconRequest. story-002 refactors capture onto this;
-// story-003's framework-agnostic factory + HttpSink consume it.
+// transport-context). The event-capture layer (requestContext/track/ingest) reads
+// request metadata through this minimal surface, so the same capture logic runs
+// under Bun.serve — which has no Context and no per-request variable bag — and under
+// the deployed Hono host. The Hono-Context counterpart (honoToBeaconRequest) lives
+// behind the ./hono subpath (src/hono/requestAdapter.ts) so this module — and the
+// createHttpBeacon graph that imports requestToBeaconRequest — loads zero hono.
 //
 // Response writes (c.json / c.res.status / redirects) are deliberately NOT here —
 // they stay on the Hono Context in the handlers. Only the read surface that builds
@@ -38,41 +34,6 @@ export interface BeaconRequest {
   getToken(): string | null;
   /** Set the visitor token (beaconVisitorToken). */
   setToken(token: string): void;
-}
-
-/** Visitor-token variable name (mirrors requestLogger's Hono ContextVariableMap key). */
-const VISITOR_TOKEN_KEY = 'beaconVisitorToken';
-
-/**
- * Adapt a Hono Context to a BeaconRequest. Each method delegates to `c.req.*`;
- * getToken/setToken proxy the `beaconVisitorToken` Context variable. clientAddress
- * intentionally inlines the guarded getConnInfo lookup (returns undefined off-server
- * rather than throwing) instead of importing defaultClientAddress from
- * middleware/requestContext: story-002 inverts that dependency so requestContext
- * imports this adapter, and importing back would form a cycle. This duplication is
- * therefore PERMANENT, not transient — defaultClientAddress stays as the Hono-Context
- * socket source for the Hono shims and host getClientAddress defaults (requestLogger,
- * shortener/create, api/rateLimit), while this inlined copy serves the adapter. The
- * two are intentionally mirrored, not shared; keep them in sync if the guard changes (§1.1).
- */
-export function honoToBeaconRequest(c: Context): BeaconRequest {
-  return {
-    header: (name) => c.req.header(name),
-    query: (name) => c.req.query(name),
-    url: c.req.url,
-    path: c.req.path,
-    method: c.req.method,
-    json: () => c.req.json(),
-    clientAddress: () => {
-      try {
-        return getConnInfo(c).remote.address;
-      } catch {
-        return undefined;
-      }
-    },
-    getToken: () => c.get(VISITOR_TOKEN_KEY) ?? null,
-    setToken: (token) => c.set(VISITOR_TOKEN_KEY, token),
-  };
 }
 
 /**
