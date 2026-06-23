@@ -1,10 +1,15 @@
 import type { Context } from 'hono';
 
-import { honoRequest, resolveEventFieldsFromRequest } from '../middleware/requestContext';
-import type { EventSink } from './sink';
+import { MAX_EVENT_TYPE_LENGTH } from '../events/limits';
+import type { EventSink } from '../events/sink';
+import { resolveEventFieldsFromRequest } from '../middleware/requestContext';
+import { honoRequest } from './requestContext';
 
-/** Max event_type length (REQUIREMENTS.md §6.1). Shared with the HTTP factory (httpBeacon.ts). */
-export const MAX_EVENT_TYPE_LENGTH = 100;
+// Hono-Context custom-event helper (REQUIREMENTS.md §6.1). Its public API takes a
+// Hono Context (getUserId/getClientAddress callbacks), so it lives behind the ./hono
+// subpath alongside honoRequest — the agnostic emit path uses createHttpBeacon.track
+// instead. The event_type cap comes from events/limits.ts so it stays identical
+// across the Hono track() and the HTTP factory.
 
 /** Config the track() helper needs, injected by createBeacon() (REQUIREMENTS.md §6.1). */
 export interface TrackOptions {

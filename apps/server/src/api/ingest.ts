@@ -3,10 +3,10 @@ import type { BeaconEvent, EventSink } from '@pi-innovations/beacon-sdk';
 import {
   buildEventContext,
   hashIp,
-  honoRequest,
   MAX_EVENT_TYPE_LENGTH,
   resolveIpFromRequest,
 } from '@pi-innovations/beacon-sdk';
+import { honoRequest } from '@pi-innovations/beacon-sdk/hono';
 import type { Context, Handler } from 'hono';
 import { verifyTrustedBearer } from './auth';
 import { errorResponse } from './errors';
