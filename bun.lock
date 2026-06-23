@@ -28,9 +28,15 @@
     "packages/beacon": {
       "name": "@pi-innovations/beacon-sdk",
       "version": "0.0.0",
-      "dependencies": {
+      "devDependencies": {
         "hono": "^4.12.21",
       },
+      "peerDependencies": {
+        "hono": "^4.12.21",
+      },
+      "optionalPeers": [
+        "hono",
+      ],
     },
     "packages/beacon-client": {
       "name": "@pi-innovations/beacon-client",

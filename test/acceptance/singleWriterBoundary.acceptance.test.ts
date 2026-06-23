@@ -35,7 +35,14 @@ registerDbCoverageGuard();
 //   packages[name]   = [descriptor, registry, metadata, hash]  // metadata.dependencies/.optionalDependencies
 // Workspace deps (workspace:*) have no metadata entry; their deps live back in workspaces[path].
 interface BunLock {
-  workspaces: Record<string, { name?: string; dependencies?: Record<string, string> }>;
+  workspaces: Record<
+    string,
+    {
+      name?: string;
+      dependencies?: Record<string, string>;
+      peerDependencies?: Record<string, string>;
+    }
+  >;
   packages: Record<string, unknown[]>;
 }
 
@@ -70,7 +77,11 @@ function depClosure(lock: BunLock, pkgName: string): Set<string> {
   const wsPath = Object.keys(lock.workspaces).find((p) => lock.workspaces[p].name === pkgName);
   if (!wsPath) throw new Error(`workspace package not found in bun.lock: ${pkgName}`);
   const seen = new Set<string>();
-  const stack = Object.keys(lock.workspaces[wsPath].dependencies ?? {});
+  // Seed from runtime dependencies AND peerDependencies: the consumer-facing graph includes the
+  // optional peer (hono) they install for the ./hono subpath. devDependencies are NOT shipped to
+  // consumers, so they stay excluded — the closure proves what an installer actually pulls in.
+  const ws = lock.workspaces[wsPath];
+  const stack = [...Object.keys(ws.dependencies ?? {}), ...Object.keys(ws.peerDependencies ?? {})];
   while (stack.length > 0) {
     const name = stack.pop() as string;
     if (seen.has(name)) continue;
