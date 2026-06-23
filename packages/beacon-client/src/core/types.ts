@@ -33,9 +33,12 @@ export interface BeaconClientConfig {
   appContext: AppContext;
   /**
    * Optional anonymous visitor handle for cookie-free SPAs, sent as body.visitor_token on
-   * every batch. The host seeds it from the SPA bootstrap (its one server-rendered touchpoint);
-   * update it at runtime via setVisitorToken(). Held in MEMORY ONLY — never written to the
-   * storage adapter (which holds event payloads alone), preserving the no-client-storage posture.
+   * every batch. When UNSET, the client mints a default in-memory crypto.randomUUID() at
+   * construction so a non-seeding SPA still gets a stable anonymous trail; an explicit value
+   * overrides the default, and an explicit empty string is left as-is (omitted from the body).
+   * The host seeds it from the SPA bootstrap (its one server-rendered touchpoint); update it at
+   * runtime via setVisitorToken(). Held in MEMORY ONLY — never written to the storage adapter
+   * (which holds event payloads alone), preserving the no-client-storage posture.
    * A falsy/empty value is omitted from the body so the server falls back to the transport token.
    * Must be ≤100 chars: the server is the single validation authority and silently drops an
    * over-length token to its transport fallback, so a longer seed yields unattributed events.
@@ -86,6 +89,9 @@ export interface BeaconClientDeps {
   setInterval?: (handler: () => void, ms: number) => ReturnType<typeof setInterval>;
   clearInterval?: (handle: ReturnType<typeof setInterval>) => void;
   now?: () => number;
+  /** Mints the default visitor token when config.visitorToken is unset. Defaults to the
+   * global crypto.randomUUID; tests inject a deterministic stub. */
+  randomUUID?: () => string;
 }
 
 /**
