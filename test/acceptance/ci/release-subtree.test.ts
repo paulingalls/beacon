@@ -23,7 +23,10 @@ describe('release-subtree workflow', () => {
     // The `on:` block names exactly one branch — main — under push, and nothing else.
     expect(releaseSubtree).toMatch(/on:\s*\n\s*push:\s*\n\s*branches:\s*\[main\]/);
     // No pull_request / workflow_dispatch / schedule entry would broaden the trigger.
+    // workflow_dispatch matters most: a manual trigger could run the force-push off an
+    // arbitrary ref, republishing release branches from un-merged code.
     expect(releaseSubtree).not.toMatch(/pull_request:/);
+    expect(releaseSubtree).not.toMatch(/workflow_dispatch:/);
     expect(releaseSubtree).not.toMatch(/schedule:/);
   });
 
