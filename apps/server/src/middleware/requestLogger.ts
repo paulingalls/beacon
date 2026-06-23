@@ -1,11 +1,10 @@
 import type { BeaconEvent, BeaconRequest, EventSink } from '@pi-innovations/beacon-sdk';
 import {
   buildEventContext,
-  defaultClientAddress,
   extractAttribution,
-  honoRequest,
   resolveIpFromRequest,
 } from '@pi-innovations/beacon-sdk';
+import { defaultClientAddress, honoRequest } from '@pi-innovations/beacon-sdk/hono';
 import type { Context, MiddlewareHandler } from 'hono';
 import type { VisitorTokenStore } from '../visitors/tokenStore';
 

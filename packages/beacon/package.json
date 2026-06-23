@@ -7,9 +7,18 @@
   "module": "src/index.ts",
   "exports": {
     ".": "./src/index.ts",
-    "./relay": "./src/relay/index.ts"
+    "./relay": "./src/relay/index.ts",
+    "./hono": "./src/hono/index.ts"
   },
-  "dependencies": {
+  "devDependencies": {
     "hono": "^4.12.21"
+  },
+  "peerDependencies": {
+    "hono": "^4.12.21"
+  },
+  "peerDependenciesMeta": {
+    "hono": {
+      "optional": true
+    }
   }
 }

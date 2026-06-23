@@ -29,15 +29,17 @@ Beacon follows a **single-writer model**: you deploy **one** Beacon server (the 
   }
   ```
 
-- **Git dependency.** Point at the repository (and a subdirectory, since this is a monorepo):
+- **Git dependency (release artifact branches).** Bun git deps are committish-only — there is no subdirectory syntax, and a git dep of the monorepo root installs `beacon-monorepo`, so `import { createHttpBeacon }` never resolves. CI ([`.github/workflows/release-subtree.yml`](./.github/workflows/release-subtree.yml)) solves this by `git subtree split`-ing each package and force-pushing it as a branch whose **root *is* the package**, refreshed on every merge to `main`. Add the branch that matches your product:
 
-  ```jsonc
-  {
-    "dependencies": {
-      "@pi-innovations/beacon-sdk": "git+ssh://git@github.com/paulingalls/beacon.git#main"
-    }
-  }
+  ```bash
+  # Server-side / Bun.serve products (the emit SDK):
+  bun add git+https://github.com/paulingalls/beacon.git#sdk-release
+
+  # React Native / web products (the client SDK):
+  bun add git+https://github.com/paulingalls/beacon.git#client-release
   ```
+
+  Each branch installs the package at its own root, so `import { createHttpBeacon } from '@pi-innovations/beacon-sdk'` (or `{ BeaconClient } from '@pi-innovations/beacon-client'`) resolves directly — no monorepo root in the way.
 
 - **Vendoring.** Copy `packages/beacon` (and `packages/beacon-client` for mobile) into your tree and reference it by relative path. The packages export `.ts` source, so your bundler/runtime must handle TypeScript (Bun does natively).
 
@@ -114,6 +116,19 @@ process.on('SIGTERM', async () => {
 ```
 
 Visitor identity is carried automatically: `capture`/`track` adopt the `_t` query parameter as the visitor handle (the deployed Beacon owns minting; a product only forwards it).
+
+### Import boundary: agnostic root vs the `./hono` subpath
+
+The package root (`@pi-innovations/beacon-sdk`) is **hono-free** — importing `createHttpBeacon`, the capture cores, or the relay interface pulls in **no hono** (an import-isolation test enforces this). `hono` is an *optional* peer dependency, so an agnostic `Bun.serve` consumer never installs it.
+
+The Hono-`Context` adapters live behind the opt-in `@pi-innovations/beacon-sdk/hono` subpath — for a host built **on Hono** that wants in-process capture rather than HTTP emit:
+
+```typescript
+import { honoRequest, track, resolveEventFields } from '@pi-innovations/beacon-sdk/hono';
+// also: resolveIp, defaultClientAddress, honoToBeaconRequest
+```
+
+Importing the subpath requires `hono` (the optional peer). Most products want the agnostic `createHttpBeacon` above; reach for `./hono` only when you hold a Hono `Context`.
 
 ## Browser SPAs
 

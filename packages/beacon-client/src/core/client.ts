@@ -45,7 +45,8 @@ export class BeaconClient {
    * Anonymous visitor handle for cookie-free SPAs, sent as body.visitor_token on every batch.
    * In memory ONLY — deliberately never serialized to the storage adapter (which holds event
    * payloads alone), so it carries no persisted tracking state. Seeded from config.visitorToken,
-   * mutable via setVisitorToken().
+   * or minted from crypto.randomUUID() at construction when that is unset (so a non-seeding SPA
+   * still gets a stable anonymous trail); mutable via setVisitorToken().
    */
   private visitorToken: string | null;
   /**
@@ -89,7 +90,10 @@ export class BeaconClient {
     this.clearIntervalFn = deps.clearInterval ?? ((t) => clearInterval(t));
     this.now = deps.now ?? Date.now;
     this.contextHeader = buildAppContextHeader(config.appContext);
-    this.visitorToken = config.visitorToken ?? null;
+    // Mint a default in-memory handle when the host doesn't seed one — an explicit token (even '')
+    // still wins via ??, so current consumers are unaffected. In memory only; never persisted.
+    const mintToken = deps.randomUUID ?? (() => crypto.randomUUID());
+    this.visitorToken = config.visitorToken ?? mintToken();
 
     // Restore a persisted outbound queue (mobile); drain() awaits this so a flush
     // can never race ahead of the load and clear() events that were never sent.
