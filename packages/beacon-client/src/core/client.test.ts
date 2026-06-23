@@ -63,7 +63,7 @@ describe('track / screenView', () => {
   });
 });
 
-describe('visitor_token (in-memory identity, story-002)', () => {
+describe('visitor_token (in-memory identity, story-001)', () => {
   /** Read the body-level visitor_token off a recorded call (not in RecordedCall's base type). */
   const bodyToken = (call: RecordedCall | undefined): unknown =>
     (call?.body as { visitor_token?: unknown } | undefined)?.visitor_token;
@@ -76,12 +76,60 @@ describe('visitor_token (in-memory identity, story-002)', () => {
     expect(bodyToken(calls[0])).toBe('v-abc');
   });
 
-  test('omits visitor_token entirely when none is set', async () => {
+  test('mints a default visitor_token when none is configured', async () => {
+    const { client, calls } = build({}, { randomUUID: () => 'minted-uuid' });
+    client.track('e');
+    await client.flush();
+
+    expect(bodyToken(calls[0])).toBe('minted-uuid');
+  });
+
+  test('the minted default is a UUID', async () => {
     const { client, calls } = build();
     client.track('e');
     await client.flush();
 
-    expect(calls[0]?.body).not.toHaveProperty('visitor_token');
+    expect(bodyToken(calls[0])).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
+    );
+  });
+
+  test('the minted default is stable across batches (minted once at construction)', async () => {
+    let n = 0;
+    const { client, calls } = build({}, { randomUUID: () => `u${n++}` });
+    client.track('a');
+    await client.flush();
+    client.track('b');
+    await client.flush();
+
+    expect(bodyToken(calls[0])).toBe('u0');
+    expect(bodyToken(calls[1])).toBe('u0');
+  });
+
+  test('an explicit config.visitorToken overrides the minted default', async () => {
+    const { client, calls } = build(
+      { visitorToken: 'v-abc' },
+      { randomUUID: () => 'should-not-be-used' },
+    );
+    client.track('a');
+    await client.flush();
+
+    expect(bodyToken(calls[0])).toBe('v-abc');
+  });
+
+  test('never persists the minted default token to the storage adapter', async () => {
+    const store = makeStorage();
+    const { client } = build({ storage: store.adapter }, { randomUUID: () => 'minted-secret' });
+    client.track('a');
+    await tick(); // let the storage chain settle
+
+    expect(JSON.stringify(store.saved)).not.toContain('minted-secret');
+    for (const snapshot of store.saved) {
+      for (const e of snapshot) {
+        expect(e).not.toHaveProperty('visitor_token');
+        expect(e).not.toHaveProperty('visitorToken');
+      }
+    }
   });
 
   test('setVisitorToken updates the token sent on the next flush', async () => {
