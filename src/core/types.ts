@@ -89,8 +89,11 @@ export interface BeaconClientDeps {
   setInterval?: (handler: () => void, ms: number) => ReturnType<typeof setInterval>;
   clearInterval?: (handle: ReturnType<typeof setInterval>) => void;
   now?: () => number;
-  /** Mints the default visitor token when config.visitorToken is unset. Defaults to the
-   * global crypto.randomUUID; tests inject a deterministic stub. */
+  /** Mints the default visitor token when config.visitorToken is unset. Defaults to the global
+   * crypto.randomUUID (present in browsers, Bun, Node 19+, and RN 0.71+/modern Hermes). On an
+   * older RN/Hermes runtime that lacks global crypto, the default mint throws in the constructor —
+   * inject this (e.g. expo-crypto's randomUUID) or pass an explicit config.visitorToken there.
+   * Tests inject a deterministic stub. */
   randomUUID?: () => string;
 }
 
