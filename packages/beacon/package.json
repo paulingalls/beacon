@@ -10,6 +10,9 @@
     "./relay": "./src/relay/index.ts",
     "./hono": "./src/hono/index.ts"
   },
+  "devDependencies": {
+    "hono": "^4.12.21"
+  },
   "peerDependencies": {
     "hono": "^4.12.21"
   },
