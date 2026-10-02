@@ -14,7 +14,8 @@ Biome for lint/format; lefthook git hooks; GitHub Actions CI and deploy.
 
 **Surfaces & acceptance**:
 - HTTP (ingest, `/analytics/*` query API, shortener redirects): bun:test suites that serve
-  the app over a real socket. See `test/acceptance/http.acceptance.test.ts`, `shortener.acceptance.test.ts`
+  the app over a real socket with default request capture enabled for each changed endpoint.
+  Fixtures that exclude an API prefix supplement, but cannot replace, that default-path check. See `test/acceptance/http.acceptance.test.ts`, `shortener.acceptance.test.ts`
   and the `*.roundtrip.acceptance.test.ts` suites against live Postgres.
 - Browser (admin dashboard): Playwright `test/acceptance/dashboard/*.e2e.ts` against
   `serve.ts`, run with `bun run test:e2e`.
