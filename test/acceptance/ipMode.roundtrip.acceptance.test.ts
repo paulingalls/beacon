@@ -1,7 +1,61 @@
 import { describe, expect, test } from 'bun:test';
+import { formatWithOptions, inspect } from 'node:util';
+import { createIpPolicy } from '../../apps/server/src/visitors/ipSalt';
 import { registerDbCoverageGuard, TEST_DB } from '../../apps/server/test/dbGuard';
 import { createHttpBeacon } from '../../packages/beacon/src/httpBeacon';
 import { digest, fixture, IP, OTHER_IP, SALTS, SECRET, sha } from './ipMode.fixture';
+
+const snapshotLog = (args: unknown[]) =>
+  formatWithOptions({ depth: null, maxArrayLength: null, maxStringLength: null }, ...args);
+function expectSaltAbsent(artifact: string) {
+  for (const salt of SALTS) {
+    const bytes = Buffer.from(salt);
+    for (const representation of [
+      salt,
+      bytes.toString('hex'),
+      bytes.toString('base64'),
+      inspect(bytes),
+    ]) {
+      expect(artifact).not.toContain(representation);
+    }
+  }
+}
+
+test('ipMode salt guard rejects structured console Buffers at creation and rotation after zeroing', () => {
+  let time = Date.parse('2026-10-02T23:59:59.999Z');
+  let index = 0;
+  const lines: string[] = [];
+  const original = console.log;
+  console.log = (...args) => {
+    lines.push(snapshotLog(args));
+  };
+  let policy: ReturnType<typeof createIpPolicy> | undefined;
+  const buffers: Buffer[] = [];
+  try {
+    policy = createIpPolicy(
+      { ipMode: 'daily-salt' },
+      {
+        now: () => time,
+        schedule: () => () => {},
+        salt: () => {
+          const salt = Buffer.from(SALTS[index++] as string);
+          buffers.push(salt);
+          console.log({ salt });
+          return salt;
+        },
+      },
+    );
+    time += 1;
+    policy.storage(IP);
+    policy.stop();
+    expect(lines).toHaveLength(2);
+    for (const buffer of buffers) expect(buffer).toEqual(Buffer.alloc(buffer.length));
+    for (const line of lines) expect(() => expectSaltAbsent(line)).toThrow();
+  } finally {
+    policy?.stop();
+    console.log = original;
+  }
+});
 
 registerDbCoverageGuard();
 describe.skipIf(!TEST_DB)('ipMode live Postgres and socket', () => {
@@ -69,7 +123,7 @@ describe.skipIf(!TEST_DB)('ipMode live Postgres and socket', () => {
       console.warn =
       console.error =
         (...args) => {
-          lines.push(args.map(String).join(' '));
+          lines.push(snapshotLog(args));
         };
     try {
       const f = await fixture({ ipMode: 'daily-salt' });
@@ -89,19 +143,8 @@ describe.skipIf(!TEST_DB)('ipMode live Postgres and socket', () => {
         expect(events).toHaveLength(10);
         expect(meta.length).toBeGreaterThan(0);
         await f.close();
-        for (const artifact of [
-          JSON.stringify(events),
-          JSON.stringify(meta),
-          JSON.stringify(lines),
-          schema,
-        ]) {
-          for (const salt of SALTS)
-            for (const representation of [
-              salt,
-              Buffer.from(salt).toString('hex'),
-              Buffer.from(salt).toString('base64'),
-            ])
-              expect(artifact).not.toContain(representation);
+        for (const artifact of [JSON.stringify(events), JSON.stringify(meta), ...lines, schema]) {
+          expectSaltAbsent(artifact);
         }
       } catch (error) {
         await f.close();

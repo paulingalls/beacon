@@ -83,3 +83,30 @@ test('ipMode defaults and none storage versus ephemeral key', () => {
   expect(policy.rateKey(ip)).toBe(ip);
   policy.stop();
 });
+
+test('ipMode production entropy joins within a day but unlinks instances, restart and midnight', () => {
+  let time = Date.parse('2026-10-02T23:59:59.999Z');
+  const deps = { now: () => time, schedule: () => () => {} };
+  const first = createIpPolicy({ ipMode: 'daily-salt' }, deps);
+  const independent = createIpPolicy({ ipMode: 'daily-salt' }, deps);
+  try {
+    const before = first.storage(ip);
+    expect(before).toMatch(/^[a-f0-9]{64}$/);
+    expect(first.storage(ip)).toBe(before);
+    expect(independent.storage(ip)).not.toBe(before);
+    independent.stop();
+    const restarted = createIpPolicy({ ipMode: 'daily-salt' }, deps);
+    try {
+      expect(restarted.storage(ip)).not.toBe(before);
+    } finally {
+      restarted.stop();
+    }
+    time += 1;
+    const after = first.storage(ip);
+    expect(after).not.toBe(before);
+    expect(first.storage(ip)).toBe(after);
+  } finally {
+    first.stop();
+    independent.stop();
+  }
+});

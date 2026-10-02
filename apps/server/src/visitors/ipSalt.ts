@@ -77,10 +77,11 @@ export function createIpPolicy(
   };
   return {
     storage,
+    // Limiter keys stay in memory; storage rotation must not reset a live window.
     rateKey: (ip, legacyHashIPs) =>
       explicit === undefined && legacyHashIPs !== undefined
         ? hashIp(ip, legacyHashIPs)
-        : mode === 'none'
+        : mode === 'none' || mode === 'daily-salt'
           ? ip
           : storage(ip),
     stop: () => {
