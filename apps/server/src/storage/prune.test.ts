@@ -56,12 +56,53 @@ describe.skipIf(!TEST_DB)('retention live SQL', () => {
       ]);
       expect(await snapshot()).toEqual(before);
       expect(counts).toEqual([10000, 10000, 1]);
-      expect(cutoffs).toEqual([cutoff, cutoff, cutoff]);
+      expect(cutoffs).toEqual([+cutoff, +cutoff, +cutoff]);
     } finally {
       clock.mockRestore();
       await sql`TRUNCATE beacon_short_links, beacon_erasures`;
     }
   });
+
+  for (const path of ['factory', 'env']) {
+    for (const days of [719528, 100000000]) {
+      test(`retention ${path} executes accepted ancient cutoff days=${days}`, async () => {
+        const sql = getSql();
+        await sql`INSERT INTO beacon_events (product_id, timestamp, event_type) VALUES
+          ('p', '-infinity', 'infinite-old'),
+          ('p', '0002-01-01 BC', 'old'),
+          ('p', '0001-01-01 BC', 'equal'),
+          ('p', '0001-01-02 BC', 'newer'),
+          ('p', 'infinity', 'infinite-new')`;
+        const clock = spyOn(Date, 'now').mockReturnValue(0);
+        const harness = retentionHarness(sql);
+        const end = spyOn(sql, 'end').mockResolvedValue();
+        const warn = spyOn(console, 'warn').mockImplementation(() => {});
+        let beacon: ReturnType<typeof createBeacon> | undefined;
+        try {
+          beacon =
+            path === 'factory'
+              ? createBeacon({ ...config, retentionDays: days })
+              : buildServer({ DATABASE_URL: TEST_DB, RETENTION_DAYS: String(days) }).beacon;
+          const timer = harness.timers.find((timer) => timer.delay === day);
+          expect(timer).toBeDefined();
+          await timer?.tick();
+          expect(warn).not.toHaveBeenCalled();
+          const rows = await sql`SELECT event_type FROM beacon_events ORDER BY event_type`;
+          expect(rows.map((row) => row.event_type)).toEqual(
+            days === 719528
+              ? ['equal', 'infinite-new', 'newer']
+              : ['equal', 'infinite-new', 'newer', 'old'],
+          );
+        } finally {
+          await beacon?.shutdown();
+          end.mockRestore();
+          harness.restore();
+          warn.mockRestore();
+          clock.mockRestore();
+        }
+      });
+    }
+  }
 
   for (const path of ['factory', 'env']) {
     for (const days of [undefined, 0, 0.5]) {

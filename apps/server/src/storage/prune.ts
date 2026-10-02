@@ -33,9 +33,11 @@ export function validateRetention(config: BeaconConfig): void {
 export async function pruneEvents(sql: Sql, days: number, stopped = () => false): Promise<void> {
   const cutoff = retentionCutoff(days);
   while (!stopped()) {
+    // Postgres cannot parse every representable JavaScript Date as a timestamp.
     const result = await sql`
       DELETE FROM beacon_events WHERE event_id IN (
-        SELECT event_id FROM beacon_events WHERE timestamp < ${cutoff} LIMIT 10000
+        SELECT event_id FROM beacon_events
+        WHERE EXTRACT(EPOCH FROM timestamp) * 1000 < ${cutoff.getTime()} LIMIT 10000
       )`;
     if (result.count < 10000) return;
   }
