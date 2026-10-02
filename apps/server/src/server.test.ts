@@ -144,4 +144,33 @@ describe.skipIf(!TEST_DB)('apps/server host', () => {
       SELECT user_id FROM beacon_events WHERE event_type = 'host_failclosed'`;
     expect(rows.map((r) => r.user_id)).toEqual([null]); // unset token ⇒ body user_id ignored
   });
+  for (const IP_MODE of [undefined, 'sha256', 'daily-salt', 'none']) {
+    test(`IP_MODE ${IP_MODE} applies at storage`, async () => {
+      const { app, beacon } = build({ DATABASE_URL: TEST_DB, IP_MODE });
+      expect(
+        (
+          await app.request('/analytics/events', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json', 'x-forwarded-for': '198.51.100.9' },
+            body: JSON.stringify({ events: [{ event_type: 'env_mode' }] }),
+          })
+        ).status,
+      ).toBe(202);
+      await beacon.flush();
+      const rows = await getSql()<
+        { context: { ip?: string } }[]
+      >`SELECT context FROM beacon_events`;
+      expect(rows).toHaveLength(1);
+      const ip = rows[0]?.context.ip;
+      const expected = new Bun.CryptoHasher('sha256').update('198.51.100.9').digest('hex');
+      if (IP_MODE === 'none') expect(ip).toBeUndefined();
+      else if (IP_MODE === 'daily-salt') {
+        expect(ip).toMatch(/^[a-f0-9]{64}$/);
+        expect(ip).not.toBe(expected);
+      } else expect(ip).toBe(expected);
+    });
+  }
+  test('IP_MODE invalid refused', () => {
+    expect(() => build({ DATABASE_URL: TEST_DB, IP_MODE: 'invalid' })).toThrow('ipMode');
+  });
 });

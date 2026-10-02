@@ -48,6 +48,8 @@ export interface BeaconConfig {
   excludePaths?: string[];
   /** SHA-256 the client IP before storage. Default true. */
   hashIPs?: boolean;
+  /** Explicit storage policy; conflicts with hashIPs: false. Default is legacy SHA-256. */
+  ipMode?: 'sha256' | 'daily-salt' | 'none';
   /** Event-buffer flush timer interval in ms. Default 5000. */
   flushInterval?: number;
   /** Max events written per flush. Default 100. */

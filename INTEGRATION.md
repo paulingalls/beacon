@@ -359,7 +359,35 @@ Beacon's query API is designed for direct use by AI agents. The `/analytics/sche
 | `trustedIngestToken` | `string` | *required* | Trusted-ingest bearer secret; sent as `Authorization: Bearer`, never logged. |
 | `getUserId` | `(request: Request) => string \| null` | no user | Resolve the authenticated user id from the request. |
 | `hashIPs` | `boolean` | `true` | SHA-256 the client IP before it leaves the product. |
+| `forwardRawIPs` | `boolean` | `false` | Forward raw IPs over authenticated server-to-server transport; overrides SDK `hashIPs` so the deployed server applies its mode once. |
 | `flushInterval` | `number` | sink default | Emit-buffer flush interval in milliseconds. |
 | `maxBatchSize` | `number` | sink default | Max events per emitted batch. |
 
 The deployed server is configured by environment (see [Deploying the Beacon server](#deploying-the-beacon-server)); its full option set is `BeaconConfig` in `apps/server/src/types.ts`.
+
+
+### Server IP configuration
+
+`createBeacon(config)` in the private server owns storage and rate-limit policy:
+
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `ipMode` | `'sha256' \| 'daily-salt' \| 'none'` | unset | `sha256` preserves legacy hashing; `daily-salt` uses HMAC-SHA-256 with a random in-memory salt; `none` omits IP from stored context. |
+| `hashIPs` | `boolean` | `true` | Legacy setting when `ipMode` is absent; `false` preserves raw storage. |
+
+Explicit `ipMode` with `hashIPs: false` throws before resources start. With `hashIPs`
+unset or true, the explicit mode wins. Without either setting, SHA-256 remains the default.
+The host maps optional `IP_MODE` to `ipMode`; invalid modes throw.
+
+Daily salts belong to one Beacon instance/process, rotate at UTC midnight even while
+idle, and are discarded and cleared when replaced or stopped. They never leave memory.
+Restarts and replicas use independent salts, so joins do not survive restart or cross
+replicas. Under `none`, visitor-token seeds use the constant empty string; anonymous
+rate limits retain separate client IP keys only in memory, and authenticated user IDs
+still take precedence.
+
+The SDK default still hashes before sending; trusted server ingest hashes again
+under the legacy default (double hash). This preserves existing VodShorter stored
+values. Opt into `forwardRawIPs: true` on a trusted server product to apply the server
+mode once. Raw addresses then travel over the authenticated transport; use HTTPS in
+production. SDK forwarding carries no server salt.

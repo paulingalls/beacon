@@ -138,6 +138,7 @@ interface BeaconConfig {
 
     // Middleware
     excludePaths?: string[];                        // default: []
+    ipMode?: 'sha256' | 'daily-salt' | 'none';        // explicit mode conflicts with hashIPs: false
     hashIPs?: boolean;                              // default: true
 
     // Event buffer

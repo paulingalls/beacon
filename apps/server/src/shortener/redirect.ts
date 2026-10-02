@@ -3,6 +3,7 @@ import { resolveEventFields } from '@pi-innovations/beacon-sdk/hono';
 import type { Context, Handler } from 'hono';
 import type { Sql } from 'postgres';
 import type { EventBuffer } from '../events/buffer';
+import type { IpPolicy } from '../visitors/ipSalt';
 import type { ShortLinkCache } from './cache';
 import { incrementClickCount, type ShortLinkRecord } from './store';
 
@@ -20,6 +21,7 @@ export interface RedirectOptions {
   buffer: EventBuffer;
   /** SHA-256 the client IP before storage (REQUIREMENTS.md §1.1). Default true. */
   hashIPs?: boolean;
+  ipPolicy?: IpPolicy;
   /** Resolve the authenticated user id from the request, or null. */
   getUserId?: (c: Context) => string | null;
   /** Socket-address source when X-Forwarded-For is absent. Defaults to Bun's getConnInfo. */
@@ -66,10 +68,11 @@ export function createRedirectHandler(opts: RedirectOptions): Handler {
 function logClick(c: Context, opts: RedirectOptions, record: ShortLinkRecord): void {
   const { userId, visitorToken, platform, context } = resolveEventFields(c, {
     getUserId: opts.getUserId,
-    hashIPs: opts.hashIPs,
+    hashIPs: opts.ipPolicy ? false : opts.hashIPs,
     getClientAddress: opts.getClientAddress,
     label: 'redirect',
   });
+  if (opts.ipPolicy) context.ip = opts.ipPolicy.storage(context.ip as string | undefined);
   const attribution = { ...(extractAttribution(c.req.url) ?? {}), ...record.campaign };
 
   opts.buffer.push({

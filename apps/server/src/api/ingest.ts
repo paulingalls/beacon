@@ -8,6 +8,7 @@ import {
 } from '@pi-innovations/beacon-sdk';
 import { honoRequest } from '@pi-innovations/beacon-sdk/hono';
 import type { Context, Handler } from 'hono';
+import type { IpPolicy } from '../visitors/ipSalt';
 import { verifyTrustedBearer } from './auth';
 import { errorResponse } from './errors';
 import { applyRateLimit, RateLimiter } from './rateLimit';
@@ -46,6 +47,7 @@ export interface IngestOptions {
   trustedIngestToken?: string;
   /** SHA-256 the client IP before storage / rate-limit keying. Default true. */
   hashIPs?: boolean;
+  ipPolicy?: IpPolicy;
   /** Socket-address source when X-Forwarded-For is absent. Default Bun's getConnInfo. */
   getClientAddress?: (c: Context) => string | undefined;
   /** Rate-limit tuning. Default 10 requests per 60s per identifier (§6.2). */
@@ -104,8 +106,9 @@ export function createIngestHandler(buffer: EventSink, opts: IngestOptions): Han
     // getClientAddress (the adapter's built-in socket lookup otherwise) through the
     // §1.3 guard. The capture reads below all go through it.
     const req = honoRequest(c, opts.getClientAddress);
-    const ip = resolveIpFromRequest(req, hashIPs);
-    const identifier = userId ?? ip ?? 'unknown'; // per-user when authed, else per-IP (§6.2)
+    const rawIp = resolveIpFromRequest(req, false);
+    const ip = opts.ipPolicy ? opts.ipPolicy.storage(rawIp) : hashIp(rawIp, hashIPs);
+    const identifier = userId ?? (opts.ipPolicy ? opts.ipPolicy.rateKey(rawIp) : ip) ?? 'unknown'; // per-user when authed, else per-IP (§6.2)
 
     // Check BEFORE parsing the body so an over-limit caller is rejected without us
     // reading a (possibly large) body.
@@ -219,7 +222,7 @@ export function createIngestHandler(buffer: EventSink, opts: IngestOptions): Han
 
     let accepted = 0;
     for (const raw of events as RawEvent[]) {
-      const event = toEvent(raw, shared, trusted, hashIPs);
+      const event = toEvent(raw, shared, trusted, hashIPs, opts.ipPolicy);
       if (event) {
         buffer.push(event);
         accepted += 1;
@@ -241,6 +244,7 @@ function toEvent(
   shared: SharedEventFields,
   trusted: boolean,
   hashIPs: boolean,
+  ipPolicy?: IpPolicy,
 ): BeaconEvent | null {
   if (typeof raw !== 'object' || raw === null) return null;
 
@@ -270,7 +274,7 @@ function toEvent(
     ? (validShortString(raw.user_id, MAX_USER_ID_LENGTH) ?? shared.userId)
     : shared.userId;
   const context = trusted
-    ? resolveTrustedContext(raw.context, shared.context, hashIPs)
+    ? resolveTrustedContext(raw.context, shared.context, hashIPs, ipPolicy)
     : shared.context;
   // A trusted relay batches many anonymous visitors into one request; a per-event
   // visitor_token (valid → wins, invalid → shared/envelope fallback) lets ingest
@@ -295,20 +299,21 @@ function toEvent(
 /**
  * Resolve a trusted caller's per-event `context` (M2). A valid plain object within
  * the size cap REPLACES the transport context for that event (so a relay's own
- * ip/user-agent never leak onto end-user events), with `ip` always hashed per the
- * never-store-raw-IP rule. An invalid/oversized/absent value falls back to the
+ * ip/user-agent never leak onto end-user events), with `ip` transformed by the server
+ * policy. An invalid/oversized/absent value falls back to the
  * transport context (skip-not-reject).
  */
 function resolveTrustedContext(
   raw: unknown,
   fallback: Record<string, unknown>,
   hashIPs: boolean,
+  ipPolicy?: IpPolicy,
 ): Record<string, unknown> {
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return fallback;
   if (Buffer.byteLength(JSON.stringify(raw), 'utf8') > MAX_CONTEXT_BYTES) return fallback;
   const ctx = raw as Record<string, unknown>;
   const ip = typeof ctx.ip === 'string' ? ctx.ip : undefined;
-  return { ...ctx, ip: hashIp(ip, hashIPs) };
+  return { ...ctx, ip: ipPolicy ? ipPolicy.storage(ip) : hashIp(ip, hashIPs) };
 }
 
 /**

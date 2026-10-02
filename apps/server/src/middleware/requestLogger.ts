@@ -6,6 +6,7 @@ import {
 } from '@pi-innovations/beacon-sdk';
 import { defaultClientAddress, honoRequest } from '@pi-innovations/beacon-sdk/hono';
 import type { Context, MiddlewareHandler } from 'hono';
+import type { IpPolicy } from '../visitors/ipSalt';
 import type { VisitorTokenStore } from '../visitors/tokenStore';
 
 // Expose the visitor token on the Hono context so the host app can read it
@@ -27,6 +28,7 @@ export interface RequestLoggerOptions {
   excludePaths?: string[];
   /** SHA-256 the client IP before storage (REQUIREMENTS.md §1.1). Default true. */
   hashIPs?: boolean;
+  ipPolicy?: IpPolicy;
   /**
    * Visitor-token store (REQUIREMENTS.md §2). When provided, unauthenticated
    * requests get a token (minted or reused via `_t`) and first-touch attribution.
@@ -75,7 +77,9 @@ export function requestLogger(buffer: EventSink, opts: RequestLoggerOptions): Mi
 
     // Resolved once, before next(): the IP/UA seed the token record, and the
     // token must be on the context before the handler renders.
-    const ip = resolveIpFromRequest(req, hashIPs);
+    const ip = opts.ipPolicy
+      ? opts.ipPolicy.storage(resolveIpFromRequest(req, false))
+      : resolveIpFromRequest(req, hashIPs);
     const userAgent = req.header('user-agent');
 
     // getUserId is host-supplied; a throw here drops logging for this request
@@ -169,9 +173,6 @@ function resolveVisitorToken(
     store.touch(existing.token);
     return existing.token;
   }
-  // `ip` is the configured IP representation — SHA-256 hashed by default, or the
-  // raw IP when hashIPs is off — so the record's ipHash field mirrors what the
-  // event stores. It is in-memory and TTL-bounded; nothing here is persisted.
   return store.create(ip ?? '', userAgent ?? '');
 }
 

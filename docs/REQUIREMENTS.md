@@ -51,3 +51,11 @@ This document is the implementation contract for Beacon. It covers every decisio
 ## 12. Non-Requirements (Out of Scope for v1)
 
 [Read this section](requirements/client-and-operations.md#12-non-requirements-out-of-scope-for-v1).
+
+
+Server IP policy: `ipMode` accepts `sha256`, `daily-salt`, or `none`. An absent mode
+preserves the legacy `hashIPs` default; explicit mode with `hashIPs: false` is rejected.
+Daily-salt uses per-instance in-memory HMAC-SHA-256, rotates at UTC midnight, and
+clears discarded salts. None omits stored IPs, uses a constant token seed, and retains
+only ephemeral in-memory IP rate-limit keys. The SDK can opt into `forwardRawIPs`;
+its default hashing and the server's legacy double hash remain compatible.
