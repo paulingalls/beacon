@@ -1,7 +1,8 @@
 import type { BufferStats } from '@pi-innovations/beacon-sdk';
 import { track as trackEvent } from '@pi-innovations/beacon-sdk/hono';
 import { type Context, Hono, type MiddlewareHandler } from 'hono';
-import { adminGate } from './api/auth';
+import { adminGate, erasureGate } from './api/auth';
+import { createErasureHandler } from './api/erasure';
 import { createIdentifyHandler } from './api/identify';
 import { createIngestHandler } from './api/ingest';
 import { RateLimiter, rateLimitGate } from './api/rateLimit';
@@ -135,7 +136,8 @@ export function createBeacon(
     maxEntries: config.maxVisitorTokens,
   });
 
-  const middleware = requestLogger(buffer, {
+  const basePath = config.basePath ?? '/analytics';
+  const logRequest = requestLogger(buffer, {
     productId: config.productId,
     getUserId: config.getUserId,
     excludePaths: config.excludePaths,
@@ -145,6 +147,18 @@ export function createBeacon(
     tokenStore,
     referrerMode,
   });
+
+  const erasurePrefix = `${basePath.replace(/\/$/, '')}/users/`;
+  const middleware: MiddlewareHandler = (c, next) => {
+    // Erasure must not capture its own identity or enqueue an event after the purge.
+    if (
+      c.req.method === 'DELETE' &&
+      c.req.path.startsWith(erasurePrefix) &&
+      /^[^/]+\/events$/.test(c.req.path.slice(erasurePrefix.length))
+    )
+      return next();
+    return logRequest(c, next);
+  };
 
   const eventOptions = {
     productId: config.productId,
@@ -170,7 +184,6 @@ export function createBeacon(
   // Build the ingest handler + router ONCE so the handler's RateLimiter window
   // persists across requests (a fresh handler per router() call would reset it).
   // The route is relative to basePath; the host mounts the sub-app there.
-  const basePath = config.basePath ?? '/analytics';
   const apiRouter = new Hono();
   // The allowlist is ingest-only (track() never reads body.product_id), so add it
   // at the call site rather than to the shared eventOptions.
@@ -196,6 +209,12 @@ export function createBeacon(
       buffer,
       trustedIngestToken: config.trustedIngestToken,
     }),
+  );
+
+  apiRouter.delete(
+    '/users/:userId/events',
+    erasureGate({ isAdmin: config.isAdmin, trustedIngestToken: config.trustedIngestToken }),
+    createErasureHandler(sql, buffer),
   );
 
   // The five read endpoints (REQUIREMENTS.md §5.4), each behind the admin gate

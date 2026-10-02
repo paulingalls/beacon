@@ -438,3 +438,30 @@ The server callback is programmatic configuration, not an environment variable o
 callback accepted by the standalone server entry point. Normalization covers the logger,
 ingest, and web navigation wrapper. Direct server `Beacon.track()` calls, arbitrary
 properties, context URLs, and other fields remain the caller's responsibility.
+
+### Erase a user's events
+
+From your server, use either the configured `isAdmin` session or the trusted-ingest bearer:
+
+```ts
+async function eraseUser(
+  beaconUrl: string, basePath: string, userId: string, trustedIngestToken: string,
+): Promise<number> {
+  const response = await fetch(`${beaconUrl}${basePath}/users/${encodeURIComponent(userId)}/events`, {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${trustedIngestToken}` },
+  });
+  if (!response.ok) throw new Error(`Erasure failed: ${response.status}`);
+  const { count } = await response.json() as { count: number };
+  return count;
+}
+```
+
+`count` is the number of stored events deleted across products. Beacon discards this user's queued
+and failed in-flight events, waits for the current write, then deletes stored events and records
+SHA-256 of the user ID, count, and erasure time in one transaction. Repeating the call returns 0
+and records another erasure. Unauthorised calls return 403 without changing the buffer or database.
+A persistence failure returns 500 and rolls back database changes, including the audit row;
+purged memory stays discarded, and the DELETE is safe to retry. Stop emitting events for the user:
+events emitted after the call are the caller's responsibility. Call the instance buffering those
+events; this endpoint does not coordinate other Beacon instances or prevent future associations.

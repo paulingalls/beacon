@@ -68,3 +68,21 @@ Daily-salt uses per-instance in-memory HMAC-SHA-256, rotates at UTC midnight, an
 clears discarded salts. None omits stored IPs, uses a constant token seed, and retains
 only ephemeral in-memory IP rate-limit keys. The SDK can opt into `forwardRawIPs`;
 its default hashing and the server's legacy double hash remain compatible.
+
+## User event erasure
+
+`DELETE {basePath}/users/:userId/events` requires either the configured `isAdmin` predicate or
+the trusted-ingest bearer. A missing or invalid credential returns 403 before any buffer or
+persistence changes. It is a mutation endpoint and is not advertised in query schema discovery.
+
+The serving instance purges the user's queued events and suppresses retries of that user's
+in-flight events, then awaits the in-flight write. In one transaction it deletes all
+`beacon_events` rows with that exact user ID across products and inserts an audit row into
+`beacon_erasures` containing SHA-256 of the ID, the deleted count, and `erased_at`. Success returns
+200 `{ count }`; a repeat returns 0 and records a 0-count erasure. Operational logs do not contain
+the user ID. Audit storage contains the hash rather than the raw ID.
+
+Any failure returns 500; database changes and the audit insert roll back together. Purged
+in-memory events remain discarded, and callers can safely retry. Callers must stop emitting new
+events after the call. Erasure does not coordinate other instances or block future visitor
+associations, and does not remove short links or schema metadata.

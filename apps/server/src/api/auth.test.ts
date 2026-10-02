@@ -117,3 +117,34 @@ describe('verifyTrustedBearer', () => {
     }
   });
 });
+
+for (const kind of ['message', 'name', 'getter']) {
+  test(`adminGate omits user identity from a throwing predicate log: ${kind}`, async () => {
+    const user = 'private-erasure-user';
+    const error = new Error(user);
+    if (kind === 'name') error.name = user;
+    if (kind === 'getter')
+      Object.defineProperty(error, 'name', {
+        get() {
+          throw new Error(user);
+        },
+      });
+    const logs = [
+      spyOn(console, 'warn').mockImplementation(() => {}),
+      spyOn(console, 'error').mockImplementation(() => {}),
+      spyOn(console, 'log').mockImplementation(() => {}),
+    ];
+    try {
+      const res = await appWith({
+        isAdmin: () => {
+          throw error;
+        },
+      }).request('/guarded');
+      expect(res.status).toBe(403);
+      expect(JSON.stringify(logs.flatMap((log) => log.mock.calls))).not.toContain(user);
+      expect(logs[0]?.mock.calls[0]?.[0]).toContain('Error');
+    } finally {
+      for (const log of logs) log.mockRestore();
+    }
+  });
+}
