@@ -122,3 +122,31 @@ describe('createHttpBeacon lifecycle', () => {
     expect(b.stats()).toMatchObject({ buffered: 0, flushed: 1 });
   });
 });
+
+for (const options of [
+  {},
+  { hashIPs: false },
+  { forwardRawIPs: true },
+  { forwardRawIPs: true, hashIPs: true },
+]) {
+  test(`ipMode SDK wire capture/track ${JSON.stringify(options)}`, async () => {
+    const ff = fakeFetch();
+    const b = beacon(ff.fn, options);
+    try {
+      b.capture(
+        new Request('https://app/', { headers: { 'x-forwarded-for': '198.51.100.9, 192.0.2.2' } }),
+      );
+      b.track(new Request('https://app/'), 'socket', {}, { clientAddress: '198.51.100.9' });
+      await b.flush();
+      const expected =
+        options.forwardRawIPs || options.hashIPs === false
+          ? '198.51.100.9'
+          : new Bun.CryptoHasher('sha256').update('198.51.100.9').digest('hex');
+      const events = lastBody(ff.calls).events as { context: { ip: string } }[];
+      expect(events).toHaveLength(2);
+      for (const event of events) expect(event.context.ip).toBe(expected);
+    } finally {
+      await b.shutdown();
+    }
+  });
+}
