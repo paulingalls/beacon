@@ -63,6 +63,7 @@ The Beacon server (`apps/server`) is the single writer: it holds the Postgres cr
 | Variable | Required | Purpose |
 |---|---|---|
 | `DATABASE_URL` | yes | Postgres connection string (the one fail-fast). |
+| `RETENTION_DAYS` | optional | Unset or 0 = disabled. Positive finite decimal days enable pruning; invalid or unrepresentable cutoff values fail startup before resources are created. |
 | `ADMIN_TOKEN` | no | Bearer token gating the dashboard + query API. **Unset ⇒ those surfaces fail closed (403).** |
 | `TRUSTED_INGEST_TOKEN` | no | Bearer secret authorizing a trusted server-to-server caller to assert per-event `user_id`/context in the ingest body. **Unset ⇒ trusted ingest disabled (anonymous-only).** |
 | `PRODUCT_ID` | no | Fallback `product_id` for events whose batch omits one (default `beacon`). |

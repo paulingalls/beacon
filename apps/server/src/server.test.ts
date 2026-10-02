@@ -1,7 +1,8 @@
-import { afterAll, beforeEach, describe, expect, test } from 'bun:test';
-
+import { afterAll, beforeEach, describe, expect, spyOn, test } from 'bun:test';
+import type { Sql } from 'postgres';
 import { registerDbCoverageGuard, TEST_DB } from '../test/dbGuard';
 import { withTestDb } from '../test/helpers';
+import { retentionHarness } from '../test/retentionHarness';
 import { createBeacon } from './createBeacon';
 import { buildServer } from './server';
 
@@ -230,3 +231,56 @@ test('referrerMode invalid-config-before-startup', () => {
     buildServer({ DATABASE_URL: 'postgres://localhost/db', REFERRER_MODE: 'invalid' }),
   ).toThrow('referrerMode');
 });
+
+const retentionSql = Object.assign(() => Promise.resolve({ count: 0 }), {
+  end: async () => {},
+}) as unknown as Sql;
+for (const value of [
+  '',
+  ' ',
+  '1day',
+  '-1',
+  'NaN',
+  'Infinity',
+  '1e999',
+  '0x10',
+  '100000001',
+  '1e308',
+]) {
+  test(`retention env range refuses ${JSON.stringify(value)} before resources`, () => {
+    const clock = spyOn(Date, 'now').mockReturnValue(0);
+    const harness = retentionHarness(retentionSql);
+    try {
+      expect(() =>
+        buildServer({
+          DATABASE_URL: 'postgres://localhost/db',
+          RETENTION_DAYS: value,
+          IP_MODE: 'daily-salt',
+        }),
+      ).toThrow(/RETENTION_DAYS|retentionDays/);
+      expect(harness.connect).not.toHaveBeenCalled();
+      expect(harness.timers).toEqual([]);
+    } finally {
+      harness.restore();
+      clock.mockRestore();
+    }
+  });
+}
+for (const value of ['0', ' 0.5 ', '1e0', '100000000']) {
+  test(`retention env range accepts ${value}`, async () => {
+    const clock = spyOn(Date, 'now').mockReturnValue(0);
+    const harness = retentionHarness(retentionSql);
+    let beacon: ReturnType<typeof createBeacon> | undefined;
+    try {
+      beacon = buildServer({
+        DATABASE_URL: 'postgres://localhost/db',
+        RETENTION_DAYS: value,
+      }).beacon;
+      expect(harness.timers.some((timer) => timer.delay === 86400000)).toBe(Number(value) > 0);
+    } finally {
+      await beacon?.shutdown();
+      harness.restore();
+      clock.mockRestore();
+    }
+  });
+}

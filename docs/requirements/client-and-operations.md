@@ -151,7 +151,7 @@ interface BeaconConfig {
     maxVisitorTokens?: number;                      // default: 50000
 
     // Data retention
-    retentionDays?: number;                         // default: 365, 0 = no pruning
+    retentionDays?: number;                         // off unless set; 0 = no pruning
     pruneInterval?: number;                         // default: 86400000 (24h)
 
     // Query API
@@ -168,6 +168,11 @@ interface BeaconConfig {
 ```
 
 ---
+
+Retention settings belong to the private server. `retentionDays` must be finite and
+nonnegative with a computed cutoff that is a representable Date. `pruneInterval`
+must be an integer from 1 through 2147483647 milliseconds (default 86400000).
+Invalid values throw before resources are created.
 
 ## 11. Testing Strategy
 
