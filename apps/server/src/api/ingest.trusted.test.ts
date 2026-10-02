@@ -25,8 +25,9 @@ async function post(
   app: Hono,
   body: unknown,
   headers: Record<string, string> = {},
+  path = '/events',
 ): Promise<Response> {
-  return app.request('/events', {
+  return app.request(path, {
     method: 'POST',
     headers: { 'content-type': 'application/json', ...headers },
     body: typeof body === 'string' ? body : JSON.stringify(body),
@@ -250,16 +251,22 @@ describe('referrerMode ingest', () => {
           {
             referrerMode: 'raw',
             events: [
-              { event_type: 'valid', context: source },
+              {
+                event_type: 'valid',
+                context: source,
+                attribution: { utm_source: 'body', gclid: 'body-click' },
+              },
               { event_type: 'invalid', context: { referrer: 'not a URL' } },
               { event_type: 'fallback', context: [] },
               { event_type: 'absent' },
             ],
           },
           headers,
+          '/events?utm_source=landing&gclid=click',
         );
         expect(res.status).toBe(202);
         expect(pushed).toHaveLength(4);
+        for (const event of pushed) expect(event.attribution).toBeUndefined();
         const expected =
           mode === 'origin'
             ? 'https://site.example'

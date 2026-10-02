@@ -144,7 +144,9 @@ describe.skipIf(!TEST_DB)('referrerMode stored logger, track and public ingest',
           const socket = Bun.serve({ port: 0, fetch: app.fetch });
           try {
             const res = await fetch(
-              `http://localhost:${socket.port}${writer === 'ingest' ? '/analytics/events' : '/buy'}`,
+              `http://localhost:${socket.port}${
+                writer === 'ingest' ? '/analytics/events?utm_source=landing&gclid=click' : '/buy'
+              }`,
               {
                 headers: { referer: input, 'content-type': 'application/json' },
                 ...(writer === 'ingest'
@@ -162,8 +164,12 @@ describe.skipIf(!TEST_DB)('referrerMode stored logger, track and public ingest',
             const type =
               writer === 'logger' ? 'request' : writer === 'track' ? 'purchase' : 'public_pin';
             const rows = await getDb()<
-              { context: Record<string, unknown>; properties: Record<string, unknown> }[]
-            >`SELECT context, properties FROM beacon_events WHERE event_type = ${type}`;
+              {
+                context: Record<string, unknown>;
+                properties: Record<string, unknown>;
+                attribution: unknown;
+              }[]
+            >`SELECT context, properties, attribution FROM beacon_events WHERE event_type = ${type}`;
             expect(rows).toHaveLength(1);
             const context = rows[0]?.context as Record<string, unknown>;
             if ((mode === 'origin' || mode === 'origin-and-path') && input === 'not a URL')
@@ -177,7 +183,10 @@ describe.skipIf(!TEST_DB)('referrerMode stored logger, track and public ingest',
                     : input,
               );
             if (writer === 'track') expect(rows[0]?.properties).toEqual({ amount: 9 });
-            if (writer === 'ingest') expect(rows[0]?.properties).toEqual({ value: 1 });
+            if (writer === 'ingest') {
+              expect(rows[0]?.properties).toEqual({ value: 1 });
+              expect(rows[0]?.attribution).toEqual({});
+            }
           } finally {
             socket.stop(true);
           }
