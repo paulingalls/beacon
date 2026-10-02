@@ -149,4 +149,78 @@ describe.skipIf(!TEST_DB)('capstone — nav page_view round-trip (client → ing
       client.shutdown();
     }
   }, 15_000);
+  test('normalization idempotent web-to-ingest round trip and null refusal', async () => {
+    const pattern = '/p/[legacyId]/story/[storyId]';
+    const mapping = (p: string): string | null =>
+      p.startsWith('/invitations/') ? null : p.startsWith('/p/') ? pattern : p;
+    expect(mapping(pattern)).toBe(pattern);
+    const clientInputs: string[] = [];
+    const serverInputs: string[] = [];
+    const instance = createBeacon({
+      productId: 'normalize-nav',
+      postgres: { connectionString: TEST_DB as string },
+      isAdmin: () => true,
+      flushInterval: 60_000,
+      normalizePath: (p) => {
+        serverInputs.push(p);
+        return mapping(p);
+      },
+    });
+    const app = new Hono();
+    app.route(instance.basePath, instance.router());
+    const socket = Bun.serve({ port: 0, fetch: app.fetch });
+    const client = new BeaconClient({
+      endpoint: `http://localhost:${socket.port}${instance.basePath}/events`,
+      productId: 'normalize-nav',
+      appContext: { appVersion: '1', platform: 'web' },
+      flushInterval: 60_000,
+    });
+    const nav = makeNav('/invitations/example/preview');
+    const stop = useBeaconNav(client, nav.nav, {
+      toPath: (p) => {
+        clientInputs.push(p);
+        return mapping(p);
+      },
+    });
+    try {
+      await client.flush();
+      expect(serverInputs).toEqual([]);
+      nav.push('/invitations/another/preview');
+      await client.flush();
+      expect(serverInputs).toEqual([]);
+      nav.push('/p/abc/story/xyz');
+      nav.push('/p/abc/story/xyz');
+      nav.push('/p/def/story/uvw');
+      nav.nav.history.replaceState(null, '', '/p/ghi/story/rst');
+      nav.setPath('/p/abc/story/xyz');
+      nav.firePopState();
+      await client.flush();
+      await instance.flush();
+      expect(clientInputs).toEqual([
+        '/invitations/example/preview',
+        '/invitations/another/preview',
+        '/p/abc/story/xyz',
+        '/p/def/story/uvw',
+        '/p/ghi/story/rst',
+        '/p/abc/story/xyz',
+      ]);
+      expect(serverInputs).toEqual([pattern, pattern, pattern, pattern]);
+      const res = await fetch(
+        `http://localhost:${socket.port}${instance.basePath}/events?${WINDOW}&product_id=normalize-nav`,
+      );
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { events: Array<{ properties: { path: string } }> };
+      expect(body.events.map((e) => e.properties.path)).toEqual([
+        pattern,
+        pattern,
+        pattern,
+        pattern,
+      ]);
+    } finally {
+      stop();
+      client.shutdown();
+      socket.stop(true);
+      await instance.shutdown();
+    }
+  }, 15_000);
 });

@@ -93,3 +93,37 @@ const cleanup = useBeaconWeb(beacon, { document, window, navigator });
 - **Optional durable queue**: pass a host-supplied `storage` adapter (`load`/`save`/`clear`)
   to persist the outbound queue across app kills on mobile. It holds only undelivered event
   payloads — no identifiers — and is cleared on a successful flush.
+
+## Navigation path normalization
+
+`useBeaconNav(client, nav, { toPath })` maps the initial landing pathname and each
+changed pathname before enqueueing a `page_view`. Omitting `toPath` preserves the
+pathname. Raw pathnames drive deduplication: two different ids still produce two
+views even when both map to the same pattern. A `null` result emits nothing; a throw
+emits nothing and reports a sanitized `console.error`. Later navigation still works.
+An empty string is retained. Cleanup restores the history methods and removes the
+popstate listener. The wrapper uses only injected bindings, with no cookies or storage.
+
+Use an idempotent mapping: the server's `normalizePath` will run again on the client
+output. Already-patterned input must map to itself. This self-contained helper accepts
+your existing client and History API bindings:
+
+```ts
+import type { BeaconClient } from '@pi-innovations/beacon-client';
+import { type NavBindings, useBeaconNav } from '@pi-innovations/beacon-client/web';
+
+export function normalizePath(path: string): string | null {
+  if (path.startsWith('/invitations/')) return null;
+  return /^\/p\/[^/]+\/story\/[^/]+$/.test(path)
+    ? '/p/[legacyId]/story/[storyId]'
+    : path;
+}
+
+export function wireNav(client: BeaconClient, nav: NavBindings): () => void {
+  return useBeaconNav(client, nav, { toPath: normalizePath });
+}
+```
+
+Call `wireNav(client, { history, location, window })` once and call its returned cleanup
+when removing tracking. The same mapping can be supplied to programmatic server
+`createBeacon({ ...config, normalizePath })`; see the integration guide for server scope.

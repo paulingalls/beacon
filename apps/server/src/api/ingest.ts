@@ -30,6 +30,8 @@ const DEFAULT_RATE_WINDOW_MS = 60_000;
 export interface IngestOptions {
   /** Product this Beacon instance logs for (beacon_events.product_id). */
   productId: string;
+  /** Map persisted paths/screens; null drops the event. Defaults to identity. */
+  normalizePath?: (path: string) => string | null;
   /**
    * Opt-in allowlist of accepted product_ids (story-006). When set, a present
    * non-allowlisted body.product_id rejects the batch (403); when unset, any
@@ -220,15 +222,34 @@ export function createIngestHandler(buffer: EventSink, opts: IngestOptions): Han
       context,
     };
 
-    let accepted = 0;
-    for (const raw of events as RawEvent[]) {
-      const event = toEvent(raw, shared, trusted, hashIPs, opts.ipPolicy);
-      if (event) {
-        buffer.push(event);
-        accepted += 1;
+    const staged: BeaconEvent[] = [];
+    try {
+      for (const raw of events as RawEvent[]) {
+        const event = toEvent(raw, shared, trusted, hashIPs, opts.ipPolicy);
+        if (!event) continue;
+        if (opts.normalizePath) {
+          const properties = { ...event.properties };
+          let drop = false;
+          for (const field of event.eventType === 'screen_view' ? ['path', 'screen'] : ['path']) {
+            const value = properties[field];
+            if (typeof value !== 'string') continue;
+            const mapped = opts.normalizePath(value);
+            if (mapped === null) {
+              drop = true;
+              break;
+            }
+            properties[field] = mapped;
+          }
+          if (drop) continue;
+          event.properties = properties;
+        }
+        staged.push(event);
       }
+    } catch {
+      return errorResponse(c, 'INTERNAL_ERROR', 'Path normalization failed');
     }
-    return c.json({ accepted, product_id_used: productId }, 202);
+    for (const event of staged) buffer.push(event);
+    return c.json({ accepted: staged.length, product_id_used: productId }, 202);
   };
 }
 

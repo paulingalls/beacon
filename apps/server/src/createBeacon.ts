@@ -137,6 +137,7 @@ export function createBeacon(
     productId: config.productId,
     getUserId: config.getUserId,
     excludePaths: config.excludePaths,
+    normalizePath: config.normalizePath,
     hashIPs: config.hashIPs,
     ipPolicy,
     tokenStore,
@@ -171,6 +172,7 @@ export function createBeacon(
     createIngestHandler(buffer, {
       ...eventOptions,
       productAllowlist: config.productAllowlist,
+      normalizePath: config.normalizePath,
       trustedIngestToken: config.trustedIngestToken,
     }),
   );

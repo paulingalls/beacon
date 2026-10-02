@@ -17,6 +17,8 @@ import type { Context } from 'hono';
  */
 export interface BeaconConfig {
   productId: string;
+  /** Map persisted paths/screens; null drops the event. Defaults to identity. */
+  normalizePath?: (path: string) => string | null;
   /**
    * Opt-in allowlist of product_ids the shared ingest endpoint accepts (story-006).
    * When set, a batch whose body.product_id is a present non-allowlisted value is

@@ -22,6 +22,8 @@ declare module 'hono' {
 export interface RequestLoggerOptions {
   /** Product this Beacon instance logs for (beacon_events.product_id). */
   productId: string;
+  /** Map the persisted request path; null drops the event. Defaults to identity. */
+  normalizePath?: (path: string) => string | null;
   /** Resolve the authenticated user id from the request, or null. */
   getUserId?: (c: Context) => string | null;
   /** Path prefixes to skip — a request is skipped when its path startsWith any. */
@@ -133,7 +135,16 @@ export function requestLogger(buffer: EventSink, opts: RequestLoggerOptions): Mi
       threw = true;
       throw err;
     } finally {
-      if (canLog) {
+      let loggedPath: string | null = path;
+      if (canLog && opts.normalizePath) {
+        try {
+          loggedPath = opts.normalizePath(path);
+        } catch {
+          console.error('[beacon] path normalization failed');
+          canLog = false;
+        }
+      }
+      if (canLog && loggedPath !== null) {
         try {
           // c.error stays set even when a non-rethrowing onError produced a real
           // response (Hono's compose never clears it), so we key off whether the
@@ -146,7 +157,7 @@ export function requestLogger(buffer: EventSink, opts: RequestLoggerOptions): Mi
               userId,
               visitorToken,
               ip,
-              path,
+              path: loggedPath,
               requestTime,
               responseTimeMs: Date.now() - start,
               status,
