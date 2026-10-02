@@ -1,18 +1,10 @@
-// React Native / Expo lifecycle wrapper (REQUIREMENTS.md §8.3 / PHASE_8 §8.4).
-// react and react-native are uninstalled PEER deps, so this module imports neither —
-// it takes the primitives it needs (useEffect + AppState/Platform/Dimensions) as an
-// injected `rn` bindings object typed by the local interface below. Injection is also
-// the most Expo-robust shape: the host passes its own bundled instances, so there is no
-// duplicate-react-native risk across Expo Go / dev builds / EAS, and tests need no module
-// mocking. Export path: @pi-innovations/beacon-client/react-native (wired in story-005).
+// Hosts inject their bundled framework instances to avoid duplicate React / RN copies.
 
 import type { AppContext } from '../context/appContext';
 import type { BeaconClient } from '../core/client';
 
-/** What a useEffect callback may return: nothing, or a cleanup function. */
 type EffectCleanup = (() => void) | undefined;
 
-/** The minimal slice of react + react-native the wrapper depends on (modern subscription API). */
 export interface ReactNativeBindings {
   useEffect: (effect: () => EffectCleanup, deps?: readonly unknown[]) => void;
   AppState: {
@@ -61,4 +53,23 @@ export function getDeviceContext(
     os: `${rn.Platform.OS} ${rn.Platform.Version}`,
     screen: `${Math.round(width)}x${Math.round(height)}`,
   };
+}
+
+export interface ReactScreenBindings {
+  useEffect: (effect: () => undefined | (() => void), deps?: readonly unknown[]) => void;
+  useRef: <T>(initialValue: T) => { current: T };
+}
+
+export function useBeaconScreenViews(
+  client: BeaconClient,
+  route: string | null,
+  react: ReactScreenBindings,
+): void {
+  const lastScreen = react.useRef<string | null>(null);
+  react.useEffect(() => {
+    if (route === null || route === lastScreen.current) return undefined;
+    client.screenView(route);
+    lastScreen.current = route;
+    return undefined;
+  }, [client, route, react]);
 }
