@@ -56,6 +56,26 @@ export function App() {
 }
 ```
 
+Screen tracking takes React primitives separately. Pass your router's matched route pattern,
+never a concrete path (for example, `/clips/[id]`, never `/clips/123`). The first non-null
+route emits on mount; changes emit once, repeated routes are deduped, and null is ignored.
+Each hook instance keeps its own last emitted route.
+
+```tsx
+import { useEffect, useRef } from 'react';
+import { useBeaconScreenViews } from '@pi-innovations/beacon-client/react-native';
+
+const REACT = { useEffect, useRef };
+
+export function ScreenTracking({ route }: { route: string | null }) {
+  useBeaconScreenViews(beacon, route, REACT);
+  return null;
+}
+```
+
+The same Expo bundle on web uses `useBeaconScreenViews`, not `useBeaconNav`, so app
+and web report identical route names. Supply the same route patterns on both platforms.
+
 ## Web
 
 ```ts
