@@ -9,10 +9,15 @@ import {
   type BeaconClientConfig,
   buildAppContextHeader,
 } from '@pi-innovations/beacon-client';
-import { getDeviceContext, useBeaconLifecycle } from '@pi-innovations/beacon-client/react-native';
+import {
+  getDeviceContext,
+  useBeaconLifecycle,
+  useBeaconScreenViews,
+} from '@pi-innovations/beacon-client/react-native';
 import { useBeaconWeb } from '@pi-innovations/beacon-client/web';
 
 import manifest from './../package.json';
+import { allEvents, build } from './testkit';
 
 describe('@pi-innovations/beacon-client root export', () => {
   test('resolves BeaconClient and the appContext helpers by package name', () => {
@@ -25,6 +30,7 @@ describe('@pi-innovations/beacon-client root export', () => {
 describe('subpath exports', () => {
   test('./react-native resolves the lifecycle wrapper + device context', () => {
     expect(typeof useBeaconLifecycle).toBe('function');
+    expect(typeof useBeaconScreenViews).toBe('function');
     expect(typeof getDeviceContext).toBe('function');
   });
 
@@ -67,4 +73,26 @@ describe('manifest', () => {
     expect(m.exports?.['./react-native']).toBe('./src/platform/reactNative.ts');
     expect(m.exports?.['./web']).toBe('./src/platform/web.ts');
   });
+});
+
+test('README screen hook call is typed and emits through the package subpath', async () => {
+  const { client: beacon, calls } = build();
+  let pending: (() => undefined | (() => void)) | undefined;
+  function useEffect(effect: () => undefined | (() => void), _deps?: readonly unknown[]): void {
+    pending = effect;
+  }
+  function useRef<T>(initialValue: T): { current: T } {
+    return { current: initialValue };
+  }
+  const REACT = { useEffect, useRef };
+  const route: string | null = '/clips/[id]';
+  useBeaconScreenViews(beacon, route, REACT);
+  pending?.();
+  await beacon.flush();
+  expect(
+    allEvents(calls).map(({ event_type, properties }) => ({ event_type, properties })),
+  ).toEqual([{ event_type: 'screen_view', properties: { screen: '/clips/[id]' } }]);
+  beacon.shutdown();
+  const readme = await Bun.file(new URL('../README.md', import.meta.url)).text();
+  expect(readme).toContain('useBeaconScreenViews(beacon, route, REACT);');
 });

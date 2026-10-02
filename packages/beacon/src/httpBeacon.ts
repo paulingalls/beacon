@@ -29,6 +29,8 @@ export interface HttpBeaconOptions {
   getUserId?: (request: Request) => string | null;
   /** SHA-256 the client IP before it leaves the product. Default true. */
   hashIPs?: boolean;
+  /** Forward raw IPs over trusted transport for the server to apply its IP policy. */
+  forwardRawIPs?: boolean;
   /** HttpSink tuning (see HttpSinkOptions). */
   flushInterval?: number;
   maxBatchSize?: number;
@@ -103,7 +105,10 @@ export function createHttpBeacon(opts: HttpBeaconOptions): HttpBeacon {
     } catch (err) {
       console.warn(`[beacon] httpBeacon: getUserId failed: ${String(err)}`);
     }
-    const fields = resolveEventFieldsFromRequest(req, { userId, hashIPs: opts.hashIPs });
+    const fields = resolveEventFieldsFromRequest(req, {
+      userId,
+      hashIPs: opts.forwardRawIPs ? false : opts.hashIPs,
+    });
     return { req, fields };
   };
 

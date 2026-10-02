@@ -8,7 +8,7 @@ This document explains **what Beacon is and why it's built this way**. For how t
 
 ## Why Beacon
 
-- **Privacy by construction.** No cookies, no `localStorage`, no device-side identifiers. A visitor token lives only as a URL parameter during a session and is never persisted on the user's device. There is nothing to consent to because nothing is stored client-side.
+- **Privacy by construction.** No cookies, no `localStorage`, no device-side identifiers. A visitor token lives only as a URL parameter during a session and is never persisted on the user's device. IP hashing is pseudonymous, and privacy obligations depend on how you deploy and use the data.
 - **First-party, self-hosted.** Beacon is the analytics dependency — there are no external trackers. You run one Beacon server; your data never leaves your infrastructure.
 - **Agent-accessible.** The query API is designed for direct use by AI agents: a `/analytics/schema` endpoint provides full introspection so an agent can discover the data model and query it with no prior knowledge (and Beacon can be exposed as an MCP server).
 
@@ -37,7 +37,7 @@ The deployed Beacon server itself lives in **`apps/server`** — a private appli
 
 ## Privacy
 
-Beacon operates without cookies or any client-side storage. There is no third-party data sharing, no cross-site tracking, and no persistent client-side identifiers. Visitor tokens exist only as URL parameters during a browsing session and are never stored on the user's device. IP addresses are hashed before storage by default.
+Beacon operates without cookies or any client-side storage. There is no third-party data sharing, no cross-site tracking, and no persistent client-side identifiers. Visitor tokens exist only as URL parameters during a browsing session and are never stored on the user's device. IP addresses use SHA-256 by default: this is pseudonymous, not anonymous, and IPv4 addresses can be recovered by enumeration. The server can opt into daily in-memory salted hashing (`ipMode: 'daily-salt'`) or omit stored IPs (`ipMode: 'none'`).
 
 ## Documentation
 

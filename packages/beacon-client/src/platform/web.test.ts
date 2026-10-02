@@ -311,3 +311,75 @@ describe('useBeaconNav', () => {
     expect(nav.nav.history.pushState).toBe(original);
   });
 });
+
+describe('normalization web navigation', () => {
+  test('maps landing/push/replace/pop, dedupes raw paths, and retains ownership and cleanup', async () => {
+    await withStorageTrap('normalization must not touch storage', async () => {
+      const { client, calls } = build({ appContext: WEB_CONTEXT });
+      const nav = makeNav('/p/a');
+      const push = nav.nav.history.pushState;
+      const replace = nav.nav.history.replaceState;
+      const seen: string[] = [];
+      const stop = useBeaconNav(client, nav.nav, {
+        toPath: (p) => {
+          seen.push(p);
+          return '/p/[id]';
+        },
+      });
+      const stopSecond = useBeaconNav(client, nav.nav, {
+        toPath: () => {
+          throw new Error('second mapper ran');
+        },
+      });
+      nav.push('/p/a');
+      nav.push('/p/b');
+      nav.replace('/p/c');
+      nav.setPath('/p/d');
+      nav.firePopState();
+      await client.flush();
+      expect(pagePaths(calls)).toEqual(['/p/[id]', '/p/[id]', '/p/[id]', '/p/[id]']);
+      expect(seen).toEqual(['/p/a', '/p/b', '/p/c', '/p/d']);
+      stopSecond();
+      stop();
+      expect(nav.nav.history.pushState).toBe(push);
+      expect(nav.nav.history.replaceState).toBe(replace);
+      expect(nav.removed).toContain('win:popstate');
+    });
+  });
+  for (const kind of ['null', 'throw', 'empty']) {
+    test(`${kind} landing and navigation, sanitized reporting and recovery`, async () => {
+      const { client, calls } = build({ appContext: WEB_CONTEXT });
+      const nav = makeNav('/invitations/secret/preview');
+      const errors: unknown[][] = [];
+      const original = console.error;
+      console.error = (...args) => {
+        errors.push(args);
+      };
+      let stop = () => {};
+      try {
+        stop = useBeaconNav(client, nav.nav, {
+          toPath: (p) => {
+            if (p === '/safe') return p;
+            if (kind === 'throw') throw new Error('secret');
+            return kind === 'null' ? null : '';
+          },
+        });
+        nav.push('/drop');
+        nav.push('/drop');
+        expect(nav.nav.location.pathname).toBe('/drop');
+        await client.flush();
+        expect(pagePaths(calls)).toEqual(kind === 'empty' ? ['', ''] : []);
+        expect(errors).toHaveLength(kind === 'throw' ? 2 : 0);
+        expect(errors.flat().map(String).join(' ')).not.toContain('secret');
+        if (kind === 'throw')
+          expect(errors.flat().map(String).join(' ')).toContain('normalization');
+        nav.push('/safe');
+        await client.flush();
+        expect(pagePaths(calls).at(-1)).toBe('/safe');
+      } finally {
+        stop();
+        console.error = original;
+      }
+    });
+  }
+});

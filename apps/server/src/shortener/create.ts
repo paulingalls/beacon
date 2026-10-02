@@ -3,6 +3,7 @@ import type { Context, Handler } from 'hono';
 import type { Sql } from 'postgres';
 import { errorResponse } from '../api/errors';
 import { applyRateLimit, RateLimiter } from '../api/rateLimit';
+import type { IpPolicy } from '../visitors/ipSalt';
 import { createShortLink, isHttpUrl } from './store';
 
 /** Default create limit: 100 link creations per hour per admin (REQUIREMENTS.md §7.2). */
@@ -18,6 +19,7 @@ export interface CreateOptions {
   getUserId?: (c: Context) => string | null;
   /** Hash the IP fallback rate-limit key. Default true. */
   hashIPs?: boolean;
+  ipPolicy?: IpPolicy;
   /** Socket-address source when X-Forwarded-For is absent. Default Bun's getConnInfo. */
   getClientAddress?: (c: Context) => string | undefined;
   /** Rate-limit tuning. Default 100 creations per hour per admin (§7.2). */
@@ -50,7 +52,9 @@ export function createCreateHandler(opts: CreateOptions): Handler {
     } catch (err) {
       console.warn(`[beacon] create: getUserId failed: ${String(err)}`);
     }
-    const ip = resolveIp(c, hashIPs, getClientAddress);
+    const ip = opts.ipPolicy
+      ? opts.ipPolicy.rateKey(resolveIp(c, false, getClientAddress))
+      : resolveIp(c, hashIPs, getClientAddress);
     const identifier = userId ?? ip ?? 'unknown';
 
     // Check BEFORE reading the body so an over-limit caller is rejected without us

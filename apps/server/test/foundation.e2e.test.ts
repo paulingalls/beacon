@@ -33,6 +33,7 @@ describe.skipIf(!TEST_DB)('Foundation round-trip', () => {
       WHERE table_schema = 'public' AND table_name LIKE 'beacon_%'`;
     const names = tables.map((r) => r.table_name).sort();
     expect(names).toEqual([
+      'beacon_erasures',
       'beacon_events',
       'beacon_meta',
       'beacon_migrations',

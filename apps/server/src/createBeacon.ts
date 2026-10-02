@@ -1,14 +1,8 @@
-// The DB-backed Beacon factory for the deployed server (Milestone 4: physical
-// single-writer boundary). Relocated out of the published @pi-innovations/beacon-sdk
-// package — the SDK now ships HTTP-emit only, and this factory (the one holder of
-// central-DB write creds) lives in the private apps/server. It builds on the SDK's
-// framework-agnostic capture cores + wire types and the server-internal DB modules
-// (storage/, events/buffer, visitors/tokenStore) that relocated here in story-005.
-
 import type { BufferStats } from '@pi-innovations/beacon-sdk';
 import { track as trackEvent } from '@pi-innovations/beacon-sdk/hono';
 import { type Context, Hono, type MiddlewareHandler } from 'hono';
-import { adminGate } from './api/auth';
+import { adminGate, erasureGate } from './api/auth';
+import { createErasureHandler } from './api/erasure';
 import { createIdentifyHandler } from './api/identify';
 import { createIngestHandler } from './api/ingest';
 import { RateLimiter, rateLimitGate } from './api/rateLimit';
@@ -31,6 +25,8 @@ import {
 import { closeDb, createDb } from './storage/db';
 import type { BeaconConfig } from './types';
 import { associateVisitor } from './visitors/associate';
+import { createIpPolicy, type IpPolicyDependencies } from './visitors/ipSalt';
+import { scrubReferrerContext, validateReferrerMode } from './visitors/referrer';
 import { VisitorTokenStore } from './visitors/tokenStore';
 
 /** Query-API rate-limit window: requests/min/user (REQUIREMENTS.md §5.2). */
@@ -106,7 +102,10 @@ export interface Beacon {
  * isolation (§1.3) is handled downstream: createDb never throws and the buffer
  * retries, so a Postgres outage never crashes the host.
  */
-export function createBeacon(config: BeaconConfig): Beacon {
+export function createBeacon(
+  config: BeaconConfig,
+  ipDependencies: IpPolicyDependencies = {},
+): Beacon {
   if (!config.productId) {
     throw new Error('[beacon] config.productId is required');
   }
@@ -119,6 +118,8 @@ export function createBeacon(config: BeaconConfig): Beacon {
     throw new Error('[beacon] config.productId must be included in config.productAllowlist');
   }
 
+  const referrerMode = validateReferrerMode(config.referrerMode);
+  const ipPolicy = createIpPolicy(config, ipDependencies);
   const sql = createDb({
     connectionString: config.postgres.connectionString,
     maxConnections: config.postgres.maxConnections,
@@ -135,25 +136,54 @@ export function createBeacon(config: BeaconConfig): Beacon {
     maxEntries: config.maxVisitorTokens,
   });
 
-  const middleware = requestLogger(buffer, {
+  const basePath = config.basePath ?? '/analytics';
+  const logRequest = requestLogger(buffer, {
     productId: config.productId,
     getUserId: config.getUserId,
     excludePaths: config.excludePaths,
+    normalizePath: config.normalizePath,
     hashIPs: config.hashIPs,
+    ipPolicy,
     tokenStore,
+    referrerMode,
   });
 
-  // track() and the ingest endpoint share the request-context/IP config.
+  const erasurePrefix = `${basePath.replace(/\/$/, '')}/users/`;
+  const middleware: MiddlewareHandler = (c, next) => {
+    // Erasure must not capture its own identity or enqueue an event after the purge.
+    if (
+      c.req.method === 'DELETE' &&
+      c.req.path.startsWith(erasurePrefix) &&
+      /^[^/]+\/events$/.test(c.req.path.slice(erasurePrefix.length))
+    )
+      return next();
+    return logRequest(c, next);
+  };
+
   const eventOptions = {
     productId: config.productId,
     getUserId: config.getUserId,
     hashIPs: config.hashIPs,
+    ipPolicy,
+    referrerMode,
+  };
+
+  const trackSink = {
+    push: (event: Parameters<typeof buffer.push>[0]) => {
+      event.context = scrubReferrerContext(
+        {
+          ...event.context,
+          ip: ipPolicy.storage(event.context?.ip as string | undefined),
+        },
+        referrerMode,
+      );
+      buffer.push(event);
+    },
   };
 
   // Build the ingest handler + router ONCE so the handler's RateLimiter window
   // persists across requests (a fresh handler per router() call would reset it).
   // The route is relative to basePath; the host mounts the sub-app there.
-  const basePath = config.basePath ?? '/analytics';
   const apiRouter = new Hono();
   // The allowlist is ingest-only (track() never reads body.product_id), so add it
   // at the call site rather than to the shared eventOptions.
@@ -162,6 +192,7 @@ export function createBeacon(config: BeaconConfig): Beacon {
     createIngestHandler(buffer, {
       ...eventOptions,
       productAllowlist: config.productAllowlist,
+      normalizePath: config.normalizePath,
       trustedIngestToken: config.trustedIngestToken,
     }),
   );
@@ -180,6 +211,12 @@ export function createBeacon(config: BeaconConfig): Beacon {
     }),
   );
 
+  apiRouter.delete(
+    '/users/:userId/events',
+    erasureGate({ isAdmin: config.isAdmin, trustedIngestToken: config.trustedIngestToken }),
+    createErasureHandler(sql, buffer),
+  );
+
   // The five read endpoints (REQUIREMENTS.md §5.4), each behind the admin gate
   // (§5.1) and a per-user query rate limiter (§5.2). Built ONCE so the limiter
   // window and the schema property-keys cache persist across requests — a fresh
@@ -194,6 +231,7 @@ export function createBeacon(config: BeaconConfig): Beacon {
     limiter: queryLimiter,
     getUserId: (c) => config.getUserId?.(c) ?? null,
     hashIPs: config.hashIPs,
+    ipPolicy,
   });
   apiRouter.get('/schema', admin, limit, createSchemaHandler(sql, { basePath }));
   apiRouter.get('/events', admin, limit, createEventsHandler(sql));
@@ -213,13 +251,6 @@ export function createBeacon(config: BeaconConfig): Beacon {
   // script builds same-origin query URLs.
   apiRouter.get('/dashboard', admin, createDashboardHandler({ basePath }));
 
-  // URL shortener (REQUIREMENTS.md §7). Build the link cache + router ONCE so the
-  // LRU/TTL windows and the create limiter persist across requests — the same
-  // build-once rationale as apiRouter above. shortDomain defaults to '' → relative
-  // `/CODE` urls (usable when the shortener is mounted at a root); a host on a
-  // dedicated short domain sets config.shortDomain. getUserId is wired into both
-  // handlers so the per-admin create limit (§7.2) keys on the admin, not a single
-  // shared bucket, and clicks attribute to the authenticated user.
   const shortDomain = config.shortDomain ?? '';
   const shortLinkCache = new ShortLinkCache({
     fetch: (code) => getShortLink(sql, code),
@@ -235,6 +266,7 @@ export function createBeacon(config: BeaconConfig): Beacon {
       shortDomain,
       getUserId: config.getUserId,
       hashIPs: config.hashIPs,
+      ipPolicy,
       rateLimit: { limit: config.shortLinkCreateRateLimit },
     }),
   );
@@ -245,7 +277,9 @@ export function createBeacon(config: BeaconConfig): Beacon {
       sql,
       buffer,
       hashIPs: config.hashIPs,
+      ipPolicy,
       getUserId: config.getUserId,
+      referrerMode,
     }),
   );
 
@@ -254,7 +288,8 @@ export function createBeacon(config: BeaconConfig): Beacon {
   return {
     basePath,
     middleware: () => middleware,
-    track: (c, eventType, properties) => trackEvent(buffer, c, eventOptions, eventType, properties),
+    track: (c, eventType, properties) =>
+      trackEvent(trackSink, c, { ...eventOptions, hashIPs: false }, eventType, properties),
     router: () => apiRouter,
     shortener: () => shortenerRouter,
     createShortLink: (opts) => persistShortLink(sql, { ...opts, shortDomain }),
@@ -269,6 +304,7 @@ export function createBeacon(config: BeaconConfig): Beacon {
     associateVisitor: (c, userId) =>
       associateVisitor(buffer, sql, tokenStore, getVisitorToken(c), userId),
     shutdown: async () => {
+      ipPolicy.stop();
       tokenStore.stop();
       await buffer.stop();
       await closeDb(sql);

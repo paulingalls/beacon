@@ -36,8 +36,10 @@ describe('docs/DEPLOYMENT.md droplet runbook', () => {
     'ADMIN_TOKEN',
     'SHORT_DOMAIN',
     'TRUSTED_INGEST_TOKEN',
+    'IP_MODE',
+    'REFERRER_MODE',
   ])('documents the %s environment variable', (key) => {
-    expect(runbook).toContain(key);
+    expect(runbook).toMatch(new RegExp(`^\\|[^\\n]*\\x60${key}\\x60[^\\n]*\\|`, 'm'));
   });
 
   // The non-obvious managed-PG + Caddy steps discovered during the first live bring-up — omitting
