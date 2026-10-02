@@ -73,6 +73,41 @@ describe.skipIf(!TEST_DB)('erasure socket', () => {
     };
   }
 
+  test('erasure bypasses default request logging on success and refusal', async () => {
+    for (const kind of ['trusted', 'refused', 'throwing user resolver']) {
+      const f = await fixture({
+        excludePaths: [],
+        getUserId: () => {
+          if (kind === 'throwing user resolver') throw new Error(U);
+          return U;
+        },
+      });
+      const logs = [spyOn(console, 'warn'), spyOn(console, 'error'), spyOn(console, 'log')].map(
+        (spy) => spy.mockImplementation(() => {}),
+      );
+      try {
+        await f.sql`INSERT INTO beacon_events (product_id, event_type, user_id) VALUES ('erase', 'stored', ${U})`;
+        const before = f.beacon.stats();
+        const res = await f.erase(kind === 'refused' ? '' : 'Bearer secret');
+        expect(res.status).toBe(kind === 'refused' ? 403 : 200);
+        expect(f.beacon.stats()).toEqual(before);
+        await f.beacon.flush();
+        expect(await f.sql`SELECT * FROM beacon_events WHERE user_id = ${U}`).toHaveLength(
+          kind === 'refused' ? 1 : 0,
+        );
+        expect(JSON.stringify(logs.flatMap((log) => log.mock.calls))).not.toContain(U);
+        if (kind !== 'throwing user resolver') {
+          await f.visit();
+          expect(f.beacon.stats().buffered).toBe(1);
+        }
+      } finally {
+        await f.close();
+        for (const log of logs) log.mockRestore();
+      }
+      await f.sql`TRUNCATE beacon_events, beacon_meta`;
+    }
+  });
+
   for (const fail of [true, false]) {
     test(fail
       ? 'erasure roundtrip defeats drain and failed requeue'
