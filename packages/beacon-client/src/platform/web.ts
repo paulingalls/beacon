@@ -81,20 +81,34 @@ const NAV_PATCHED = Symbol('beaconNavPatched');
  * cleanup), so an accidental double-wire — overlapping wires, hot-reload, a StrictMode remount
  * without an intervening cleanup — can't stack the monkey-patch and fire every page_view twice.
  */
-export function useBeaconNav(client: BeaconClient, nav: NavBindings): () => void {
+export function useBeaconNav(
+  client: BeaconClient,
+  nav: NavBindings,
+  opts: { toPath?: (pathname: string) => string | null } = {},
+): () => void {
   // Already wired by an earlier useBeaconNav (its brand survives on the live pushState)? Bail
   // before tracking/patching — re-patching would double the landing view and every nav emit.
   if ((nav.history.pushState as { [NAV_PATCHED]?: true })[NAV_PATCHED]) return () => {};
 
+  const trackPath = (pathname: string) => {
+    let path: string | null = pathname;
+    try {
+      if (opts.toPath) path = opts.toPath(pathname);
+    } catch {
+      console.error('[beacon] path normalization failed');
+      return;
+    }
+    if (path !== null) client.track('page_view', { path });
+  };
   let lastPath = nav.location.pathname;
   const emit = () => {
     const path = nav.location.pathname;
     if (path === lastPath) return; // dedup: no page_view when the pathname is unchanged
     lastPath = path;
-    client.track('page_view', { path });
+    trackPath(path);
   };
 
-  client.track('page_view', { path: lastPath }); // initial landing-page view
+  trackPath(lastPath);
 
   // pushState/replaceState update location synchronously, so emit() reads the NEW pathname.
   const originalPush = nav.history.pushState;

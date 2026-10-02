@@ -71,6 +71,46 @@ describe.skipIf(!TEST_DB)('Capstone — live Postgres', () => {
     await beacon.shutdown();
   });
 
+  for (const mode of ['default', 'pattern', 'null', 'throw']) {
+    test(`normalization mounted socket logger: ${mode}`, async () => {
+      const beacon = createBeacon({
+        productId: 'logger-normalization',
+        postgres: { connectionString: TEST_DB as string },
+        flushInterval: 60_000,
+        normalizePath:
+          mode === 'default'
+            ? undefined
+            : (path) => {
+                if (mode === 'throw') throw new Error(path);
+                return mode === 'null' ? null : '/p/[legacyId]/story/[storyId]';
+              },
+      });
+      const app = new Hono();
+      app.use('*', beacon.middleware());
+      app.get('*', (c) => c.text('host', 201));
+      const server = Bun.serve({ port: 0, fetch: app.fetch });
+      try {
+        const path = mode === 'default' ? '/P/abc%20/story/xyz' : '/p/abc/story/xyz';
+        const res = await fetch(`http://localhost:${server.port}${path}?token=secret`);
+        expect(res.status).toBe(201);
+        expect(await res.text()).toBe('host');
+        await beacon.flush();
+        const rows = await getDb()<{ path: string }[]>`
+          SELECT properties->>'path' AS path FROM beacon_events WHERE product_id = 'logger-normalization'`;
+        expect(rows.map((r) => r.path)).toEqual(
+          mode === 'default'
+            ? ['/P/abc /story/xyz']
+            : mode === 'pattern'
+              ? ['/p/[legacyId]/story/[storyId]']
+              : [],
+        );
+      } finally {
+        server.stop(true);
+        await beacon.shutdown();
+      }
+    });
+  }
+
   test('events buffered during a transient outage drain on recovery, with no loss', async () => {
     const migrator = getDb();
     // flakyOnce wraps the live client: the first begin() rejects (simulated

@@ -82,7 +82,7 @@ function buildModule(blocks: string[]): string {
       // Only hoist TOP-LEVEL imports (column 0). An indented `import ` is a statement
       // inside a block body (e.g. a dynamic import) and must stay where it is.
       if (line.startsWith('import ')) {
-        imports.add(line);
+        imports.add(line.replace("from './apps/", "from '../../../../apps/"));
         continue;
       }
       const trimmed = line.trim();

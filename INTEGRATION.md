@@ -391,3 +391,49 @@ under the legacy default (double hash). This preserves existing VodShorter store
 values. Opt into `forwardRawIPs: true` on a trusted server product to apply the server
 mode once. Raw addresses then travel over the authenticated transport; use HTTPS in
 production. SDK forwarding carries no server salt.
+
+## Path normalization
+
+Programmatic `createBeacon` accepts `normalizePath?: (path: string) => string | null`.
+Omission preserves existing values. The request logger applies it to `properties.path`;
+ingest applies it to string `properties.path` on every event, including SDK `capture()`
+request events and custom events, and to string `properties.screen` on `screen_view`.
+Absent/non-string values and `screen` on other event types are unchanged.
+
+A `null` result drops the entire event. Other events in a mixed batch are accepted and
+counted normally; an empty string is retained. A throw drops logger output and reports
+a sanitized `console.error` without changing the host response. Ingest stages the whole
+batch: a throw returns sanitized `INTERNAL_ERROR`/500 and buffers none of that batch,
+even when earlier events were valid. Web navigation drops the event and reports a
+sanitized `console.error`; later navigation still works.
+
+Supply an idempotent mapping on both client and server: ingest maps the client's output
+again, so already-patterned input must return itself. Route patterns remove ids while
+preserving route counts; invitation routes can instead be dropped.
+
+```ts
+import { createBeacon } from './apps/server/src/createBeacon';
+import { BeaconClient } from '@pi-innovations/beacon-client';
+import { type NavBindings, useBeaconNav } from '@pi-innovations/beacon-client/web';
+
+function normalizePath(path: string): string | null {
+  if (path.startsWith('/invitations/')) return null;
+  return /^\/p\/[^/]+\/story\/[^/]+$/.test(path)
+    ? '/p/[legacyId]/story/[storyId]'
+    : path;
+}
+
+const server = createBeacon({
+  productId: 'my-product',
+  postgres: { connectionString: 'postgres://user:password@localhost/beacon' },
+  normalizePath,
+});
+function wireNavigation(client: BeaconClient, nav: NavBindings) {
+  return useBeaconNav(client, nav, { toPath: normalizePath });
+}
+```
+
+The server callback is programmatic configuration, not an environment variable or a
+callback accepted by the standalone server entry point. Normalization covers the logger,
+ingest, and web navigation wrapper. Direct server `Beacon.track()` calls, arbitrary
+properties, context URLs, and other fields remain the caller's responsibility.
