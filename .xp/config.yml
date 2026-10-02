@@ -10,10 +10,7 @@ debt_budget: 0.2     # maximum share of scheduled debt; no allocation to fill
 constraints_chars_cap: 4500  # hard character ceiling; retire or shorten a rule
 profile_target: 806  # story-card token allowance; also the default when absent
 # versioning: off     # disables XP versions and tags; version_files is then ignored
-# version_files: path/to/manifest.json  # REQUIRED before your first release:
-#                      # comma-separated JSON manifests whose version the tag must match.
-#                      # `none` releases WITHOUT that wall — say it deliberately, because
-#                      # unset refuses: a tag no file declares is the failure this prevents.
+version_files: packages/beacon/package.json, packages/beacon-client/package.json, apps/server/package.json
 # teardown_timeout: 60  # seconds before close kills worktree teardown
 # review:
 #   verify_batches: 2   # sprint-close verifier AGENTS per round. Bounds the
