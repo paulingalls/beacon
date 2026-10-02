@@ -21,21 +21,17 @@ profile_target: 806  # story-card token allowance; also the default when absent
 #                       # one agent per candidate.
 
 roles:               # harness/model[/effort]; the lead overrides per story in plan.md
-  # Mirrored from ../legacy at setup. Families alternate so the leg that argues with a
-  # piece of work does not share its author's priors: codex plans/builds/fixes/finds,
-  # claude reviews/verifies/closes. Reviewer stays claude: a codex story reviewer's
-  # workspace-write sandbox is denied the Docker socket, and the DB-backed suite needs it.
-  lead: claude/claude-opus-5-5
+  lead: codex/gpt-6.1-sol/medium
   planner: codex/gpt-6.1-sol/medium
   executor: codex/gpt-6.1-sol/medium
-  reviewer: claude/claude-opus-5-5/medium
+  reviewer: codex/gpt-6.1-sol/medium
   slate-reviewer: codex/gpt-6.1-sol/medium
-  card-refresher: claude/claude-opus-5-5/low
-  plan-reviewer: claude/claude-opus-5-5/high
+  card-refresher: codex/gpt-6.1-sol/medium
+  plan-reviewer: codex/gpt-6.1-sol/medium
   finder: codex/gpt-6.1-sol/medium
-  verifier: claude/claude-opus-5-5/medium
+  verifier: codex/gpt-6.1-sol/medium
   fixer: codex/gpt-6.1-sol/medium
-  closer: claude/claude-opus-5-5/medium
+  closer: codex/gpt-6.1-sol/medium
 
 tests:
   # Tiers are package.json scripts shared with lefthook.yml (fast = pre-commit,
