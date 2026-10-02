@@ -37,6 +37,7 @@ describe('docs/DEPLOYMENT.md droplet runbook', () => {
     'SHORT_DOMAIN',
     'TRUSTED_INGEST_TOKEN',
     'IP_MODE',
+    'REFERRER_MODE',
   ])('documents the %s environment variable', (key) => {
     expect(runbook).toMatch(new RegExp(`^\\|[^\\n]*\\x60${key}\\x60[^\\n]*\\|`, 'm'));
   });

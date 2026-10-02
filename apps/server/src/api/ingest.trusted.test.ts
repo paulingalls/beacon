@@ -231,3 +231,60 @@ describe('createIngestHandler — trusted bearer identity (M2)', () => {
     }
   });
 });
+
+describe('referrerMode ingest', () => {
+  for (const mode of [undefined, 'raw', 'origin', 'origin-and-path'] as const) {
+    for (const trusted of [false, true]) {
+      test(`${mode} trusted=${trusted} owns policy after context replacement`, async () => {
+        const { buffer, pushed } = recordingBuffer();
+        const app = appWith(buffer, {
+          productId: 'p',
+          trustedIngestToken: 'secret',
+          referrerMode: mode,
+        });
+        const input = 'https://site.example/a?token=x#f';
+        const source = { referrer: input, extra: 1, referrerMode: 'raw' };
+        const headers = { referer: input, ...(trusted ? { authorization: 'Bearer secret' } : {}) };
+        const res = await post(
+          app,
+          {
+            referrerMode: 'raw',
+            events: [
+              { event_type: 'valid', context: source },
+              { event_type: 'invalid', context: { referrer: 'not a URL' } },
+              { event_type: 'fallback', context: [] },
+              { event_type: 'absent' },
+            ],
+          },
+          headers,
+        );
+        expect(res.status).toBe(202);
+        expect(pushed).toHaveLength(4);
+        const expected =
+          mode === 'origin'
+            ? 'https://site.example'
+            : mode === 'origin-and-path'
+              ? 'https://site.example/a'
+              : input;
+        expect(pushed[0]?.context?.referrer).toBe(expected);
+        expect(pushed[2]?.context?.referrer).toBe(expected);
+        expect(pushed[3]?.context?.referrer).toBe(expected);
+        const invalid = pushed[1]?.context as Record<string, unknown>;
+        if (trusted && (mode === 'origin' || mode === 'origin-and-path'))
+          expect(Object.hasOwn(invalid, 'referrer')).toBe(false);
+        else expect(invalid.referrer).toBe(trusted ? 'not a URL' : expected);
+        if (trusted) expect(pushed[0]?.context?.extra).toBe(1);
+        const bad = await post(
+          app,
+          { events: [{ event_type: 'bad_header' }] },
+          { referer: 'not a URL' },
+        );
+        expect(bad.status).toBe(202);
+        const last = pushed[4]?.context as Record<string, unknown>;
+        if (mode === 'origin' || mode === 'origin-and-path')
+          expect(Object.hasOwn(last, 'referrer')).toBe(false);
+        else expect(last.referrer).toBe('not a URL');
+      });
+    }
+  }
+});

@@ -366,18 +366,19 @@ Beacon's query API is designed for direct use by AI agents. The `/analytics/sche
 The deployed server is configured by environment (see [Deploying the Beacon server](#deploying-the-beacon-server)); its full option set is `BeaconConfig` in `apps/server/src/types.ts`.
 
 
-### Server IP configuration
+### Server referrer and IP configuration
 
 `createBeacon(config)` in the private server owns storage and rate-limit policy:
 
 | Option | Type | Default | Description |
 |---|---|---|---|
+| `referrerMode` | `'raw' \| 'origin' \| 'origin-and-path'` | `'raw'` | Server-owned policy for newly stored referrers on logger, ingest (including trusted relay), `Beacon.track()`, and short-link clicks. Scrubbing removes query, fragment, and credentials; invalid or non-HTTP(S) referrers are omitted. Landing-URL attribution is unchanged. |
 | `ipMode` | `'sha256' \| 'daily-salt' \| 'none'` | unset | `sha256` preserves legacy hashing; `daily-salt` uses HMAC-SHA-256 with a random in-memory salt; `none` omits IP from stored context. |
 | `hashIPs` | `boolean` | `true` | Legacy setting when `ipMode` is absent; `false` preserves raw storage. |
 
 Explicit `ipMode` with `hashIPs: false` throws before resources start. With `hashIPs`
 unset or true, the explicit mode wins. Without either setting, SHA-256 remains the default.
-The host maps optional `IP_MODE` to `ipMode`; invalid modes throw.
+The host maps optional `IP_MODE` to `ipMode` and `REFERRER_MODE` to `referrerMode`; invalid modes throw before resources start. Unset `REFERRER_MODE` preserves referrers byte for byte. SDK capture continues to emit no attribution; this policy does not add attribution capture to the SDK.
 
 Daily salts belong to one Beacon instance/process, rotate at UTC midnight even while
 idle, and are discarded and cleared when replaced or stopped. They never leave memory.

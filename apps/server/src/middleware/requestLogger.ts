@@ -6,7 +6,9 @@ import {
 } from '@pi-innovations/beacon-sdk';
 import { defaultClientAddress, honoRequest } from '@pi-innovations/beacon-sdk/hono';
 import type { Context, MiddlewareHandler } from 'hono';
+import type { BeaconConfig } from '../types';
 import type { IpPolicy } from '../visitors/ipSalt';
+import { scrubReferrerContext } from '../visitors/referrer';
 import type { VisitorTokenStore } from '../visitors/tokenStore';
 
 // Expose the visitor token on the Hono context so the host app can read it
@@ -20,6 +22,7 @@ declare module 'hono' {
 }
 
 export interface RequestLoggerOptions {
+  referrerMode?: BeaconConfig['referrerMode'];
   /** Product this Beacon instance logs for (beacon_events.product_id). */
   productId: string;
   /** Map the persisted request path; null drops the event. Defaults to identity. */
@@ -161,6 +164,7 @@ export function requestLogger(buffer: EventSink, opts: RequestLoggerOptions): Mi
               requestTime,
               responseTimeMs: Date.now() - start,
               status,
+              referrerMode: opts.referrerMode,
             }),
           );
         } catch (err) {
@@ -194,6 +198,7 @@ function captureAttribution(req: BeaconRequest, store: VisitorTokenStore, token:
 }
 
 interface BuildArgs {
+  referrerMode?: BeaconConfig['referrerMode'];
   productId: string;
   userId: string | null;
   visitorToken: string | null;
@@ -225,6 +230,6 @@ function buildEvent(req: BeaconRequest, args: BuildArgs): BeaconEvent {
       status,
       response_time_ms: responseTimeMs,
     },
-    context,
+    context: scrubReferrerContext(context, args.referrerMode),
   };
 }

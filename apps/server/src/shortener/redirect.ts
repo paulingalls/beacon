@@ -3,7 +3,9 @@ import { resolveEventFields } from '@pi-innovations/beacon-sdk/hono';
 import type { Context, Handler } from 'hono';
 import type { Sql } from 'postgres';
 import type { EventBuffer } from '../events/buffer';
+import type { BeaconConfig } from '../types';
 import type { IpPolicy } from '../visitors/ipSalt';
+import { scrubReferrerContext } from '../visitors/referrer';
 import type { ShortLinkCache } from './cache';
 import { incrementClickCount, type ShortLinkRecord } from './store';
 
@@ -13,6 +15,7 @@ const NOT_FOUND_HTML =
   '<body><h1>Link not found</h1><p>This short link is invalid or has expired.</p></body></html>';
 
 export interface RedirectOptions {
+  referrerMode?: BeaconConfig['referrerMode'];
   /** Cache wrapping the store loader; resolves a live link or null. */
   cache: ShortLinkCache;
   /** Postgres client for the fire-and-forget click-count increment. */
@@ -83,7 +86,7 @@ function logClick(c: Context, opts: RedirectOptions, record: ShortLinkRecord): v
     visitorToken,
     platform,
     properties: { code: record.code, destination: record.destination },
-    context,
+    context: scrubReferrerContext(context, opts.referrerMode),
     attribution,
   });
 }

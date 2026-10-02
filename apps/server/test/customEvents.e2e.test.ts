@@ -126,3 +126,63 @@ describe.skipIf(!TEST_DB)('Capstone — custom events round-trip (live Postgres)
     expect(batch.every((r) => r.platform === 'web')).toBe(true);
   });
 });
+
+describe.skipIf(!TEST_DB)('referrerMode stored logger, track and public ingest', () => {
+  const getDb = withTestDb(TEST_DB as string);
+  for (const mode of [undefined, 'raw', 'origin', 'origin-and-path'] as const) {
+    for (const input of ['https://site.example/a?token=x#f', 'not a URL']) {
+      for (const writer of ['logger', 'track', 'ingest']) {
+        test(`${mode} ${writer} ${input}`, async () => {
+          const beacon = createBeacon({
+            productId: 'referrer',
+            postgres: { connectionString: TEST_DB as string },
+            referrerMode: mode,
+            flushInterval: 60_000,
+          });
+          open.push(beacon);
+          const app = appWith(beacon);
+          const socket = Bun.serve({ port: 0, fetch: app.fetch });
+          try {
+            const res = await fetch(
+              `http://localhost:${socket.port}${writer === 'ingest' ? '/analytics/events' : '/buy'}`,
+              {
+                headers: { referer: input, 'content-type': 'application/json' },
+                ...(writer === 'ingest'
+                  ? {
+                      method: 'POST',
+                      body: JSON.stringify({
+                        events: [{ event_type: 'public_pin', properties: { value: 1 } }],
+                      }),
+                    }
+                  : {}),
+              },
+            );
+            expect(res.status).toBe(writer === 'ingest' ? 202 : 200);
+            await beacon.flush();
+            const type =
+              writer === 'logger' ? 'request' : writer === 'track' ? 'purchase' : 'public_pin';
+            const rows = await getDb()<
+              { context: Record<string, unknown>; properties: Record<string, unknown> }[]
+            >`SELECT context, properties FROM beacon_events WHERE event_type = ${type}`;
+            expect(rows).toHaveLength(1);
+            const context = rows[0]?.context as Record<string, unknown>;
+            if ((mode === 'origin' || mode === 'origin-and-path') && input === 'not a URL')
+              expect(Object.hasOwn(context, 'referrer')).toBe(false);
+            else
+              expect(context.referrer).toBe(
+                mode === 'origin'
+                  ? 'https://site.example'
+                  : mode === 'origin-and-path'
+                    ? 'https://site.example/a'
+                    : input,
+              );
+            if (writer === 'track') expect(rows[0]?.properties).toEqual({ amount: 9 });
+            if (writer === 'ingest') expect(rows[0]?.properties).toEqual({ value: 1 });
+          } finally {
+            socket.stop(true);
+          }
+        });
+      }
+    }
+  }
+});

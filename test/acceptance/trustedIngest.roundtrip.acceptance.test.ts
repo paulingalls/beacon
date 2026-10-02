@@ -256,4 +256,109 @@ describe.skipIf(!TEST_DB)('capstone — trusted-ingest round-trip (relay → ing
       }
     }, 15_000);
   }
+  for (const mode of [undefined, 'raw', 'origin', 'origin-and-path'] as const) {
+    for (const input of ['https://site.example/a?token=x#f', 'not a URL']) {
+      for (const writer of ['relay', 'sdk']) {
+        test(`referrerMode ${mode} ${writer} ${input}`, async () => {
+          const product = `referrer-${mode}-${writer}-${input.length}`;
+          const instance = createBeacon({
+            productId: product,
+            postgres: { connectionString: TEST_DB as string },
+            referrerMode: mode,
+            trustedIngestToken: SECRET,
+            isAdmin: () => true,
+            flushInterval: 60_000,
+          });
+          const app = new Hono();
+          app.route(instance.basePath, instance.router());
+          const socket = Bun.serve({ port: 0, fetch: app.fetch });
+          const url = `http://localhost:${socket.port}${instance.basePath}/events`;
+          const sdk = createHttpBeacon({
+            productId: product,
+            endpoint: url,
+            trustedIngestToken: SECRET,
+            flushInterval: 60_000,
+          });
+          try {
+            if (writer === 'sdk') {
+              sdk.capture(
+                new Request('https://product.example/landing?utm_source=landing&gclid=click', {
+                  headers: { referer: input },
+                }),
+                { status: 201 },
+              );
+              await sdk.flush();
+            } else {
+              const res = await fetch(url, {
+                method: 'POST',
+                headers: {
+                  'content-type': 'application/json',
+                  authorization: `Bearer ${SECRET}`,
+                  referer: 'https://relay.example/private?secret=y',
+                },
+                body: JSON.stringify({
+                  product_id: product,
+                  events: [
+                    {
+                      event_type: 'relay_pin',
+                      context: { referrer: input, extra: 1 },
+                      properties: { value: 1 },
+                    },
+                  ],
+                }),
+              });
+              expect(res.status).toBe(202);
+            }
+            await instance.flush();
+            const stored = await sql<
+              {
+                context: Record<string, unknown>;
+                attribution: unknown;
+                properties: Record<string, unknown>;
+              }[]
+            >`SELECT context, attribution, properties FROM beacon_events WHERE product_id = ${product}`;
+            expect(stored).toHaveLength(1);
+            const read = await fetch(`${url}?${WINDOW}&product_id=${product}`);
+            expect(read.status).toBe(200);
+            const body = (await read.json()) as {
+              events: Array<{
+                context: Record<string, unknown>;
+                attribution: unknown;
+                properties: Record<string, unknown>;
+              }>;
+            };
+            expect(body.events).toHaveLength(1);
+            for (const row of [stored[0], body.events[0]]) {
+              const context = row?.context as Record<string, unknown>;
+              if ((mode === 'origin' || mode === 'origin-and-path') && input === 'not a URL')
+                expect(Object.hasOwn(context, 'referrer')).toBe(false);
+              else
+                expect(context.referrer).toBe(
+                  mode === 'origin'
+                    ? 'https://site.example'
+                    : mode === 'origin-and-path'
+                      ? 'https://site.example/a'
+                      : input,
+                );
+              if (writer === 'sdk') {
+                expect(row?.attribution).toEqual({});
+                expect(row?.properties).toMatchObject({
+                  path: '/landing',
+                  method: 'GET',
+                  status: 201,
+                });
+              } else {
+                expect(context.extra).toBe(1);
+                expect(row?.properties).toEqual({ value: 1 });
+              }
+            }
+          } finally {
+            await sdk.shutdown();
+            socket.stop(true);
+            await instance.shutdown();
+          }
+        });
+      }
+    }
+  }
 });

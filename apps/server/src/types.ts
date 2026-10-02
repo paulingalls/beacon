@@ -16,6 +16,7 @@ import type { Context } from 'hono';
  * shortener, and dashboard config fields are added by the phases that use them.
  */
 export interface BeaconConfig {
+  referrerMode?: 'raw' | 'origin' | 'origin-and-path';
   productId: string;
   /** Map persisted paths/screens; null drops the event. Defaults to identity. */
   normalizePath?: (path: string) => string | null;

@@ -53,6 +53,15 @@ This document is the implementation contract for Beacon. It covers every decisio
 [Read this section](requirements/client-and-operations.md#12-non-requirements-out-of-scope-for-v1).
 
 
+Server referrer policy: `referrerMode` accepts `raw` (default), `origin`, or
+`origin-and-path`. The server applies it to all newly stored `context.referrer`
+values: request logger, public and trusted ingest, `Beacon.track()`, and short-link
+clicks. Raw preserves input byte for byte. Scrubbing stores only the HTTP(S) origin
+or origin plus path, without credentials, query or fragment; invalid or non-web
+referrers leave the key absent. Landing-URL UTM/click-id attribution is unchanged,
+including the SDK capture path's existing absence of attribution. Invalid config
+is rejected before resource startup. The host reads optional `REFERRER_MODE`.
+
 Server IP policy: `ipMode` accepts `sha256`, `daily-salt`, or `none`. An absent mode
 preserves the legacy `hashIPs` default; explicit mode with `hashIPs: false` is rejected.
 Daily-salt uses per-instance in-memory HMAC-SHA-256, rotates at UTC midnight, and

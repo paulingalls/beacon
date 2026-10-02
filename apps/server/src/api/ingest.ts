@@ -8,7 +8,9 @@ import {
 } from '@pi-innovations/beacon-sdk';
 import { honoRequest } from '@pi-innovations/beacon-sdk/hono';
 import type { Context, Handler } from 'hono';
+import type { BeaconConfig } from '../types';
 import type { IpPolicy } from '../visitors/ipSalt';
+import { scrubReferrerContext } from '../visitors/referrer';
 import { verifyTrustedBearer } from './auth';
 import { errorResponse } from './errors';
 import { applyRateLimit, RateLimiter } from './rateLimit';
@@ -28,6 +30,7 @@ const DEFAULT_RATE_LIMIT = 10;
 const DEFAULT_RATE_WINDOW_MS = 60_000;
 
 export interface IngestOptions {
+  referrerMode?: BeaconConfig['referrerMode'];
   /** Product this Beacon instance logs for (beacon_events.product_id). */
   productId: string;
   /** Map persisted paths/screens; null drops the event. Defaults to identity. */
@@ -227,6 +230,7 @@ export function createIngestHandler(buffer: EventSink, opts: IngestOptions): Han
       for (const raw of events as RawEvent[]) {
         const event = toEvent(raw, shared, trusted, hashIPs, opts.ipPolicy);
         if (!event) continue;
+        event.context = scrubReferrerContext(event.context ?? {}, opts.referrerMode);
         if (opts.normalizePath) {
           const properties = { ...event.properties };
           let drop = false;

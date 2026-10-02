@@ -158,6 +158,7 @@ systemctl enable --now beacon
 |---|---|---|
 | `DATABASE_URL` | yes | Managed Postgres connection string (TLS). Host fails fast if unset. |
 | `ADMIN_TOKEN` | set in prod | Bearer token gating dashboard + query API. **Unset ⇒ those surfaces fail closed (403).** |
+| `REFERRER_MODE` | unset (`raw`) | Optional `raw`, `origin`, or `origin-and-path`. Server policy for all newly stored referrers, including trusted ingest, track, and short-link clicks. Scrubbing omits invalid or non-HTTP(S) referrers and removes credentials, query, and fragment. Landing-URL attribution is unchanged. Invalid modes fail startup. |
 | `IP_MODE` | unset | Optional `sha256`, `daily-salt`, or `none`; unset preserves legacy SHA-256. Invalid values fail startup. Daily salts rotate at UTC midnight, stay in memory, and differ across restarts/replicas. `none` omits stored IPs while keeping in-memory rate limits. |
 | `TRUSTED_INGEST_TOKEN` | set for s2s | Bearer secret authorizing a trusted caller to assert per-event `user_id`/`context` in the ingest body (M2). **Unset ⇒ trusted ingest disabled (anonymous-only).** See [`OPERATIONS.md`](./OPERATIONS.md) for rotation. |
 | `SHORT_DOMAIN` | no | Absolute base for generated short URLs. Without it the shortener emits relative `/CODE` redirects. |

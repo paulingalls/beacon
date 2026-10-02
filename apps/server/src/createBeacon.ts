@@ -25,6 +25,7 @@ import { closeDb, createDb } from './storage/db';
 import type { BeaconConfig } from './types';
 import { associateVisitor } from './visitors/associate';
 import { createIpPolicy, type IpPolicyDependencies } from './visitors/ipSalt';
+import { scrubReferrerContext, validateReferrerMode } from './visitors/referrer';
 import { VisitorTokenStore } from './visitors/tokenStore';
 
 /** Query-API rate-limit window: requests/min/user (REQUIREMENTS.md §5.2). */
@@ -116,6 +117,7 @@ export function createBeacon(
     throw new Error('[beacon] config.productId must be included in config.productAllowlist');
   }
 
+  const referrerMode = validateReferrerMode(config.referrerMode);
   const ipPolicy = createIpPolicy(config, ipDependencies);
   const sql = createDb({
     connectionString: config.postgres.connectionString,
@@ -141,6 +143,7 @@ export function createBeacon(
     hashIPs: config.hashIPs,
     ipPolicy,
     tokenStore,
+    referrerMode,
   });
 
   const eventOptions = {
@@ -148,14 +151,18 @@ export function createBeacon(
     getUserId: config.getUserId,
     hashIPs: config.hashIPs,
     ipPolicy,
+    referrerMode,
   };
 
   const trackSink = {
     push: (event: Parameters<typeof buffer.push>[0]) => {
-      event.context = {
-        ...event.context,
-        ip: ipPolicy.storage(event.context?.ip as string | undefined),
-      };
+      event.context = scrubReferrerContext(
+        {
+          ...event.context,
+          ip: ipPolicy.storage(event.context?.ip as string | undefined),
+        },
+        referrerMode,
+      );
       buffer.push(event);
     },
   };
@@ -253,6 +260,7 @@ export function createBeacon(
       hashIPs: config.hashIPs,
       ipPolicy,
       getUserId: config.getUserId,
+      referrerMode,
     }),
   );
 
