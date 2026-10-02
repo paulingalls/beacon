@@ -28,7 +28,7 @@ class BeaconClient {
 - On `4xx` response: events are dropped (client error, don't retry).
 - On `5xx` response: batch is re-queued for one retry.
 
-**`reset()`:** Clears the event queue and cancels pending timers. Called on app foreground to start a fresh session.
+**`reset()`:** Clears the event queue and cancels pending timers.
 
 ### 8.2 Context Headers
 
