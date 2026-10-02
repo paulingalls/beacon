@@ -242,3 +242,77 @@ describe.skipIf(!TEST_DB)('EventBuffer (integration, live Postgres)', () => {
     expect(row?.properties).toEqual({ nested: { a: 1 }, list: [1, 2] });
   });
 });
+
+describe('purgeUser', () => {
+  function fixture(fail = false) {
+    let release = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const written: string[] = [];
+    let first = true;
+    const tx = ((rows: unknown) => {
+      if (Array.isArray(rows) && rows[0]?.user_id !== undefined) {
+        written.push(...rows.map((row) => row.user_id));
+      }
+      return Promise.resolve([]);
+    }) as unknown as Sql;
+    const sql = stubSql({
+      begin: async (fn) => {
+        if (first) {
+          first = false;
+          await gate;
+          if (fail) throw new Error('write failed');
+        }
+        return fn(tx);
+      },
+    });
+    return { buffer: new EventBuffer(sql, { maxBatchSize: 100 }), written, release };
+  }
+
+  test('purgeUser discards more than ten queued batches only for U', async () => {
+    const { buffer, written, release } = fixture();
+    for (let i = 0; i < 1001; i++) buffer.push(evt({ userId: 'U' }));
+    buffer.push(evt({ userId: 'V' }));
+    await buffer.purgeUser('U');
+    expect(buffer.stats().buffered).toBe(1);
+    release();
+    await buffer.stop();
+    expect(written).toEqual(['V']);
+    buffer.push(evt({ userId: 'U' }));
+    await buffer.flush();
+    expect(written).toEqual(['V', 'U']);
+  });
+
+  for (const fail of [false, true]) {
+    test(
+      fail
+        ? 'purgeUser discards U from a failed in-flight batch'
+        : 'purgeUser awaits a successful in-flight U write',
+      async () => {
+        const { buffer, written, release } = fixture(fail);
+        buffer.push(evt({ userId: 'U' }));
+        buffer.push(evt({ userId: 'V' }));
+        const flush = buffer.flush();
+        buffer.push(evt({ userId: 'U' }));
+        buffer.push(evt({ userId: 'W' }));
+        let settled = false;
+        const purge = buffer.purgeUser('U').then(() => {
+          settled = true;
+        });
+        const otherPurge = buffer.purgeUser('W');
+        try {
+          await Promise.resolve();
+          expect(settled).toBe(false);
+        } finally {
+          release();
+          await Promise.all([flush, purge, otherPurge]);
+        }
+        await buffer.stop();
+        expect(written).toEqual(fail ? ['V'] : ['U', 'V']);
+        expect(buffer.stats().retryFailures).toBe(0);
+        expect(buffer.stats().dropped).toBe(0);
+      },
+    );
+  }
+});

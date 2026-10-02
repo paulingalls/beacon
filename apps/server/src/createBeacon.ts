@@ -1,7 +1,8 @@
 import type { BufferStats } from '@pi-innovations/beacon-sdk';
 import { track as trackEvent } from '@pi-innovations/beacon-sdk/hono';
 import { type Context, Hono, type MiddlewareHandler } from 'hono';
-import { adminGate } from './api/auth';
+import { adminGate, erasureGate } from './api/auth';
+import { createErasureHandler } from './api/erasure';
 import { createIdentifyHandler } from './api/identify';
 import { createIngestHandler } from './api/ingest';
 import { RateLimiter, rateLimitGate } from './api/rateLimit';
@@ -196,6 +197,12 @@ export function createBeacon(
       buffer,
       trustedIngestToken: config.trustedIngestToken,
     }),
+  );
+
+  apiRouter.delete(
+    '/users/:userId/events',
+    erasureGate({ isAdmin: config.isAdmin, trustedIngestToken: config.trustedIngestToken }),
+    createErasureHandler(sql, buffer),
   );
 
   // The five read endpoints (REQUIREMENTS.md §5.4), each behind the admin gate
