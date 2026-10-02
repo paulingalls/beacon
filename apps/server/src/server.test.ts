@@ -2,6 +2,7 @@ import { afterAll, beforeEach, describe, expect, test } from 'bun:test';
 
 import { registerDbCoverageGuard, TEST_DB } from '../test/dbGuard';
 import { withTestDb } from '../test/helpers';
+import { createBeacon } from './createBeacon';
 import { buildServer } from './server';
 
 // Smoke test for the first-party host app (sprint-012 story-001). Boots the app via
@@ -170,7 +171,62 @@ describe.skipIf(!TEST_DB)('apps/server host', () => {
       } else expect(ip).toBe(expected);
     });
   }
+  for (const REFERRER_MODE of [undefined, 'raw', 'origin', 'origin-and-path']) {
+    test(`referrerMode env ${REFERRER_MODE} applies at storage`, async () => {
+      const { app, beacon } = build({ DATABASE_URL: TEST_DB, REFERRER_MODE });
+      const socket = Bun.serve({ port: 0, fetch: app.fetch });
+      try {
+        const res = await fetch(`http://localhost:${socket.port}/analytics/events`, {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            referer: 'https://site.example/a?token=x#f',
+          },
+          body: JSON.stringify({ events: [{ event_type: 'env_referrer' }] }),
+        });
+        expect(res.status).toBe(202);
+        await beacon.flush();
+        const rows = await getSql()<
+          { context: { referrer?: string } }[]
+        >`SELECT context FROM beacon_events`;
+        expect(rows).toHaveLength(1);
+        expect(rows[0]?.context.referrer).toBe(
+          REFERRER_MODE === 'origin'
+            ? 'https://site.example'
+            : REFERRER_MODE === 'origin-and-path'
+              ? 'https://site.example/a'
+              : 'https://site.example/a?token=x#f',
+        );
+      } finally {
+        socket.stop(true);
+      }
+    });
+  }
   test('IP_MODE invalid refused', () => {
     expect(() => build({ DATABASE_URL: TEST_DB, IP_MODE: 'invalid' })).toThrow('ipMode');
   });
+});
+
+test('referrerMode invalid-config-before-startup', () => {
+  let scheduled = 0;
+  expect(() =>
+    createBeacon(
+      {
+        productId: 'p',
+        postgres: { connectionString: 'postgres://localhost/db' },
+        ipMode: 'daily-salt',
+        referrerMode: 'invalid' as never,
+      },
+      {
+        schedule: () => {
+          scheduled++;
+          return () => {};
+        },
+      },
+    ),
+  ).toThrow('referrerMode');
+  expect(scheduled).toBe(0);
+  expect(() =>
+    buildServer({ DATABASE_URL: 'postgres://localhost/db', REFERRER_MODE: 'invalid' }),
+  ).toThrow('referrerMode');
 });

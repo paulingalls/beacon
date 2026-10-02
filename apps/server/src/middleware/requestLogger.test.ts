@@ -345,3 +345,39 @@ describe('normalization logger', () => {
     });
   }
 });
+
+describe('referrerMode logger', () => {
+  for (const mode of [undefined, 'raw', 'origin', 'origin-and-path'] as const) {
+    test(`${mode} preserves landing attribution and first touch`, async () => {
+      const { VisitorTokenStore } = await import('../visitors/tokenStore');
+      const store = new VisitorTokenStore();
+      const { buffer, pushed } = recordingBuffer();
+      const app = appWith(buffer, { productId: 'p', referrerMode: mode, tokenStore: store });
+      const input = 'https://site.example/a?utm_source=wrong&token=x#f';
+      try {
+        await app.request('/hello?utm_source=landing&gclid=click', { headers: { referer: input } });
+        expect(pushed).toHaveLength(1);
+        expect(pushed[0]?.context?.referrer).toBe(
+          mode === 'origin'
+            ? 'https://site.example'
+            : mode === 'origin-and-path'
+              ? 'https://site.example/a'
+              : input,
+        );
+        const token = pushed[0]?.visitorToken as string;
+        expect(store.get(token)?.attribution).toEqual({ utm_source: 'landing', gclid: 'click' });
+        await app.request(`/hello?_t=${token}&utm_source=later`, {
+          headers: { referer: 'not a URL' },
+        });
+        expect(pushed).toHaveLength(2);
+        const context = pushed[1]?.context as Record<string, unknown>;
+        if (mode === 'origin' || mode === 'origin-and-path')
+          expect(Object.hasOwn(context, 'referrer')).toBe(false);
+        else expect(context.referrer).toBe('not a URL');
+        expect(store.get(token)?.attribution).toEqual({ utm_source: 'landing', gclid: 'click' });
+      } finally {
+        store.stop();
+      }
+    });
+  }
+});

@@ -147,4 +147,52 @@ describe.skipIf(!TEST_DB)('shortener acceptance — real HTTP traffic', () => {
       await denyBeacon.shutdown();
     }
   }, 15_000);
+  for (const mode of [undefined, 'raw', 'origin', 'origin-and-path'] as const) {
+    for (const input of ['https://site.example/a?token=x#f', 'not a URL']) {
+      test(`referrerMode ${mode} click ${input}`, async () => {
+        const instance = createBeacon({
+          productId: 'referrer-click',
+          postgres: { connectionString: TEST_DB as string },
+          referrerMode: mode,
+          flushInterval: 60_000,
+        });
+        const app = new Hono();
+        app.route('/', instance.shortener());
+        const socket = Bun.serve({ port: 0, fetch: app.fetch });
+        try {
+          const link = await instance.createShortLink({
+            destination: 'https://product.example/landing',
+            productId: 'referrer-click',
+            campaign: { utm_source: 'campaign' },
+          });
+          const res = await fetch(
+            `http://localhost:${socket.port}/${link.code}?utm_source=landing&gclid=click`,
+            { headers: { referer: input }, redirect: 'manual' },
+          );
+          expect(res.status).toBe(302);
+          expect(res.headers.get('location')).toBe('https://product.example/landing');
+          await instance.flush();
+          const rows = await sql<
+            { context: Record<string, unknown>; attribution: unknown }[]
+          >`SELECT context, attribution FROM beacon_events WHERE event_type = 'short_link_click' AND properties->>'code' = ${link.code}`;
+          expect(rows).toHaveLength(1);
+          const context = rows[0]?.context as Record<string, unknown>;
+          if ((mode === 'origin' || mode === 'origin-and-path') && input === 'not a URL')
+            expect(Object.hasOwn(context, 'referrer')).toBe(false);
+          else
+            expect(context.referrer).toBe(
+              mode === 'origin'
+                ? 'https://site.example'
+                : mode === 'origin-and-path'
+                  ? 'https://site.example/a'
+                  : input,
+            );
+          expect(rows[0]?.attribution).toEqual({ utm_source: 'campaign', gclid: 'click' });
+        } finally {
+          socket.stop(true);
+          await instance.shutdown();
+        }
+      });
+    }
+  }
 });

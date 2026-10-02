@@ -8,6 +8,7 @@ import { type Context, Hono } from 'hono';
 import { verifyTrustedBearer } from './api/auth';
 import { type Beacon, createBeacon } from './createBeacon';
 import { validateIpMode } from './visitors/ipSalt';
+import { validateReferrerMode } from './visitors/referrer';
 
 /** Environment the host reads (a subset of process.env, injected for testability). */
 export interface ServerEnv {
@@ -29,6 +30,7 @@ export interface ServerEnv {
   /** Absolute base for generated short URLs, e.g. 'https://pi.ink'. */
   SHORT_DOMAIN?: string;
   IP_MODE?: string;
+  REFERRER_MODE?: string;
 }
 
 /**
@@ -78,6 +80,7 @@ export function buildServer(env: ServerEnv): { app: Hono; beacon: Beacon } {
     shortDomain: env.SHORT_DOMAIN,
     hashIPs: true,
     ipMode: validateIpMode(env.IP_MODE),
+    referrerMode: validateReferrerMode(env.REFERRER_MODE),
     ...(allowlist ? { productAllowlist: allowlist } : {}),
   });
 
