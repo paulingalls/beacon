@@ -16,7 +16,12 @@ import type { Context } from 'hono';
  * shortener, and dashboard config fields are added by the phases that use them.
  */
 export interface BeaconConfig {
+  retentionDays?: number;
+  pruneInterval?: number;
+  referrerMode?: 'raw' | 'origin' | 'origin-and-path';
   productId: string;
+  /** Map persisted paths/screens; null drops the event. Defaults to identity. */
+  normalizePath?: (path: string) => string | null;
   /**
    * Opt-in allowlist of product_ids the shared ingest endpoint accepts (story-006).
    * When set, a batch whose body.product_id is a present non-allowlisted value is
@@ -48,6 +53,8 @@ export interface BeaconConfig {
   excludePaths?: string[];
   /** SHA-256 the client IP before storage. Default true. */
   hashIPs?: boolean;
+  /** Explicit storage policy; conflicts with hashIPs: false. Default is legacy SHA-256. */
+  ipMode?: 'sha256' | 'daily-salt' | 'none';
   /** Event-buffer flush timer interval in ms. Default 5000. */
   flushInterval?: number;
   /** Max events written per flush. Default 100. */

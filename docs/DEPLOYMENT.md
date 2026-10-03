@@ -156,8 +156,12 @@ systemctl enable --now beacon
 
 | Variable | Required | Purpose |
 |---|---|---|
-| `DATABASE_URL` | yes | Managed Postgres connection string (TLS). Host fails fast if unset. |
+| `DATABASE_URL` | yes | Postgres connection string; use TLS for managed Postgres. Host fails fast if unset. |
+| `PORT` | no | HTTP port (default `8080`); also used by the container HEALTHCHECK. |
+| `RETENTION_DAYS` | optional | Unset or 0 = disabled. Positive finite decimal days enable pruning; invalid or unrepresentable cutoff values fail startup before resources are created. |
 | `ADMIN_TOKEN` | set in prod | Bearer token gating dashboard + query API. **Unset ⇒ those surfaces fail closed (403).** |
+| `REFERRER_MODE` | unset (`raw`) | Optional `raw`, `origin`, or `origin-and-path`. Server policy for all newly stored referrers, including trusted ingest, track, and short-link clicks. Scrubbing omits invalid or non-HTTP(S) referrers and removes credentials, query, and fragment. Landing-URL attribution is unchanged. Invalid modes fail startup. |
+| `IP_MODE` | unset | Optional `sha256`, `daily-salt`, or `none`; unset preserves legacy SHA-256. Invalid values fail startup. Daily salts rotate at UTC midnight, stay in memory, and differ across restarts/replicas. `none` omits stored IPs while keeping in-memory rate limits. |
 | `TRUSTED_INGEST_TOKEN` | set for s2s | Bearer secret authorizing a trusted caller to assert per-event `user_id`/`context` in the ingest body (M2). **Unset ⇒ trusted ingest disabled (anonymous-only).** See [`OPERATIONS.md`](./OPERATIONS.md) for rotation. |
 | `SHORT_DOMAIN` | no | Absolute base for generated short URLs. Without it the shortener emits relative `/CODE` redirects. |
 | `PRODUCT_ID` | no | Fallback `product_id` for events whose batch omits one (default `beacon`). |
@@ -220,6 +224,198 @@ sudo journalctl -u caddy -f      # proxy / TLS logs
 sudo systemctl restart beacon    # manual restart
 gh workflow disable deploy.yml   # pause autodeploy during maintenance
 ```
+
+## Grafana database reader
+
+After migrations, an operator provisions `beacon_reader` from the repository
+root with PostgreSQL 15+ `psql` (the script uses `\getenv`). The administrator
+needs CREATEROLE, authority to manage this role, and ownership/grant authority on
+the database, public schema and all four tables. Managed-provider administrators
+may need additional owner grants. Resetting existing unsafe role attributes
+requires corresponding elevated authority (for example, only a superuser can
+clear SUPERUSER); a failed command requires operator resolution.
+
+Export `ADMIN_DATABASE_URL` for that administrator's Beacon database connection
+(with TLS on managed Postgres). Supply a fresh password without putting it in
+shell history:
+
+```bash
+read -r -s -p 'Reader password: ' BEACON_READER_PASSWORD; echo
+export BEACON_READER_PASSWORD
+```
+
+<!-- reader-provision -->
+```bash
+psql -X --dbname "$ADMIN_DATABASE_URL" --set=ON_ERROR_STOP=1 --file scripts/create-reader-role.sql
+```
+
+Then `unset BEACON_READER_PASSWORD ADMIN_DATABASE_URL`. Do not enable shell
+tracing or SQL echo while provisioning. Configure Grafana's PostgreSQL data source
+with the Beacon database/host, TLS, username `beacon_reader`, and the supplied
+password in its secret credential field. Credentials belong to the private
+operator/Grafana deployment, never a published Beacon package.
+
+The transaction can be rerun to rotate the password and reconcile direct grants.
+It grants SELECT on `beacon_events`, `beacon_meta`, `beacon_short_links`, and
+`beacon_erasures`, plus schema USAGE and database CONNECT/TEMPORARY. It grants
+no future tables. The reader cannot INSERT/UPDATE/DELETE these tables, ALTER/DROP them, or
+CREATE permanent tables or schemas. Session-local temporary tables are allowed; database-wide PUBLIC TEMPORARY privileges are preserved.
+Existing role membership or ownership, unsafe PUBLIC CREATE/write grants, and
+CREATE access to additional permanent schemas cause a loud failure. Resolve those
+privileges deliberately before retrying; the script does not change shared PUBLIC
+policy.
+
+## Self-contained container deployment
+
+Run these commands from the repository root with Docker Engine/Compose available.
+Acquire the Bun, Postgres and Caddy images before isolating Beacon. Choose unique
+resource names, an absolute CONFIG_DIR outside the repo, and fresh secrets; the
+example uses shell variables so multiple installations can coexist.
+
+```bash
+IMAGE=beacon:local
+NETWORK=beacon-private
+PG=beacon-postgres
+VOLUME=beacon-postgres-data
+SERVER=beacon-server
+CADDY=beacon-caddy
+PUBLIC_NETWORK=beacon-public
+CONFIG_DIR="$HOME/beacon-config"
+DATABASE_NAME=beacon
+PG_PASSWORD=$(openssl rand -hex 32)
+ADMIN_TOKEN=$(openssl rand -hex 32)
+TRUSTED_INGEST_TOKEN=$(openssl rand -hex 32)
+PORT=8080
+HTTP_PORT=80
+HTTPS_PORT=443
+BIND_IP=0.0.0.0
+SITE=analytics.example.com
+mkdir -p "$CONFIG_DIR"
+chmod 700 "$CONFIG_DIR"
+docker pull postgres:16-alpine
+docker pull caddy:2-alpine
+```
+
+<!-- container-build -->
+```bash
+docker build -t "$IMAGE" .
+```
+
+<!-- container-network -->
+```bash
+docker network create --internal "$NETWORK"
+docker volume create "$VOLUME"
+docker network create "$PUBLIC_NETWORK"
+```
+
+<!-- container-postgres -->
+```bash
+docker run -d --name "$PG" --network "$NETWORK" -e POSTGRES_USER=beacon -e POSTGRES_DB="$DATABASE_NAME" -e POSTGRES_PASSWORD="$PG_PASSWORD" -v "$VOLUME:/var/lib/postgresql/data" postgres:16-alpine
+```
+
+Wait for `docker exec "$PG" pg_isready -h 127.0.0.1 -U beacon -d beacon` to succeed.
+The strict server outbound profile permits only Postgres, not DNS. Derive its
+private numeric address from the exact Docker network; use this DATABASE_URL
+unchanged for migration, ordinary launch and traced acceptance.
+
+<!-- container-address -->
+```bash
+PG_IP=$(docker inspect --format "{{with index .NetworkSettings.Networks \"$NETWORK\"}}{{.IPAddress}}{{end}}" "$PG")
+test -n "$PG_IP"
+DATABASE_URL="postgres://beacon:$PG_PASSWORD@$PG_IP:5432/$DATABASE_NAME"
+```
+
+Re-resolve the address after Postgres container recreation; rewrite the env file
+and restart Beacon with the updated DATABASE_URL. A hostname-only launch is not
+claimed to pass this strict profile. The env table above applies to both paths.
+Local Postgres here is private; managed Postgres still requires TLS.
+
+<!-- container-env -->
+```bash
+umask 077
+cat > "$CONFIG_DIR/beacon.env" <<EOF
+DATABASE_URL=$DATABASE_URL
+ADMIN_TOKEN=$ADMIN_TOKEN
+TRUSTED_INGEST_TOKEN=$TRUSTED_INGEST_TOKEN
+PORT=$PORT
+IP_MODE=none
+REFERRER_MODE=origin-and-path
+RETENTION_DAYS=30
+EOF
+```
+
+Run migrations before every new image launch; startup never migrates.
+
+<!-- container-migrate -->
+```bash
+docker run --rm --network "$NETWORK" --env-file "$CONFIG_DIR/beacon.env" "$IMAGE" bun run migrate
+```
+
+<!-- container-launch -->
+```bash
+docker run -d --name "$SERVER" --network "$NETWORK" --network-alias beacon --env-file "$CONFIG_DIR/beacon.env" "$IMAGE"
+```
+
+Caddy starts on the host-published ingress bridge, then joins the private network
+for its upstream. Beacon and Postgres each have only the internal network;
+Beacon publishes no host port.
+Beacon stays exclusively on the internal network. Configure domain DNS and expose
+ports 80/443 in production (HTTP_PORT=80, HTTPS_PORT=443). For local acceptance,
+SITE=http://:80, BIND_IP=127.0.0.1 and HTTP_PORT=0 use local ephemeral HTTP; that check does not prove public DNS/ACME issuance.
+
+<!-- container-caddy-config -->
+```bash
+cat > "$CONFIG_DIR/Caddyfile" <<EOF
+$SITE {
+    reverse_proxy beacon:$PORT
+}
+EOF
+```
+
+<!-- container-caddy-launch -->
+```bash
+docker run -d --name "$CADDY" --network "$PUBLIC_NETWORK" -p "$BIND_IP:$HTTP_PORT:80" -p "$BIND_IP:$HTTPS_PORT:443" -v "$CONFIG_DIR/Caddyfile:/etc/caddy/Caddyfile:ro" caddy:2-alpine
+docker network connect "$NETWORK" "$CADDY"
+```
+
+Inspect `docker inspect --format '{{.State.Health.Status}}' "$SERVER"` until
+healthy. `/health` is DB-free and remains healthy during a Postgres outage.
+Use the smoke checks above through Caddy with the configured host/port and tokens.
+Docker stop sends SIGTERM to the exec-form Bun entry; it drains accepted buffered
+events before exiting 0. Allow enough time for your database to accept the drain.
+
+<!-- container-stop -->
+```bash
+docker stop --time 30 "$SERVER"
+```
+
+The container suite uses a strace sidecar with SYS_PTRACE, seccomp tracing permission
+and Docker host PID visibility, attached only to the inspected Beacon PID. A
+startup gate lets it attach before exec; the primary trace keeps the shipped
+source, startup command, image and deployment env unchanged. The sidecar remains
+alive outside Beacon's PID namespace to capture terminal exit. Missing attachment
+or terminal evidence fails the suite. It observes server syscalls from before the exact
+shipped startup command through workload and shutdown. It counts every TCP
+connection attempt, including failed/swallowed attempts, and every outbound
+datagram send attempt. Only the numeric Postgres address on TCP 5432 is allowed.
+A UDP connect alone associates a local socket without sending a payload. The
+observer must narrowly accept Bun's address-selection probes to `0.0.0.0:65535`,
+`[::]:65535`, and `Postgres-IP:0` only on UDP sockets with no send during that
+socket's lifetime. Any payload send on those sockets fails the observer. UDP,
+loopback and DNS are not blanket exemptions. Unknown/incomplete observations or
+missing Docker/tracing prerequisites fail loudly. This is bounded evidence for
+the exercised startup/workload/shutdown, not every possible future workload.
+Caddy, clients, healthcheck processes and the observer are separate from the
+server traffic claim. The suite provisions one owned Postgres container per
+process through the documented command; each scenario uses a separate database
+and drops it in finally cleanup. Base and observer builds are shared, while
+Beacon lifecycle and fault runs use fresh processes. Separate timing diagnostics shorten only the daily retention
+interval or delay only periodic buffer flushing; they exercise persisted policy
+and shutdown faults, and are not the primary traced run. The outage check requires
+a failed DB-dependent query (server/proxy error or a bounded timeout) followed
+by successful HTTP health and a fresh Docker healthcheck. The dashboard loads Chart.js from
+`https://cdn.jsdelivr.net/npm/chart.js` in the browser; that existing browser-side
+CDN dependency needs browser internet access and is not server outbound traffic.
 
 ## Related
 

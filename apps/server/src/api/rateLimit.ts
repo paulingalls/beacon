@@ -1,5 +1,6 @@
 import { defaultClientAddress, resolveIp } from '@pi-innovations/beacon-sdk/hono';
 import type { Context, MiddlewareHandler } from 'hono';
+import type { IpPolicy } from '../visitors/ipSalt';
 import { errorResponse } from './errors';
 
 // In-memory sliding-window rate limiter (REQUIREMENTS.md §6.2). Keyed by an
@@ -118,6 +119,7 @@ export interface RateLimitGateOptions {
    * (never persisted), so the "no raw IP at rest" constraint does not apply.
    */
   hashIPs?: boolean;
+  ipPolicy?: IpPolicy;
   /** Socket-address source for the IP fallback. Default `defaultClientAddress`. */
   getClientAddress?: (c: Context) => string | undefined;
 }
@@ -142,7 +144,10 @@ export function rateLimitGate(opts: RateLimitGateOptions): MiddlewareHandler {
     } catch (err) {
       console.warn(`[beacon] rateLimitGate: getUserId failed: ${String(err)}`);
     }
-    const key = userId ?? resolveIp(c, opts.hashIPs ?? false, getClientAddress) ?? ANONYMOUS_KEY;
+    const ip = opts.ipPolicy
+      ? opts.ipPolicy.rateKey(resolveIp(c, false, getClientAddress), opts.hashIPs ?? false)
+      : resolveIp(c, opts.hashIPs ?? false, getClientAddress);
+    const key = userId ?? ip ?? ANONYMOUS_KEY;
 
     const denied = applyRateLimit(c, opts.limiter, key, 'query rate limit exceeded');
     if (denied) return denied;

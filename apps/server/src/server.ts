@@ -7,10 +7,12 @@
 import { type Context, Hono } from 'hono';
 import { verifyTrustedBearer } from './api/auth';
 import { type Beacon, createBeacon } from './createBeacon';
+import { validateIpMode } from './visitors/ipSalt';
+import { validateReferrerMode } from './visitors/referrer';
 
 /** Environment the host reads (a subset of process.env, injected for testability). */
 export interface ServerEnv {
-  /** Postgres connection string. Required — the one intentional fail-fast. */
+  /** Postgres connection string. Required. */
   DATABASE_URL?: string;
   /** Bearer token gating the dashboard + query API. Unset ⇒ those surfaces fail closed. */
   ADMIN_TOKEN?: string;
@@ -27,6 +29,9 @@ export interface ServerEnv {
   PRODUCT_ALLOWLIST?: string;
   /** Absolute base for generated short URLs, e.g. 'https://pi.ink'. */
   SHORT_DOMAIN?: string;
+  RETENTION_DAYS?: string;
+  IP_MODE?: string;
+  REFERRER_MODE?: string;
 }
 
 /**
@@ -51,6 +56,18 @@ function parseAllowlist(raw: string | undefined): string[] | undefined {
   return list.length > 0 ? list : undefined;
 }
 
+function parseRetentionDays(raw: string | undefined): number | undefined {
+  if (raw === undefined) return undefined;
+  const value = raw.trim();
+  if (
+    !/^[+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/.test(value) ||
+    !Number.isFinite(Number(value))
+  ) {
+    throw new Error('[server] RETENTION_DAYS must be a finite nonnegative decimal number');
+  }
+  return Number(value);
+}
+
 /**
  * Assemble the host Hono app and its Beacon instance from the environment. Returned
  * (rather than served) so tests can drive it via app.fetch without binding a port.
@@ -68,6 +85,7 @@ export function buildServer(env: ServerEnv): { app: Hono; beacon: Beacon } {
 
   const allowlist = parseAllowlist(env.PRODUCT_ALLOWLIST);
   const beacon = createBeacon({
+    retentionDays: parseRetentionDays(env.RETENTION_DAYS),
     productId: env.PRODUCT_ID ?? 'beacon',
     postgres: { connectionString },
     isAdmin: makeIsAdmin(env.ADMIN_TOKEN),
@@ -75,6 +93,8 @@ export function buildServer(env: ServerEnv): { app: Hono; beacon: Beacon } {
     basePath: env.BASE_PATH ?? '/analytics',
     shortDomain: env.SHORT_DOMAIN,
     hashIPs: true,
+    ipMode: validateIpMode(env.IP_MODE),
+    referrerMode: validateReferrerMode(env.REFERRER_MODE),
     ...(allowlist ? { productAllowlist: allowlist } : {}),
   });
 

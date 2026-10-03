@@ -17,6 +17,7 @@ const STOP_DRAIN_TIMEOUT = 5000;
 interface QueuedEvent {
   event: BeaconEvent;
   attempts: number;
+  discarded?: boolean;
 }
 
 interface MetaRow {
@@ -46,6 +47,7 @@ export class EventBuffer {
   // starting a second batch — so a flush triggered by the timer, push(), or
   // stop() never overlaps another.
   private inFlight: Promise<void> | null = null;
+  private activeBatch: QueuedEvent[] = [];
   private started = false;
 
   private flushed = 0;
@@ -86,13 +88,26 @@ export class EventBuffer {
     return this.inFlight;
   }
 
+  async purgeUser(userId: string): Promise<void> {
+    for (let i = this.queue.length - 1; i >= 0; i--) {
+      if (this.queue[i]?.event.userId === userId) this.queue.splice(i, 1);
+    }
+    for (const entry of this.activeBatch) {
+      if (entry.event.userId === userId) entry.discarded = true;
+    }
+    if (this.inFlight) await this.inFlight;
+  }
+
   private async drainOneBatch(): Promise<void> {
     const batch = this.queue.splice(0, this.maxBatchSize);
+    this.activeBatch = batch;
     try {
       await this.writeBatch(batch.map((q) => q.event));
       this.flushed += batch.length;
     } catch {
       this.requeueFailed(batch);
+    } finally {
+      this.activeBatch = [];
     }
   }
 
@@ -148,6 +163,7 @@ export class EventBuffer {
   private requeueFailed(batch: QueuedEvent[]): void {
     const survivors: QueuedEvent[] = [];
     for (const q of batch) {
+      if (q.discarded) continue;
       q.attempts += 1;
       if (q.attempts >= MAX_RETRIES) {
         this.retryFailures += 1;

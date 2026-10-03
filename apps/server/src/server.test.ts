@@ -1,7 +1,9 @@
-import { afterAll, beforeEach, describe, expect, test } from 'bun:test';
-
+import { afterAll, beforeEach, describe, expect, spyOn, test } from 'bun:test';
+import type { Sql } from 'postgres';
 import { registerDbCoverageGuard, TEST_DB } from '../test/dbGuard';
 import { withTestDb } from '../test/helpers';
+import { retentionHarness } from '../test/retentionHarness';
+import { createBeacon } from './createBeacon';
 import { buildServer } from './server';
 
 // Smoke test for the first-party host app (sprint-012 story-001). Boots the app via
@@ -144,4 +146,141 @@ describe.skipIf(!TEST_DB)('apps/server host', () => {
       SELECT user_id FROM beacon_events WHERE event_type = 'host_failclosed'`;
     expect(rows.map((r) => r.user_id)).toEqual([null]); // unset token ⇒ body user_id ignored
   });
+  for (const IP_MODE of [undefined, 'sha256', 'daily-salt', 'none']) {
+    test(`IP_MODE ${IP_MODE} applies at storage`, async () => {
+      const { app, beacon } = build({ DATABASE_URL: TEST_DB, IP_MODE });
+      expect(
+        (
+          await app.request('/analytics/events', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json', 'x-forwarded-for': '198.51.100.9' },
+            body: JSON.stringify({ events: [{ event_type: 'env_mode' }] }),
+          })
+        ).status,
+      ).toBe(202);
+      await beacon.flush();
+      const rows = await getSql()<
+        { context: { ip?: string } }[]
+      >`SELECT context FROM beacon_events`;
+      expect(rows).toHaveLength(1);
+      const ip = rows[0]?.context.ip;
+      const expected = new Bun.CryptoHasher('sha256').update('198.51.100.9').digest('hex');
+      if (IP_MODE === 'none') expect(ip).toBeUndefined();
+      else if (IP_MODE === 'daily-salt') {
+        expect(ip).toMatch(/^[a-f0-9]{64}$/);
+        expect(ip).not.toBe(expected);
+      } else expect(ip).toBe(expected);
+    });
+  }
+  for (const REFERRER_MODE of [undefined, 'raw', 'origin', 'origin-and-path']) {
+    test(`referrerMode env ${REFERRER_MODE} applies at storage`, async () => {
+      const { app, beacon } = build({ DATABASE_URL: TEST_DB, REFERRER_MODE });
+      const socket = Bun.serve({ port: 0, fetch: app.fetch });
+      try {
+        const res = await fetch(`http://localhost:${socket.port}/analytics/events`, {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            referer: 'https://site.example/a?token=x#f',
+          },
+          body: JSON.stringify({ events: [{ event_type: 'env_referrer' }] }),
+        });
+        expect(res.status).toBe(202);
+        await beacon.flush();
+        const rows = await getSql()<
+          { context: { referrer?: string } }[]
+        >`SELECT context FROM beacon_events`;
+        expect(rows).toHaveLength(1);
+        expect(rows[0]?.context.referrer).toBe(
+          REFERRER_MODE === 'origin'
+            ? 'https://site.example'
+            : REFERRER_MODE === 'origin-and-path'
+              ? 'https://site.example/a'
+              : 'https://site.example/a?token=x#f',
+        );
+      } finally {
+        socket.stop(true);
+      }
+    });
+  }
+  test('IP_MODE invalid refused', () => {
+    expect(() => build({ DATABASE_URL: TEST_DB, IP_MODE: 'invalid' })).toThrow('ipMode');
+  });
 });
+
+test('referrerMode invalid-config-before-startup', () => {
+  let scheduled = 0;
+  expect(() =>
+    createBeacon(
+      {
+        productId: 'p',
+        postgres: { connectionString: 'postgres://localhost/db' },
+        ipMode: 'daily-salt',
+        referrerMode: 'invalid' as never,
+      },
+      {
+        schedule: () => {
+          scheduled++;
+          return () => {};
+        },
+      },
+    ),
+  ).toThrow('referrerMode');
+  expect(scheduled).toBe(0);
+  expect(() =>
+    buildServer({ DATABASE_URL: 'postgres://localhost/db', REFERRER_MODE: 'invalid' }),
+  ).toThrow('referrerMode');
+});
+
+const retentionSql = Object.assign(() => Promise.resolve({ count: 0 }), {
+  end: async () => {},
+}) as unknown as Sql;
+for (const value of [
+  '',
+  ' ',
+  '1day',
+  '-1',
+  'NaN',
+  'Infinity',
+  '1e999',
+  '0x10',
+  '100000001',
+  '1e308',
+]) {
+  test(`retention env range refuses ${JSON.stringify(value)} before resources`, () => {
+    const clock = spyOn(Date, 'now').mockReturnValue(0);
+    const harness = retentionHarness(retentionSql);
+    try {
+      expect(() =>
+        buildServer({
+          DATABASE_URL: 'postgres://localhost/db',
+          RETENTION_DAYS: value,
+          IP_MODE: 'daily-salt',
+        }),
+      ).toThrow(/RETENTION_DAYS|retentionDays/);
+      expect(harness.connect).not.toHaveBeenCalled();
+      expect(harness.timers).toEqual([]);
+    } finally {
+      harness.restore();
+      clock.mockRestore();
+    }
+  });
+}
+for (const value of ['0', ' 0.5 ', '1e0', '100000000']) {
+  test(`retention env range accepts ${value}`, async () => {
+    const clock = spyOn(Date, 'now').mockReturnValue(0);
+    const harness = retentionHarness(retentionSql);
+    let beacon: ReturnType<typeof createBeacon> | undefined;
+    try {
+      beacon = buildServer({
+        DATABASE_URL: 'postgres://localhost/db',
+        RETENTION_DAYS: value,
+      }).beacon;
+      expect(harness.timers.some((timer) => timer.delay === 86400000)).toBe(Number(value) > 0);
+    } finally {
+      await beacon?.shutdown();
+      harness.restore();
+      clock.mockRestore();
+    }
+  });
+}

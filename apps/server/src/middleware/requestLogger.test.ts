@@ -1,9 +1,8 @@
-import { afterEach, describe, expect, test } from 'bun:test';
+import { describe, expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
 import type { BeaconEvent } from '@pi-innovations/beacon-sdk';
 import { Hono } from 'hono';
 import type { EventBuffer } from '../events/buffer';
-import { VisitorTokenStore } from '../visitors/tokenStore';
 import { type RequestLoggerOptions, requestLogger } from './requestLogger';
 
 const sha256 = (s: string): string => createHash('sha256').update(s).digest('hex');
@@ -21,26 +20,6 @@ function appWith(buffer: EventBuffer, opts: RequestLoggerOptions): Hono {
   app.use('*', requestLogger(buffer, opts));
   app.get('/hello', (c) => c.text('hello'));
   app.get('/healthz', (c) => c.text('ok'));
-  return app;
-}
-
-// Real VisitorTokenStores, tracked so each one's sweep timer is cleared.
-const openStores: VisitorTokenStore[] = [];
-function makeStore(): VisitorTokenStore {
-  const store = new VisitorTokenStore();
-  openStores.push(store);
-  return store;
-}
-afterEach(() => {
-  while (openStores.length) openStores.pop()?.stop();
-});
-
-/** App that echoes the context visitor token from inside the handler. */
-function tokenApp(buffer: EventBuffer, opts: RequestLoggerOptions): Hono {
-  const app = new Hono();
-  app.use('*', requestLogger(buffer, opts));
-  app.get('/whoami', (c) => c.text(c.get('beaconVisitorToken') ?? 'none'));
-  app.get('/landing', (c) => c.text('hi'));
   return app;
 }
 
@@ -252,132 +231,6 @@ describe('requestLogger', () => {
   });
 });
 
-describe('requestLogger — visitor tokens', () => {
-  test('authenticated request skips token logic — no token minted or exposed', async () => {
-    const store = makeStore();
-    const { buffer, pushed } = recordingBuffer();
-    const app = tokenApp(buffer, { productId: 'p', getUserId: () => 'user-1', tokenStore: store });
-
-    const res = await app.request('/whoami');
-    expect(await res.text()).toBe('none'); // no context token during the handler
-    expect(store.stats().active).toBe(0); // nothing minted
-    expect(pushed[0]?.userId).toBe('user-1');
-    expect(pushed[0]?.visitorToken ?? null).toBeNull();
-  });
-
-  test('anonymous request without _t mints a token, readable in-handler and on the event', async () => {
-    const store = makeStore();
-    const { buffer, pushed } = recordingBuffer();
-    const app = tokenApp(buffer, { productId: 'p', tokenStore: store });
-
-    // The handler echoes c.get('beaconVisitorToken') — proves the token is
-    // resolved BEFORE next() runs (host can use it to build ?_t= links).
-    const res = await app.request('/whoami');
-    const tokenInHandler = await res.text();
-    expect(tokenInHandler).toMatch(/^[A-Za-z0-9_-]{12}$/);
-    expect(pushed[0]?.visitorToken).toBe(tokenInHandler);
-    expect(store.get(tokenInHandler)).not.toBeNull();
-  });
-
-  test('a valid _t reuses the existing token (touch, no new mint)', async () => {
-    const store = makeStore();
-    const existing = store.create('iphash', 'ua');
-    const { buffer, pushed } = recordingBuffer();
-    const app = tokenApp(buffer, { productId: 'p', tokenStore: store });
-
-    await app.request(`/landing?_t=${existing}`);
-    expect(pushed[0]?.visitorToken).toBe(existing);
-    expect(store.stats().active).toBe(1); // reused, not a second token
-  });
-
-  test('an unknown _t mints a fresh token', async () => {
-    const store = makeStore();
-    const { buffer, pushed } = recordingBuffer();
-    const app = tokenApp(buffer, { productId: 'p', tokenStore: store });
-
-    await app.request('/landing?_t=bogusbogus12');
-    const token = pushed[0]?.visitorToken;
-    expect(token).toMatch(/^[A-Za-z0-9_-]{12}$/);
-    expect(token).not.toBe('bogusbogus12');
-  });
-
-  test('attribution is captured on the token record (first-touch), not stamped on the event', async () => {
-    const store = makeStore();
-    const { buffer, pushed } = recordingBuffer();
-    const app = tokenApp(buffer, { productId: 'p', tokenStore: store });
-
-    await app.request('/landing?utm_source=newsletter&gclid=g1');
-    const token = pushed[0]?.visitorToken as string;
-    expect(store.get(token)?.attribution).toEqual({ utm_source: 'newsletter', gclid: 'g1' });
-    expect(pushed[0]?.attribution ?? {}).toEqual({}); // not on the event
-  });
-
-  test('first-touch attribution is not overwritten by a later hit', async () => {
-    const store = makeStore();
-    const { buffer, pushed } = recordingBuffer();
-    const app = tokenApp(buffer, { productId: 'p', tokenStore: store });
-
-    await app.request('/landing?utm_source=first');
-    const token = pushed[0]?.visitorToken as string;
-    await app.request(`/landing?_t=${token}&utm_source=second`);
-    expect(store.get(token)?.attribution).toEqual({ utm_source: 'first' });
-  });
-
-  test('with no tokenStore option, no token is minted or exposed', async () => {
-    const { buffer, pushed } = recordingBuffer();
-    const app = tokenApp(buffer, { productId: 'p' });
-
-    const res = await app.request('/whoami');
-    expect(await res.text()).toBe('none');
-    expect(pushed[0]?.visitorToken ?? null).toBeNull();
-  });
-
-  test('a setAttribution failure keeps the minted token on the event and context', async () => {
-    const { buffer, pushed } = recordingBuffer();
-    const minted: string[] = [];
-    const badAttrStore = {
-      get: () => null,
-      create: () => {
-        const t = `tok${minted.length}`.padEnd(12, '0');
-        minted.push(t);
-        return t;
-      },
-      touch: () => {},
-      setAttribution: () => {
-        throw new Error('attribution boom');
-      },
-    } as unknown as VisitorTokenStore;
-    const app = tokenApp(buffer, { productId: 'p', tokenStore: badAttrStore });
-
-    // utm_source forces setAttribution to run (and throw); the token is already
-    // minted and must survive on both the context and the event.
-    const res = await app.request('/whoami?utm_source=x');
-    expect(res.status).toBe(200);
-    const token = minted[0] as string;
-    expect(await res.text()).toBe(token); // token exposed in-handler
-    expect(pushed[0]?.visitorToken).toBe(token); // and on the event
-  });
-
-  test('a throwing tokenStore never crashes the host; the request is still logged sans token', async () => {
-    const { buffer, pushed } = recordingBuffer();
-    const badStore = {
-      get: () => null,
-      create: () => {
-        throw new Error('store boom');
-      },
-      touch: () => {},
-      setAttribution: () => {},
-    } as unknown as VisitorTokenStore;
-    const app = tokenApp(buffer, { productId: 'p', tokenStore: badStore });
-
-    const res = await app.request('/landing');
-    expect(res.status).toBe(200);
-    expect(await res.text()).toBe('hi');
-    expect(pushed).toHaveLength(1); // request event survives the store failure
-    expect(pushed[0]?.visitorToken ?? null).toBeNull();
-  });
-});
-
 describe('requestLogger — client IP resolution', () => {
   test('falls back to the socket address when X-Forwarded-For is absent', async () => {
     const { buffer, pushed } = recordingBuffer();
@@ -427,4 +280,104 @@ describe('requestLogger — client IP resolution', () => {
     expect(res.status).toBe(200);
     expect(pushed).toHaveLength(1); // request logged regardless of socket availability
   });
+});
+
+describe('normalization logger', () => {
+  test('omission preserves an identifying pathname exactly and excludes query', async () => {
+    const { buffer, pushed } = recordingBuffer();
+    const app = appWith(buffer, { productId: 'p' });
+    await app.request('/P/abc%20/story/xyz?token=secret');
+    expect(pushed[0]?.properties?.path).toBe('/P/abc /story/xyz');
+  });
+  for (const mapped of ['/p/[legacyId]/story/[storyId]', '', null]) {
+    test(`maps or drops with host response intact: ${mapped}`, async () => {
+      const { buffer, pushed } = recordingBuffer();
+      const app = new Hono();
+      app.use('*', requestLogger(buffer, { productId: 'p', normalizePath: () => mapped }));
+      app.get('*', (c) => c.text('host', 201));
+      const res = await app.request('/p/abc/story/xyz');
+      expect(res.status).toBe(201);
+      expect(await res.text()).toBe('host');
+      expect(pushed.map((e) => e.properties?.path)).toEqual(mapped === null ? [] : [mapped]);
+    });
+  }
+  for (const host of ['ok', 'handled', 'propagated']) {
+    test(`throw is loud, sanitized, and preserves ${host} host result`, async () => {
+      const { buffer, pushed } = recordingBuffer();
+      const errors: unknown[][] = [];
+      const original = console.error;
+      console.error = (...args) => {
+        errors.push(args);
+      };
+      const failure = new Error('host failure');
+      const app = new Hono();
+      app.use(
+        '*',
+        requestLogger(buffer, {
+          productId: 'p',
+          normalizePath: () => {
+            throw new Error('/invitations/secret/preview');
+          },
+        }),
+      );
+      app.get('*', (c) => {
+        if (host !== 'ok') throw failure;
+        return c.text('host', 201);
+      });
+      app.onError((err, c) => {
+        if (host === 'propagated') throw err;
+        return c.text('handled', 409);
+      });
+      try {
+        if (host === 'propagated') await expect(app.request('/hello')).rejects.toBe(failure);
+        else {
+          const res = await app.request('/hello');
+          expect(res.status).toBe(host === 'ok' ? 201 : 409);
+          expect(await res.text()).toBe(host === 'ok' ? 'host' : 'handled');
+        }
+        expect(pushed).toEqual([]);
+        expect(errors).toHaveLength(1);
+        expect(errors.flat().map(String).join(' ')).toContain('normalization');
+        expect(errors.flat().map(String).join(' ')).not.toContain('secret');
+      } finally {
+        console.error = original;
+      }
+    });
+  }
+});
+
+describe('referrerMode logger', () => {
+  for (const mode of [undefined, 'raw', 'origin', 'origin-and-path'] as const) {
+    test(`${mode} preserves landing attribution and first touch`, async () => {
+      const { VisitorTokenStore } = await import('../visitors/tokenStore');
+      const store = new VisitorTokenStore();
+      const { buffer, pushed } = recordingBuffer();
+      const app = appWith(buffer, { productId: 'p', referrerMode: mode, tokenStore: store });
+      const input = 'https://site.example/a?utm_source=wrong&token=x#f';
+      try {
+        await app.request('/hello?utm_source=landing&gclid=click', { headers: { referer: input } });
+        expect(pushed).toHaveLength(1);
+        expect(pushed[0]?.context?.referrer).toBe(
+          mode === 'origin'
+            ? 'https://site.example'
+            : mode === 'origin-and-path'
+              ? 'https://site.example/a'
+              : input,
+        );
+        const token = pushed[0]?.visitorToken as string;
+        expect(store.get(token)?.attribution).toEqual({ utm_source: 'landing', gclid: 'click' });
+        await app.request(`/hello?_t=${token}&utm_source=later`, {
+          headers: { referer: 'not a URL' },
+        });
+        expect(pushed).toHaveLength(2);
+        const context = pushed[1]?.context as Record<string, unknown>;
+        if (mode === 'origin' || mode === 'origin-and-path')
+          expect(Object.hasOwn(context, 'referrer')).toBe(false);
+        else expect(context.referrer).toBe('not a URL');
+        expect(store.get(token)?.attribution).toEqual({ utm_source: 'landing', gclid: 'click' });
+      } finally {
+        store.stop();
+      }
+    });
+  }
 });

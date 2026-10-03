@@ -63,6 +63,7 @@ The Beacon server (`apps/server`) is the single writer: it holds the Postgres cr
 | Variable | Required | Purpose |
 |---|---|---|
 | `DATABASE_URL` | yes | Postgres connection string (the one fail-fast). |
+| `RETENTION_DAYS` | optional | Unset or 0 = disabled. Positive finite decimal days enable pruning; invalid or unrepresentable cutoff values fail startup before resources are created. |
 | `ADMIN_TOKEN` | no | Bearer token gating the dashboard + query API. **Unset ⇒ those surfaces fail closed (403).** |
 | `TRUSTED_INGEST_TOKEN` | no | Bearer secret authorizing a trusted server-to-server caller to assert per-event `user_id`/context in the ingest body. **Unset ⇒ trusted ingest disabled (anonymous-only).** |
 | `PRODUCT_ID` | no | Fallback `product_id` for events whose batch omits one (default `beacon`). |
@@ -359,7 +360,109 @@ Beacon's query API is designed for direct use by AI agents. The `/analytics/sche
 | `trustedIngestToken` | `string` | *required* | Trusted-ingest bearer secret; sent as `Authorization: Bearer`, never logged. |
 | `getUserId` | `(request: Request) => string \| null` | no user | Resolve the authenticated user id from the request. |
 | `hashIPs` | `boolean` | `true` | SHA-256 the client IP before it leaves the product. |
+| `forwardRawIPs` | `boolean` | `false` | Forward raw IPs over authenticated server-to-server transport; overrides SDK `hashIPs` so the deployed server applies its mode once. |
 | `flushInterval` | `number` | sink default | Emit-buffer flush interval in milliseconds. |
 | `maxBatchSize` | `number` | sink default | Max events per emitted batch. |
 
 The deployed server is configured by environment (see [Deploying the Beacon server](#deploying-the-beacon-server)); its full option set is `BeaconConfig` in `apps/server/src/types.ts`.
+
+
+### Server referrer and IP configuration
+
+`createBeacon(config)` in the private server owns storage and rate-limit policy:
+
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `referrerMode` | `'raw' \| 'origin' \| 'origin-and-path'` | `'raw'` | Server-owned policy for newly stored referrers on logger, ingest (including trusted relay), `Beacon.track()`, and short-link clicks. Scrubbing removes query, fragment, and credentials; invalid or non-HTTP(S) referrers are omitted. Landing-URL attribution is unchanged. |
+| `ipMode` | `'sha256' \| 'daily-salt' \| 'none'` | unset | `sha256` preserves legacy hashing; `daily-salt` uses HMAC-SHA-256 with a random in-memory salt; `none` omits IP from stored context. |
+| `hashIPs` | `boolean` | `true` | Legacy setting when `ipMode` is absent; `false` preserves raw storage. |
+
+Explicit `ipMode` with `hashIPs: false` throws before resources start. With `hashIPs`
+unset or true, the explicit mode wins. Without either setting, SHA-256 remains the default.
+The host maps optional `IP_MODE` to `ipMode` and `REFERRER_MODE` to `referrerMode`; invalid modes throw before resources start. Unset `REFERRER_MODE` preserves referrers byte for byte. SDK capture continues to emit no attribution; this policy does not add attribution capture to the SDK.
+
+Daily salts belong to one Beacon instance/process, rotate at UTC midnight even while
+idle, and are discarded and cleared when replaced or stopped. They never leave memory.
+Restarts and replicas use independent salts, so joins do not survive restart or cross
+replicas. Under `none`, visitor-token seeds use the constant empty string; anonymous
+rate limits retain separate client IP keys only in memory, and authenticated user IDs
+still take precedence.
+
+The SDK default still hashes before sending; trusted server ingest hashes again
+under the legacy default (double hash). This preserves existing VodShorter stored
+values. Opt into `forwardRawIPs: true` on a trusted server product to apply the server
+mode once. Raw addresses then travel over the authenticated transport; use HTTPS in
+production. SDK forwarding carries no server salt.
+
+## Path normalization
+
+Programmatic `createBeacon` accepts `normalizePath?: (path: string) => string | null`.
+Omission preserves existing values. The request logger applies it to `properties.path`;
+ingest applies it to string `properties.path` on every event, including SDK `capture()`
+request events and custom events, and to string `properties.screen` on `screen_view`.
+Absent/non-string values and `screen` on other event types are unchanged.
+
+A `null` result drops the entire event. Other events in a mixed batch are accepted and
+counted normally; an empty string is retained. A throw drops logger output and reports
+a sanitized `console.error` without changing the host response. Ingest stages the whole
+batch: a throw returns sanitized `INTERNAL_ERROR`/500 and buffers none of that batch,
+even when earlier events were valid. Web navigation drops the event and reports a
+sanitized `console.error`; later navigation still works.
+
+Supply an idempotent mapping on both client and server: ingest maps the client's output
+again, so already-patterned input must return itself. Route patterns remove ids while
+preserving route counts; invitation routes can instead be dropped.
+
+```ts
+import { createBeacon } from './apps/server/src/createBeacon';
+import { BeaconClient } from '@pi-innovations/beacon-client';
+import { type NavBindings, useBeaconNav } from '@pi-innovations/beacon-client/web';
+
+function normalizePath(path: string): string | null {
+  if (path.startsWith('/invitations/')) return null;
+  return /^\/p\/[^/]+\/story\/[^/]+$/.test(path)
+    ? '/p/[legacyId]/story/[storyId]'
+    : path;
+}
+
+const server = createBeacon({
+  productId: 'my-product',
+  postgres: { connectionString: 'postgres://user:password@localhost/beacon' },
+  normalizePath,
+});
+function wireNavigation(client: BeaconClient, nav: NavBindings) {
+  return useBeaconNav(client, nav, { toPath: normalizePath });
+}
+```
+
+The server callback is programmatic configuration, not an environment variable or a
+callback accepted by the standalone server entry point. Normalization covers the logger,
+ingest, and web navigation wrapper. Direct server `Beacon.track()` calls, arbitrary
+properties, context URLs, and other fields remain the caller's responsibility.
+
+### Erase a user's events
+
+From your server, use either the configured `isAdmin` session or the trusted-ingest bearer:
+
+```ts
+async function eraseUser(
+  beaconUrl: string, basePath: string, userId: string, trustedIngestToken: string,
+): Promise<number> {
+  const response = await fetch(`${beaconUrl}${basePath}/users/${encodeURIComponent(userId)}/events`, {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${trustedIngestToken}` },
+  });
+  if (!response.ok) throw new Error(`Erasure failed: ${response.status}`);
+  const { count } = await response.json() as { count: number };
+  return count;
+}
+```
+
+`count` is the number of stored events deleted across products. Beacon discards this user's queued
+and failed in-flight events, waits for the current write, then deletes stored events and records
+SHA-256 of the user ID, count, and erasure time in one transaction. Repeating the call returns 0
+and records another erasure. Unauthorised calls return 403 without changing the buffer or database.
+A persistence failure returns 500 and rolls back database changes, including the audit row;
+purged memory stays discarded, and the DELETE is safe to retry. Stop emitting events for the user:
+events emitted after the call are the caller's responsibility. Call the instance buffering those
+events; this endpoint does not coordinate other Beacon instances or prevent future associations.

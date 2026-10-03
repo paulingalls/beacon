@@ -6,6 +6,9 @@ import {
 } from '@pi-innovations/beacon-sdk';
 import { defaultClientAddress, honoRequest } from '@pi-innovations/beacon-sdk/hono';
 import type { Context, MiddlewareHandler } from 'hono';
+import type { BeaconConfig } from '../types';
+import type { IpPolicy } from '../visitors/ipSalt';
+import { scrubReferrerContext } from '../visitors/referrer';
 import type { VisitorTokenStore } from '../visitors/tokenStore';
 
 // Expose the visitor token on the Hono context so the host app can read it
@@ -19,14 +22,18 @@ declare module 'hono' {
 }
 
 export interface RequestLoggerOptions {
+  referrerMode?: BeaconConfig['referrerMode'];
   /** Product this Beacon instance logs for (beacon_events.product_id). */
   productId: string;
+  /** Map the persisted request path; null drops the event. Defaults to identity. */
+  normalizePath?: (path: string) => string | null;
   /** Resolve the authenticated user id from the request, or null. */
   getUserId?: (c: Context) => string | null;
   /** Path prefixes to skip — a request is skipped when its path startsWith any. */
   excludePaths?: string[];
   /** SHA-256 the client IP before storage (REQUIREMENTS.md §1.1). Default true. */
   hashIPs?: boolean;
+  ipPolicy?: IpPolicy;
   /**
    * Visitor-token store (REQUIREMENTS.md §2). When provided, unauthenticated
    * requests get a token (minted or reused via `_t`) and first-touch attribution.
@@ -75,7 +82,9 @@ export function requestLogger(buffer: EventSink, opts: RequestLoggerOptions): Mi
 
     // Resolved once, before next(): the IP/UA seed the token record, and the
     // token must be on the context before the handler renders.
-    const ip = resolveIpFromRequest(req, hashIPs);
+    const ip = opts.ipPolicy
+      ? opts.ipPolicy.storage(resolveIpFromRequest(req, false))
+      : resolveIpFromRequest(req, hashIPs);
     const userAgent = req.header('user-agent');
 
     // getUserId is host-supplied; a throw here drops logging for this request
@@ -129,7 +138,16 @@ export function requestLogger(buffer: EventSink, opts: RequestLoggerOptions): Mi
       threw = true;
       throw err;
     } finally {
-      if (canLog) {
+      let loggedPath: string | null = path;
+      if (canLog && opts.normalizePath) {
+        try {
+          loggedPath = opts.normalizePath(path);
+        } catch {
+          console.error('[beacon] path normalization failed');
+          canLog = false;
+        }
+      }
+      if (canLog && loggedPath !== null) {
         try {
           // c.error stays set even when a non-rethrowing onError produced a real
           // response (Hono's compose never clears it), so we key off whether the
@@ -142,10 +160,11 @@ export function requestLogger(buffer: EventSink, opts: RequestLoggerOptions): Mi
               userId,
               visitorToken,
               ip,
-              path,
+              path: loggedPath,
               requestTime,
               responseTimeMs: Date.now() - start,
               status,
+              referrerMode: opts.referrerMode,
             }),
           );
         } catch (err) {
@@ -169,9 +188,6 @@ function resolveVisitorToken(
     store.touch(existing.token);
     return existing.token;
   }
-  // `ip` is the configured IP representation — SHA-256 hashed by default, or the
-  // raw IP when hashIPs is off — so the record's ipHash field mirrors what the
-  // event stores. It is in-memory and TTL-bounded; nothing here is persisted.
   return store.create(ip ?? '', userAgent ?? '');
 }
 
@@ -182,6 +198,7 @@ function captureAttribution(req: BeaconRequest, store: VisitorTokenStore, token:
 }
 
 interface BuildArgs {
+  referrerMode?: BeaconConfig['referrerMode'];
   productId: string;
   userId: string | null;
   visitorToken: string | null;
@@ -213,6 +230,6 @@ function buildEvent(req: BeaconRequest, args: BuildArgs): BeaconEvent {
       status,
       response_time_ms: responseTimeMs,
     },
-    context,
+    context: scrubReferrerContext(context, args.referrerMode),
   };
 }

@@ -17,23 +17,51 @@ export interface AdminGateOptions {
   isAdmin?: (c: Context) => boolean;
 }
 
-/**
- * Build the admin-gate middleware (REQUIREMENTS.md §5.1). Calls `isAdmin(c)`
- * inside a try/catch (§1.3 failure isolation, mirroring ingest.ts's getUserId
- * guard): any throw is swallowed and treated as non-admin. On non-admin it
- * returns the §5.5 403 and does NOT call next(); on admin it proceeds.
- */
+function safeErrorName(error: unknown): string {
+  try {
+    const name = (error as { name?: unknown } | null)?.name;
+    if (
+      typeof name === 'string' &&
+      [
+        'Error',
+        'TypeError',
+        'RangeError',
+        'SyntaxError',
+        'ReferenceError',
+        'URIError',
+        'EvalError',
+      ].includes(name)
+    )
+      return name;
+  } catch {}
+  return 'Error';
+}
+
+function isAdmin(c: Context, opts: AdminGateOptions): boolean {
+  try {
+    return opts.isAdmin?.(c) ?? false;
+  } catch (error) {
+    console.warn(`[beacon] adminGate: isAdmin failed: ${safeErrorName(error)}`);
+    return false;
+  }
+}
+
 export function adminGate(opts: AdminGateOptions): MiddlewareHandler {
   return async (c, next) => {
-    let admin = false;
-    try {
-      admin = opts.isAdmin?.(c) ?? false;
-    } catch (err) {
-      console.warn(`[beacon] adminGate: isAdmin failed: ${String(err)}`);
-    }
+    if (!isAdmin(c, opts)) return errorResponse(c, 'UNAUTHORIZED', 'admin access required');
+    await next();
+  };
+}
 
-    if (!admin) {
-      return errorResponse(c, 'UNAUTHORIZED', 'admin access required');
+export function erasureGate(
+  opts: AdminGateOptions & { trustedIngestToken?: string },
+): MiddlewareHandler {
+  return async (c, next) => {
+    if (
+      !verifyTrustedBearer(c.req.header('authorization'), opts.trustedIngestToken) &&
+      !isAdmin(c, opts)
+    ) {
+      return errorResponse(c, 'UNAUTHORIZED', 'admin or trusted bearer required');
     }
     await next();
   };
