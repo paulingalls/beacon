@@ -66,14 +66,6 @@ SELECT format('GRANT CONNECT, TEMPORARY ON DATABASE %I TO beacon_reader', curren
 REVOKE CREATE ON SCHEMA public FROM beacon_reader;
 GRANT USAGE ON SCHEMA public TO beacon_reader;
 REVOKE ALL ON TABLE public.beacon_events, public.beacon_meta, public.beacon_short_links, public.beacon_erasures FROM beacon_reader;
-SELECT format('REVOKE ALL (%s) ON TABLE public.%I FROM beacon_reader',
-              string_agg(format('%I',att.attname), ', '), c.relname)
-FROM pg_attribute att JOIN pg_class c ON c.oid=att.attrelid
-JOIN pg_namespace n ON n.oid=c.relnamespace
-WHERE n.nspname='public'
-  AND c.relname IN ('beacon_events','beacon_meta','beacon_short_links','beacon_erasures')
-  AND att.attnum>0 AND NOT att.attisdropped
-GROUP BY c.relname \gexec
 GRANT SELECT ON TABLE public.beacon_events, public.beacon_meta, public.beacon_short_links, public.beacon_erasures TO beacon_reader;
 DO $$ BEGIN
     IF EXISTS (SELECT FROM pg_namespace
