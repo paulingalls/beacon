@@ -224,6 +224,46 @@ sudo systemctl restart beacon    # manual restart
 gh workflow disable deploy.yml   # pause autodeploy during maintenance
 ```
 
+## Grafana database reader
+
+After migrations, an operator provisions `beacon_reader` from the repository
+root with PostgreSQL 15+ `psql` (the script uses `\getenv`). The administrator
+needs CREATEROLE, authority to manage this role, and ownership/grant authority on
+the database, public schema and all four tables. Managed-provider administrators
+may need additional owner grants. Resetting existing unsafe role attributes
+requires corresponding elevated authority (for example, only a superuser can
+clear SUPERUSER); a failed command requires operator resolution.
+
+Export `ADMIN_DATABASE_URL` for that administrator's Beacon database connection
+(with TLS on managed Postgres). Supply a fresh password without putting it in
+shell history:
+
+```bash
+read -r -s -p 'Reader password: ' BEACON_READER_PASSWORD; echo
+export BEACON_READER_PASSWORD
+```
+
+<!-- reader-provision -->
+```bash
+psql -X --dbname "$ADMIN_DATABASE_URL" --set=ON_ERROR_STOP=1 --file scripts/create-reader-role.sql
+```
+
+Then `unset BEACON_READER_PASSWORD ADMIN_DATABASE_URL`. Do not enable shell
+tracing or SQL echo while provisioning. Configure Grafana's PostgreSQL data source
+with the Beacon database/host, TLS, username `beacon_reader`, and the supplied
+password in its secret credential field. Credentials belong to the private
+operator/Grafana deployment, never a published Beacon package.
+
+The transaction can be rerun to rotate the password and reconcile direct grants.
+It grants SELECT on `beacon_events`, `beacon_meta`, `beacon_short_links`, and
+`beacon_erasures`, plus schema USAGE and database CONNECT/TEMPORARY. It grants
+no future tables. The reader cannot INSERT/UPDATE/DELETE these tables, ALTER/DROP them, or
+CREATE permanent tables or schemas. Session-local temporary tables are allowed; database-wide PUBLIC TEMPORARY privileges are preserved.
+Existing role membership or ownership, unsafe PUBLIC CREATE/write grants, and
+CREATE access to additional permanent schemas cause a loud failure. Resolve those
+privileges deliberately before retrying; the script does not change shared PUBLIC
+policy.
+
 ## Related
 
 - [`deploy/beacon.service`](../deploy/beacon.service) — systemd unit.
