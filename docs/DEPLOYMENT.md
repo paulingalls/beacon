@@ -265,13 +265,7 @@ CREATE access to additional permanent schemas cause a loud failure. Resolve thos
 privileges deliberately before retrying; the script does not change shared PUBLIC
 policy.
 
-## Self-contained container deployment (acceptance pending)
-
-The container acceptance work is incomplete. On Docker Engine 29.8.1 with
-Docker Desktop, the internal-network launch below records a port binding but
-creates no published diagnostic port. The direct HTTP acceptance checks fail
-loudly at that boundary; an ingress design decision is needed before this path
-is certified. Caddy and syscall-observer acceptance have not yet been established.
+## Self-contained container deployment
 
 Run these commands from the repository root with Docker Engine/Compose available.
 Acquire the Bun, Postgres and Caddy images before isolating Beacon. Choose unique
@@ -287,12 +281,14 @@ SERVER=beacon-server
 CADDY=beacon-caddy
 PUBLIC_NETWORK=beacon-public
 CONFIG_DIR="$HOME/beacon-config"
+DATABASE_NAME=beacon
 PG_PASSWORD=$(openssl rand -hex 32)
 ADMIN_TOKEN=$(openssl rand -hex 32)
 TRUSTED_INGEST_TOKEN=$(openssl rand -hex 32)
 PORT=8080
-HTTP_PORT=8080
-HTTPS_PORT=8443
+HTTP_PORT=80
+HTTPS_PORT=443
+BIND_IP=0.0.0.0
 SITE=analytics.example.com
 mkdir -p "$CONFIG_DIR"
 chmod 700 "$CONFIG_DIR"
@@ -314,10 +310,10 @@ docker network create "$PUBLIC_NETWORK"
 
 <!-- container-postgres -->
 ```bash
-docker run -d --name "$PG" --network "$NETWORK" -e POSTGRES_USER=beacon -e POSTGRES_DB=beacon -e POSTGRES_PASSWORD="$PG_PASSWORD" -v "$VOLUME:/var/lib/postgresql/data" postgres:16-alpine
+docker run -d --name "$PG" --network "$NETWORK" -e POSTGRES_USER=beacon -e POSTGRES_DB="$DATABASE_NAME" -e POSTGRES_PASSWORD="$PG_PASSWORD" -v "$VOLUME:/var/lib/postgresql/data" postgres:16-alpine
 ```
 
-Wait for `docker exec "$PG" pg_isready -U beacon -d beacon` to succeed.
+Wait for `docker exec "$PG" pg_isready -h 127.0.0.1 -U beacon -d beacon` to succeed.
 The strict server outbound profile permits only Postgres, not DNS. Derive its
 private numeric address from the exact Docker network; use this DATABASE_URL
 unchanged for migration, ordinary launch and traced acceptance.
@@ -326,7 +322,7 @@ unchanged for migration, ordinary launch and traced acceptance.
 ```bash
 PG_IP=$(docker inspect --format "{{with index .NetworkSettings.Networks \"$NETWORK\"}}{{.IPAddress}}{{end}}" "$PG")
 test -n "$PG_IP"
-DATABASE_URL="postgres://beacon:$PG_PASSWORD@$PG_IP:5432/beacon"
+DATABASE_URL="postgres://beacon:$PG_PASSWORD@$PG_IP:5432/$DATABASE_NAME"
 ```
 
 Re-resolve the address after Postgres container recreation; rewrite the env file
@@ -357,13 +353,15 @@ docker run --rm --network "$NETWORK" --env-file "$CONFIG_DIR/beacon.env" "$IMAGE
 
 <!-- container-launch -->
 ```bash
-docker run -d --name "$SERVER" --network "$NETWORK" --network-alias beacon --env-file "$CONFIG_DIR/beacon.env" -p "127.0.0.1::$PORT" "$IMAGE"
+docker run -d --name "$SERVER" --network "$NETWORK" --network-alias beacon --env-file "$CONFIG_DIR/beacon.env" "$IMAGE"
 ```
 
-Caddy joins the private network for its upstream and the public network for TLS.
+Caddy starts on the host-published ingress bridge, then joins the private network
+for its upstream. Beacon and Postgres each have only the internal network;
+Beacon publishes no host port.
 Beacon stays exclusively on the internal network. Configure domain DNS and expose
 ports 80/443 in production (HTTP_PORT=80, HTTPS_PORT=443). For local acceptance,
-SITE=http://:80 disables TLS; that check does not prove public DNS/ACME issuance.
+SITE=http://:80, BIND_IP=127.0.0.1 and HTTP_PORT=0 use local ephemeral HTTP; that check does not prove public DNS/ACME issuance.
 
 <!-- container-caddy-config -->
 ```bash
@@ -376,8 +374,8 @@ EOF
 
 <!-- container-caddy-launch -->
 ```bash
-docker run -d --name "$CADDY" --network "$NETWORK" -p "127.0.0.1:$HTTP_PORT:80" -p "127.0.0.1:$HTTPS_PORT:443" -v "$CONFIG_DIR/Caddyfile:/etc/caddy/Caddyfile:ro" caddy:2-alpine
-docker network connect "$PUBLIC_NETWORK" "$CADDY"
+docker run -d --name "$CADDY" --network "$PUBLIC_NETWORK" -p "$BIND_IP:$HTTP_PORT:80" -p "$BIND_IP:$HTTPS_PORT:443" -v "$CONFIG_DIR/Caddyfile:/etc/caddy/Caddyfile:ro" caddy:2-alpine
+docker network connect "$NETWORK" "$CADDY"
 ```
 
 Inspect `docker inspect --format '{{.State.Health.Status}}' "$SERVER"` until
@@ -391,7 +389,12 @@ events before exiting 0. Allow enough time for your database to accept the drain
 docker stop --time 30 "$SERVER"
 ```
 
-Acceptance requires a diagnostic that observes server process syscalls from before the exact
+The container suite uses a strace sidecar with SYS_PTRACE, seccomp tracing permission
+and Docker host PID visibility, attached only to the inspected Beacon PID. A
+startup gate lets it attach before exec; the primary trace keeps the shipped
+source, startup command, image and deployment env unchanged. The sidecar remains
+alive outside Beacon's PID namespace to capture terminal exit. Missing attachment
+or terminal evidence fails the suite. It observes server syscalls from before the exact
 shipped startup command through workload and shutdown. It counts every TCP
 connection attempt, including failed/swallowed attempts, and every outbound
 datagram send attempt. Only the numeric Postgres address on TCP 5432 is allowed.
@@ -403,7 +406,14 @@ loopback and DNS are not blanket exemptions. Unknown/incomplete observations or
 missing Docker/tracing prerequisites fail loudly. This is bounded evidence for
 the exercised startup/workload/shutdown, not every possible future workload.
 Caddy, clients, healthcheck processes and the observer are separate from the
-server traffic claim. The dashboard loads Chart.js from
+server traffic claim. The suite provisions one owned Postgres container per
+process through the documented command; each scenario uses a separate database
+and drops it in finally cleanup. Base and observer builds are shared, while
+Beacon lifecycle and fault runs use fresh processes. Separate timing diagnostics shorten only the daily retention
+interval or delay only periodic buffer flushing; they exercise persisted policy
+and shutdown faults, and are not the primary traced run. The outage check requires
+a failed DB-dependent query (server/proxy error or a bounded timeout) followed
+by successful HTTP health and a fresh Docker healthcheck. The dashboard loads Chart.js from
 `https://cdn.jsdelivr.net/npm/chart.js` in the browser; that existing browser-side
 CDN dependency needs browser internet access and is not server outbound traffic.
 

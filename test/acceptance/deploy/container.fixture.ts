@@ -3,59 +3,19 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-export const root = join(import.meta.dir, '../../..');
-export const runbook = readFileSync(join(root, 'docs/DEPLOYMENT.md'), 'utf8');
-export function block(step: string, source = runbook) {
-  const matches = [
-    ...source.matchAll(
-      new RegExp(`<!-- container-${step} -->\\s*\x60\x60\x60bash\\n([\\s\\S]*?)\x60\x60\x60`, 'g'),
-    ),
-  ];
-  if (matches.length !== 1)
-    throw new Error(`container-${step}: expected exactly one executable block`);
-  return matches[0]?.[1] as string;
-}
-export async function command(argv: string[], env: Record<string, string> = {}, timeout = 120000) {
-  const process = Bun.spawn(argv, {
-    cwd: root,
-    env: { ...Bun.env, ...env },
-    stdout: 'pipe',
-    stderr: 'pipe',
-  });
-  const timer = setTimeout(() => process.kill(), timeout);
-  try {
-    const [status, stdout, stderr] = await Promise.all([
-      process.exited,
-      new Response(process.stdout).text(),
-      new Response(process.stderr).text(),
-    ]);
-    if (status !== 0)
-      throw new Error(`${argv[0]} ${argv[1]} failed (${status}): ${stderr || stdout}`);
-    return stdout.trim();
-  } finally {
-    clearTimeout(timer);
-  }
-}
-export const docker = (...args: string[]) => command(['docker', ...args]);
-export async function until(label: string, check: () => Promise<boolean>, timeout = 20000) {
-  const deadline = Date.now() + timeout;
-  while (Date.now() < deadline) {
-    if (await check()) return;
-    await Bun.sleep(100);
-  }
-  throw new Error(`Timeout: ${label}`);
-}
+import { block, command, docker, runbook, until } from './container.commands';
+import { shared } from './container.resources';
+
+export { block, command, docker, requireDocker, root, runbook, until } from './container.commands';
 export class ContainerFixture {
   readonly id = `beacon-container-${crypto.randomUUID().slice(0, 8)}`;
   readonly dir = mkdtempSync(join(tmpdir(), 'beacon-container-'));
+  readonly database = `case_${crypto.randomUUID().replaceAll('-', '')}`;
   readonly env: Record<string, string> = {
-    IMAGE: `${this.id}:app`,
-    NETWORK: `${this.id}-private`,
-    PG: `${this.id}-pg`,
-    VOLUME: `${this.id}-volume`,
+    ...shared.env,
+    DATABASE_NAME: this.database,
     SERVER: `${this.id}-server`,
     CADDY: `${this.id}-caddy`,
-    PUBLIC_NETWORK: `${this.id}-public`,
     CONFIG_DIR: this.dir,
     PG_PASSWORD: 'fixture-secret',
     ADMIN_TOKEN: 'fixture-admin',
@@ -63,6 +23,7 @@ export class ContainerFixture {
     PORT: '8181',
     HTTP_PORT: '0',
     HTTPS_PORT: '0',
+    BIND_IP: '127.0.0.1',
     SITE: 'http://:80',
   };
   readonly containers = new Set<string>();
@@ -70,21 +31,8 @@ export class ContainerFixture {
     return command(['sh', '-eu', '-c', block(name, source)], this.env);
   }
   async setup() {
-    await docker('info');
-    await docker('pull', 'postgres:16-alpine');
-    await docker('pull', 'caddy:2-alpine');
-    await this.step('build');
-    await this.step('network');
-    this.containers.add(this.env.PG as string);
-    await this.step('postgres');
-    await until('Postgres ready', async () => {
-      try {
-        await docker('exec', this.env.PG as string, 'pg_isready', '-U', 'beacon', '-d', 'beacon');
-        return true;
-      } catch {
-        return false;
-      }
-    });
+    await shared.ensure();
+    await shared.createDatabase(this.database);
     const address = await command(
       ['sh', '-eu', '-c', `${block('address')}\nprintf '%s\\n%s' "$PG_IP" "$DATABASE_URL"`],
       this.env,
@@ -104,16 +52,17 @@ export class ContainerFixture {
       '-U',
       'beacon',
       '-d',
-      'beacon',
+      this.database,
       '-v',
       'ON_ERROR_STOP=1',
       '-c',
       query,
     );
   }
-  async launch(name = this.env.SERVER as string, options: string[] = []) {
+  async launch(options: string[] = [], argv: string[] = []) {
+    const name = this.env.SERVER as string;
     this.containers.add(name);
-    if (options.length) {
+    if (options.length || argv.length) {
       await docker(
         'run',
         '-d',
@@ -121,24 +70,47 @@ export class ContainerFixture {
         name,
         '--network',
         this.env.NETWORK as string,
+        '--network-alias',
+        'beacon',
         '--env-file',
         join(this.dir, 'beacon.env'),
-        '-p',
-        `127.0.0.1::${this.env.PORT}`,
         ...options,
         this.env.IMAGE as string,
+        ...argv,
       );
-    } else await command(['sh', '-eu', '-c', block('launch')], { ...this.env, SERVER: name });
-    const port = await docker('port', name, `${this.env.PORT}/tcp`);
-    const url = `http://${port}`;
-    await until(`${name} HTTP ready`, async () => {
+    } else await this.step('launch');
+  }
+  async gateway(source = runbook) {
+    this.containers.add(this.env.CADDY as string);
+    await this.step('caddy-config', source);
+    await this.step('caddy-launch', source);
+    return `http://${await docker('port', this.env.CADDY as string, '80/tcp')}`;
+  }
+  async ready(url: string) {
+    await until('Caddy upstream ready', async () => {
       try {
-        return (await fetch(`${url}/health`)).ok;
+        return (await fetch(`${url}/health`, { signal: AbortSignal.timeout(1000) })).ok;
       } catch {
         return false;
       }
     });
-    return url;
+  }
+  async reset() {
+    const name = this.env.SERVER as string;
+    if (this.containers.has(name)) {
+      await docker('rm', '-f', name);
+      this.containers.delete(name);
+    }
+  }
+  envFile(changes: Record<string, string | undefined>) {
+    const path = join(this.dir, 'beacon.env');
+    const lines = readFileSync(path, 'utf8').trim().split('\n');
+    for (const [key, value] of Object.entries(changes)) {
+      const i = lines.findIndex((line) => line.startsWith(`${key}=`));
+      if (i >= 0) lines.splice(i, 1);
+      if (value !== undefined) lines.push(`${key}=${value}`);
+    }
+    writeFileSync(path, `${lines.join('\n')}\n`);
   }
   async stop(name = this.env.SERVER as string) {
     await command(['sh', '-eu', '-c', block('stop')], { ...this.env, SERVER: name });
@@ -155,23 +127,7 @@ export class ContainerFixture {
         /* setup may fail before creation */
       }
     }
-    for (const network of [this.env.NETWORK, this.env.PUBLIC_NETWORK]) {
-      try {
-        await docker('network', 'rm', network as string);
-      } catch {
-        /* setup may fail before creation */
-      }
-    }
-    try {
-      await docker('volume', 'rm', this.env.VOLUME as string);
-    } catch {
-      /* setup may fail before creation */
-    }
-    try {
-      await docker('image', 'rm', this.env.IMAGE as string);
-    } catch {
-      /* setup may fail before creation */
-    }
+    await shared.dropDatabase(this.database);
     rmSync(this.dir, { recursive: true, force: true });
   }
   preload(contents: string) {
