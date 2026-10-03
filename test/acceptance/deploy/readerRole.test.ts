@@ -2,7 +2,8 @@ import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { fixture, password, root, scriptPath, tables } from './readerRole.fixture';
+import { registrationControls } from './container.guards';
+import { fixture, password, scriptPath, tables } from './readerRole.fixture';
 
 const db = fixture();
 const temp = mkdtempSync(join(tmpdir(), 'reader-role-'));
@@ -311,13 +312,7 @@ test('missing prerequisites fail loudly', () => {
   expect(r.status).not.toBe(0);
   expect(r.stderr).toContain('permission denied');
 });
-test('slow suite registered and story excludes subprocess suite', () => {
-  const { scripts } = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
-  expect(scripts['test:slow']).toContain('./test/acceptance/deploy/readerRole.test.ts');
-  expect(scripts['test:story']).toContain(
-    '--path-ignore-patterns=test/acceptance/deploy/readerRole.test.ts',
-  );
-});
+test('slow suite registered and story excludes subprocess suite', registrationControls);
 
 test('non-superuser operator provisions and reruns with owner and role authority', async () => {
   const operator = `${db.name}_operator`;

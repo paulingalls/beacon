@@ -1,6 +1,8 @@
 import { expect } from 'bun:test';
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
 import { block, type ContainerFixture, docker, root, runbook, until } from './container.fixture';
 
 export function launchTopology(source = runbook) {
@@ -19,9 +21,41 @@ export const subprocesses = [
   'test/acceptance/deploy/container.test.ts',
 ];
 export function registration(scripts: Record<string, string>) {
-  for (const path of subprocesses) {
-    expect(scripts['test:story']?.split(`--path-ignore-patterns=${path}`).length).toBe(2);
-    expect(scripts['test:slow']?.split(`./${path}`).length).toBe(2);
+  const dir = mkdtempSync(join(tmpdir(), 'beacon-tier-registration-'));
+  const receipts = join(dir, 'executed');
+  // Mirror paths, not suite bodies: exercise Bun's shell and selection without nested DB/Docker runs.
+  try {
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ scripts }));
+    const paths = [...subprocesses, 'registration.test.ts'];
+    for (const [index, path] of paths.entries()) {
+      const file = join(dir, path);
+      mkdirSync(dirname(file), { recursive: true });
+      writeFileSync(
+        file,
+        `import { test } from 'bun:test';
+import { writeFileSync } from 'node:fs';
+test('registration execution ${index}', () => writeFileSync(${JSON.stringify(join(receipts, String(index)))}, 'ran'));
+`,
+      );
+    }
+    for (const tier of ['test:slow', 'test:story']) {
+      mkdirSync(receipts);
+      const result = spawnSync(process.execPath, ['run', tier], {
+        cwd: dir,
+        encoding: 'utf8',
+        timeout: 10000,
+      });
+      expect(result.error).toBeUndefined();
+      expect(result.status, `${tier}: ${result.stdout}\n${result.stderr}`).toBe(0);
+      const expected =
+        tier === 'test:slow'
+          ? subprocesses.map((_, index) => String(index))
+          : [String(subprocesses.length)];
+      expect(readdirSync(receipts).sort(), `${tier} executed suites`).toEqual(expected.sort());
+      rmSync(receipts, { recursive: true });
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
   }
 }
 export const guidance = [
@@ -203,6 +237,17 @@ export async function red(name: string, action: () => Promise<unknown>, target: 
 export function registrationControls() {
   const { scripts } = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
   registration(scripts);
+  for (const tier of ['test:story', 'test:slow']) {
+    for (const command of [
+      `echo ${scripts[tier]}`,
+      `${scripts[tier]} --test-name-pattern=never-select-a-registration-test --pass-with-no-tests`,
+      `${scripts[tier]} --only --pass-with-no-tests`,
+      `${scripts[tier]} --path-ignore-patterns='**' --pass-with-no-tests`,
+    ])
+      expect(() => registration({ ...scripts, [tier]: command })).toThrow(
+        `${tier} executed suites`,
+      );
+  }
   for (const path of subprocesses)
     for (const tier of ['test:story', 'test:slow']) {
       expect(() =>
