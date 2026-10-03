@@ -100,7 +100,7 @@ export class TracedServer {
 export function serverMutation(f: ContainerFixture, from: string, to: string) {
   const source = readFileSync(join(root, 'apps/server/src/server.ts'), 'utf8');
   if (source.split(from).length !== 2) throw new Error('source mutation must match exactly once');
-  const path = join(f.dir, 'server.ts');
+  const path = join(f.dir, `server-${crypto.randomUUID()}.ts`);
   writeFileSync(path, source.replace(from, to));
   return ['-v', `${path}:/app/apps/server/src/server.ts:ro`];
 }

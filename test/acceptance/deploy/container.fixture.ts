@@ -84,16 +84,43 @@ export class ContainerFixture {
     this.containers.add(this.env.CADDY as string);
     await this.step('caddy-config', source);
     await this.step('caddy-launch', source);
-    return `http://${await docker('port', this.env.CADDY as string, '80/tcp')}`;
+    try {
+      return `http://${await docker('port', this.env.CADDY as string, '80/tcp')}`;
+    } catch (error) {
+      throw new Error(`${error}\n${await this.diagnostics()}`);
+    }
+  }
+  async diagnostics() {
+    const results = await Promise.all(
+      [this.env.SERVER as string, this.env.CADDY as string].map(async (name) => {
+        const state = await docker('inspect', '--format', '{{json .State}}', name);
+        const process = Bun.spawn(['docker', 'logs', '--tail', '20', name], {
+          stdout: 'pipe',
+          stderr: 'pipe',
+        });
+        const [stdout, stderr] = await Promise.all([
+          new Response(process.stdout).text(),
+          new Response(process.stderr).text(),
+          process.exited,
+        ]);
+        const logs = stdout + stderr;
+        return `${name}: ${state}\n${logs}`;
+      }),
+    );
+    return results.join('\n');
   }
   async ready(url: string) {
-    await until('Caddy upstream ready', async () => {
-      try {
-        return (await fetch(`${url}/health`, { signal: AbortSignal.timeout(1000) })).ok;
-      } catch {
-        return false;
-      }
-    });
+    try {
+      await until('Caddy upstream ready', async () => {
+        try {
+          return (await fetch(`${url}/health`, { signal: AbortSignal.timeout(1000) })).ok;
+        } catch {
+          return false;
+        }
+      });
+    } catch (error) {
+      throw new Error(`${error}\n${await this.diagnostics()}`);
+    }
   }
   async reset() {
     const name = this.env.SERVER as string;
@@ -131,7 +158,7 @@ export class ContainerFixture {
     rmSync(this.dir, { recursive: true, force: true });
   }
   preload(contents: string) {
-    const path = join(this.dir, 'timing.ts');
+    const path = join(this.dir, `timing-${crypto.randomUUID()}.ts`);
     writeFileSync(path, contents);
     return ['-v', `${path}:/diagnostic.ts:ro`, '-e', 'BUN_OPTIONS=--preload=/diagnostic.ts'];
   }
