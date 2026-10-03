@@ -44,7 +44,8 @@ Biome for lint/format; lefthook git hooks; GitHub Actions CI and deploy.
 - Raw IPs are never stored long-term. Every query API endpoint sits behind auth.
 - Migrations are additive-only plain SQL, guarded by the committed checksum manifest.
 - Keep dependencies minimal and never add an analytics dependency.
-- Run `bun run test` from the repo root; the DB preload is only picked up there.
+- Run tests from the repo root so the DB preload is picked up. Destructive suites must
+  run sequentially per database, or use a distinct database for each concurrent process.
 - Register any new subprocess or seconds-scale suite in BOTH `test:story`'s ignore list
   and `test:slow`, so the per-commit tiers stay fast.
 - Run `bun run format` before committing (Biome import-sort blocks the hook).
@@ -54,7 +55,7 @@ line. A Markdown heading with the value on the next line is unreadable.
 
 **Worktree bootstrap**: `bun install --frozen-lockfile`
 
-**Worktree teardown**: none needed
+**Worktree teardown**: `docker compose down`
 Same value grammar as bootstrap: ONE backticked command, or "none". It runs in
 the checkout before removal; unlike bootstrap, failure is reported and removal
 continues. `config.yml`'s `teardown_timeout` caps it.

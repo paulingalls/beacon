@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.0 — 2026-10-02
+
+- Add opt-in event retention through `retentionDays` and `RETENTION_DAYS`. Unset or zero keeps retention disabled; pruning uses bounded batches and shutdown awaits in-flight work.
+- Add an idempotent operator script for the Grafana `beacon_reader` role. It reads Beacon tables and can create temporary tables, while permanent schema changes and writes remain forbidden.
+- Support self-contained container deployment behind Caddy, with a DB-free healthcheck, migration instructions, graceful shutdown, and verified private-network isolation. The strict outbound profile uses Postgres's numeric private address; refresh it after recreating Postgres.
+- Reuse one Postgres container per container acceptance suite, with separate scenario databases and verified cleanup after success and failure.
+
+The SDK, client, and server manifests all declare version `0.2.0`. No new database migration is required. Existing retention and privacy defaults remain unchanged.
+
 ## 0.1.0 — 2026-10-02
 
 - Add server-owned IP modes: legacy SHA-256, rotating daily-salt HMAC, and IP omission. The HTTP SDK can explicitly forward raw IPs for the server to transform once.
