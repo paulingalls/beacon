@@ -1,10 +1,3 @@
-# Container image for the Beacon host app (apps/server).
-#
-# NOT the production deploy path: the droplet runs `bun run` directly under systemd
-# (see docs/DEPLOYMENT.md, deploy/beacon.service). This image is kept for optional
-# container-based runs — local container testing, or a future container deploy target —
-# so the host app stays runnable as an image. It builds from oven/bun (Bun executes the
-# .ts entry directly; the workspace has no build step).
 FROM oven/bun:1.3.14-alpine
 
 WORKDIR /app
@@ -22,9 +15,8 @@ COPY apps/server/package.json apps/server/
 # pins to bun.lock so the image matches local/CI installs exactly.
 RUN bun install --frozen-lockfile --production --ignore-scripts
 
-# Copy the source (bun runs the .ts directly — no compile step).
 COPY . .
 
-# apps/server reads PORT (default 8080); a container runtime can override it.
 EXPOSE 8080
+HEALTHCHECK --interval=5s --timeout=3s --start-period=10s --retries=3 CMD bun -e 'const r = await fetch(`http://127.0.0.1:${process.env.PORT ?? 8080}/health`, {signal: AbortSignal.timeout(2000)}); if (!r.ok || (await r.json()).status !== "ok") process.exit(1);'
 CMD ["bun", "run", "apps/server/src/server.ts"]

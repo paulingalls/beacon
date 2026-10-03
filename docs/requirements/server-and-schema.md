@@ -226,12 +226,21 @@ The `bun run migrate` command scans the migrations directory, compares against `
 
 | Config Key | Default | Description |
 |---|---|---|
-| `retentionDays` | `365` | Events older than this are eligible for deletion |
+| `retentionDays` | unset (disabled) | Positive days enable event deletion; 0 means disabled, no pruning |
 | `pruneInterval` | `86400000` (24h) | How often the pruning job runs |
 
-A background timer runs every `pruneInterval` ms and deletes events older than `retentionDays` in batches of 10,000 rows to avoid long-running transactions. The `beacon_meta` table is not pruned — it serves as a lightweight historical record.
+Pruning is off unless set: omitted or `0` means no pruning. Positive finite days enable
+an unref'd background timer every `pruneInterval` ms (default 86400000, 24 hours).
+Each non-overlapping run uses one cutoff and deletes events strictly before it,
+measured from event `timestamp`, in batches of at most 10,000 rows. Cutoff equality
+is retained. `beacon_meta`, `beacon_short_links` and `beacon_erasures` remain unchanged.
 
-Pruning is opt-in. If `retentionDays` is set to `0`, no pruning occurs.
+`retentionDays` must be a finite nonnegative number producing a representable Date
+cutoff. `pruneInterval` must be an integer from 1 through 2147483647 milliseconds.
+Invalid configuration throws before resources are created. Each run also validates
+its current cutoff; runtime errors warn and allow retry on the next interval.
+`shutdown()` cancels future scheduling, awaits in-flight SQL, starts no further
+batch after stop, then closes the database.
 
 ### 4.4 Meta Table Updates
 

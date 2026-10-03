@@ -23,6 +23,7 @@ import {
   createShortLink as persistShortLink,
 } from './shortener/store';
 import { closeDb, createDb } from './storage/db';
+import { startPruning, validateRetention } from './storage/prune';
 import type { BeaconConfig } from './types';
 import { associateVisitor } from './visitors/associate';
 import { createIpPolicy, type IpPolicyDependencies } from './visitors/ipSalt';
@@ -98,7 +99,7 @@ export interface Beacon {
  * Create a Beacon: open the Postgres client, start the event buffer + visitor
  * token store, and wire the request-logging middleware (REQUIREMENTS.md §1–§3).
  *
- * Throws on missing required config — the one intentional throw. Runtime failure
+ * Throws on invalid configuration. Runtime failure
  * isolation (§1.3) is handled downstream: createDb never throws and the buffer
  * retries, so a Postgres outage never crashes the host.
  */
@@ -118,6 +119,7 @@ export function createBeacon(
     throw new Error('[beacon] config.productId must be included in config.productAllowlist');
   }
 
+  validateRetention(config);
   const referrerMode = validateReferrerMode(config.referrerMode);
   const ipPolicy = createIpPolicy(config, ipDependencies);
   const sql = createDb({
@@ -130,6 +132,7 @@ export function createBeacon(
     maxBufferSize: config.maxBufferSize,
   });
   buffer.start();
+  const pruning = startPruning(sql, config);
 
   const tokenStore = new VisitorTokenStore({
     ttl: config.visitorTokenTTL,
@@ -304,9 +307,10 @@ export function createBeacon(
     associateVisitor: (c, userId) =>
       associateVisitor(buffer, sql, tokenStore, getVisitorToken(c), userId),
     shutdown: async () => {
+      const pruneStopped = pruning.stop();
       ipPolicy.stop();
       tokenStore.stop();
-      await buffer.stop();
+      await Promise.all([buffer.stop(), pruneStopped]);
       await closeDb(sql);
     },
   };

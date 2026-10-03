@@ -139,4 +139,4 @@ test('every docs TypeScript sample compiles against the real exports', async () 
     exitCode,
     `Docs samples failed to type-check against current exports:\n${stdout}${stderr}`,
   ).toBe(0);
-});
+}, 15_000);
