@@ -55,7 +55,7 @@ line. A Markdown heading with the value on the next line is unreadable.
 
 **Worktree bootstrap**: `bun install --frozen-lockfile`
 
-**Worktree teardown**: `docker compose down`
+**Worktree teardown**: `./scripts/teardown-worktree.sh`
 Same value grammar as bootstrap: ONE backticked command, or "none". It runs in
 the checkout before removal; unlike bootstrap, failure is reported and removal
 continues. `config.yml`'s `teardown_timeout` caps it.

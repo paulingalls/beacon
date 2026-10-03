@@ -19,6 +19,7 @@ export const subprocesses = [
   'test/acceptance/ipMode.roundtrip.acceptance.test.ts',
   'test/acceptance/erasure.roundtrip.acceptance.test.ts',
   'test/acceptance/deploy/container.test.ts',
+  'test/acceptance/deploy/worktreeTeardown.test.ts',
 ];
 export function registration(scripts: Record<string, string>) {
   const dir = mkdtempSync(join(tmpdir(), 'beacon-tier-registration-'));

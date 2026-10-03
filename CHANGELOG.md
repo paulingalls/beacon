@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.1 — 2026-10-02
+
+- Remove attached anonymous Postgres data volumes when disposable worktrees are torn down. Refuse teardown from the primary checkout and preserve named volumes and unrelated Docker projects.
+
+The SDK, client, and server manifests all declare version `0.2.1`. No application behavior or production database changes are required.
+
 ## 0.2.0 — 2026-10-02
 
 - Add opt-in event retention through `retentionDays` and `RETENTION_DAYS`. Unset or zero keeps retention disabled; pruning uses bounded batches and shutdown awaits in-flight work.
