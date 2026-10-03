@@ -156,7 +156,8 @@ systemctl enable --now beacon
 
 | Variable | Required | Purpose |
 |---|---|---|
-| `DATABASE_URL` | yes | Managed Postgres connection string (TLS). Host fails fast if unset. |
+| `DATABASE_URL` | yes | Postgres connection string; use TLS for managed Postgres. Host fails fast if unset. |
+| `PORT` | no | HTTP port (default `8080`); also used by the container HEALTHCHECK. |
 | `RETENTION_DAYS` | optional | Unset or 0 = disabled. Positive finite decimal days enable pruning; invalid or unrepresentable cutoff values fail startup before resources are created. |
 | `ADMIN_TOKEN` | set in prod | Bearer token gating dashboard + query API. **Unset ⇒ those surfaces fail closed (403).** |
 | `REFERRER_MODE` | unset (`raw`) | Optional `raw`, `origin`, or `origin-and-path`. Server policy for all newly stored referrers, including trusted ingest, track, and short-link clicks. Scrubbing omits invalid or non-HTTP(S) referrers and removes credentials, query, and fragment. Landing-URL attribution is unchanged. Invalid modes fail startup. |
@@ -263,6 +264,148 @@ Existing role membership or ownership, unsafe PUBLIC CREATE/write grants, and
 CREATE access to additional permanent schemas cause a loud failure. Resolve those
 privileges deliberately before retrying; the script does not change shared PUBLIC
 policy.
+
+## Self-contained container deployment (acceptance pending)
+
+The container acceptance work is incomplete. On Docker Engine 29.8.1 with
+Docker Desktop, the internal-network launch below records a port binding but
+creates no published diagnostic port. The direct HTTP acceptance checks fail
+loudly at that boundary; an ingress design decision is needed before this path
+is certified. Caddy and syscall-observer acceptance have not yet been established.
+
+Run these commands from the repository root with Docker Engine/Compose available.
+Acquire the Bun, Postgres and Caddy images before isolating Beacon. Choose unique
+resource names, an absolute CONFIG_DIR outside the repo, and fresh secrets; the
+example uses shell variables so multiple installations can coexist.
+
+```bash
+IMAGE=beacon:local
+NETWORK=beacon-private
+PG=beacon-postgres
+VOLUME=beacon-postgres-data
+SERVER=beacon-server
+CADDY=beacon-caddy
+PUBLIC_NETWORK=beacon-public
+CONFIG_DIR="$HOME/beacon-config"
+PG_PASSWORD=$(openssl rand -hex 32)
+ADMIN_TOKEN=$(openssl rand -hex 32)
+TRUSTED_INGEST_TOKEN=$(openssl rand -hex 32)
+PORT=8080
+HTTP_PORT=8080
+HTTPS_PORT=8443
+SITE=analytics.example.com
+mkdir -p "$CONFIG_DIR"
+chmod 700 "$CONFIG_DIR"
+docker pull postgres:16-alpine
+docker pull caddy:2-alpine
+```
+
+<!-- container-build -->
+```bash
+docker build -t "$IMAGE" .
+```
+
+<!-- container-network -->
+```bash
+docker network create --internal "$NETWORK"
+docker volume create "$VOLUME"
+docker network create "$PUBLIC_NETWORK"
+```
+
+<!-- container-postgres -->
+```bash
+docker run -d --name "$PG" --network "$NETWORK" -e POSTGRES_USER=beacon -e POSTGRES_DB=beacon -e POSTGRES_PASSWORD="$PG_PASSWORD" -v "$VOLUME:/var/lib/postgresql/data" postgres:16-alpine
+```
+
+Wait for `docker exec "$PG" pg_isready -U beacon -d beacon` to succeed.
+The strict server outbound profile permits only Postgres, not DNS. Derive its
+private numeric address from the exact Docker network; use this DATABASE_URL
+unchanged for migration, ordinary launch and traced acceptance.
+
+<!-- container-address -->
+```bash
+PG_IP=$(docker inspect --format "{{with index .NetworkSettings.Networks \"$NETWORK\"}}{{.IPAddress}}{{end}}" "$PG")
+test -n "$PG_IP"
+DATABASE_URL="postgres://beacon:$PG_PASSWORD@$PG_IP:5432/beacon"
+```
+
+Re-resolve the address after Postgres container recreation; rewrite the env file
+and restart Beacon with the updated DATABASE_URL. A hostname-only launch is not
+claimed to pass this strict profile. The env table above applies to both paths.
+Local Postgres here is private; managed Postgres still requires TLS.
+
+<!-- container-env -->
+```bash
+umask 077
+cat > "$CONFIG_DIR/beacon.env" <<EOF
+DATABASE_URL=$DATABASE_URL
+ADMIN_TOKEN=$ADMIN_TOKEN
+TRUSTED_INGEST_TOKEN=$TRUSTED_INGEST_TOKEN
+PORT=$PORT
+IP_MODE=none
+REFERRER_MODE=origin-and-path
+RETENTION_DAYS=30
+EOF
+```
+
+Run migrations before every new image launch; startup never migrates.
+
+<!-- container-migrate -->
+```bash
+docker run --rm --network "$NETWORK" --env-file "$CONFIG_DIR/beacon.env" "$IMAGE" bun run migrate
+```
+
+<!-- container-launch -->
+```bash
+docker run -d --name "$SERVER" --network "$NETWORK" --network-alias beacon --env-file "$CONFIG_DIR/beacon.env" -p "127.0.0.1::$PORT" "$IMAGE"
+```
+
+Caddy joins the private network for its upstream and the public network for TLS.
+Beacon stays exclusively on the internal network. Configure domain DNS and expose
+ports 80/443 in production (HTTP_PORT=80, HTTPS_PORT=443). For local acceptance,
+SITE=http://:80 disables TLS; that check does not prove public DNS/ACME issuance.
+
+<!-- container-caddy-config -->
+```bash
+cat > "$CONFIG_DIR/Caddyfile" <<EOF
+$SITE {
+    reverse_proxy beacon:$PORT
+}
+EOF
+```
+
+<!-- container-caddy-launch -->
+```bash
+docker run -d --name "$CADDY" --network "$NETWORK" -p "127.0.0.1:$HTTP_PORT:80" -p "127.0.0.1:$HTTPS_PORT:443" -v "$CONFIG_DIR/Caddyfile:/etc/caddy/Caddyfile:ro" caddy:2-alpine
+docker network connect "$PUBLIC_NETWORK" "$CADDY"
+```
+
+Inspect `docker inspect --format '{{.State.Health.Status}}' "$SERVER"` until
+healthy. `/health` is DB-free and remains healthy during a Postgres outage.
+Use the smoke checks above through Caddy with the configured host/port and tokens.
+Docker stop sends SIGTERM to the exec-form Bun entry; it drains accepted buffered
+events before exiting 0. Allow enough time for your database to accept the drain.
+
+<!-- container-stop -->
+```bash
+docker stop --time 30 "$SERVER"
+```
+
+Acceptance requires a diagnostic that observes server process syscalls from before the exact
+shipped startup command through workload and shutdown. It counts every TCP
+connection attempt, including failed/swallowed attempts, and every outbound
+datagram send attempt. Only the numeric Postgres address on TCP 5432 is allowed.
+A UDP connect alone associates a local socket without sending a payload. The
+observer must narrowly accept Bun's address-selection probes to `0.0.0.0:65535`,
+`[::]:65535`, and `Postgres-IP:0` only on UDP sockets with no send during that
+socket's lifetime. Any payload send on those sockets fails the observer. UDP,
+loopback and DNS are not blanket exemptions. Unknown/incomplete observations or
+missing Docker/tracing prerequisites fail loudly. This is bounded evidence for
+the exercised startup/workload/shutdown, not every possible future workload.
+Caddy, clients, healthcheck processes and the observer are separate from the
+server traffic claim. The dashboard loads Chart.js from
+`https://cdn.jsdelivr.net/npm/chart.js` in the browser; that existing browser-side
+CDN dependency needs browser internet access and is not server outbound traffic.
 
 ## Related
 
