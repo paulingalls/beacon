@@ -15,11 +15,10 @@ export class TracedServer {
   }
   async start(options: string[] = [], override?: string[]) {
     const f = this.f;
-    rmSync(join(f.dir, 'go'), { force: true });
     rmSync(join(f.dir, 'trace'), { force: true });
     writeFileSync(
       join(f.dir, 'gate.sh'),
-      '#!/bin/sh\nwhile [ ! -f /diagnostics/go ]; do sleep 0.1; done\nexec "$@"\n',
+      '#!/bin/sh\nwhile [ ! -f /tmp/beacon-observer-go ]; do sleep 0.1; done\nexec "$@"\n',
     );
     const cmd = JSON.parse(
       await docker('image', 'inspect', '--format', '{{json .Config.Cmd}}', f.env.IMAGE as string),
@@ -68,7 +67,7 @@ export class TracedServer {
       const status = await docker('exec', this.observer, 'cat', `/proc/${this.pid}/status`);
       return /TracerPid:\s+[1-9]/.test(status);
     });
-    writeFileSync(join(f.dir, 'go'), '');
+    await docker('exec', f.env.SERVER as string, 'touch', '/tmp/beacon-observer-go');
   }
   async finish() {
     await this.f.stop();
