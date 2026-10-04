@@ -8,17 +8,37 @@
 # integration suites skip. pre-push (~6s) adds typecheck and the
 # DB-backed suites. Both exclude the ~27s subprocess suites in test:slow, which
 # run in the sprint hook (xp sprint land) and in CI.
+#
+# Secrets go first in pre-commit, pre-merge-commit and pre-push, and refuse when
+# gitleaks is missing: a scan that ran on nothing must not look like a pass.
+source_dir: .githooks
 pre-commit:
-  parallel: true
+  piped: true
   jobs:
-    - name: biome
-      glob: '*.{ts,tsx,js,jsx,json,jsonc}'
-      run: bunx biome check --no-errors-on-unmatched {staged_files}
-    - name: test
-      run: bun run test:fast
+    - name: secrets
+      run: sh -c '. .githooks/hook-lib.sh; secrets_scan_index'
+    - group:
+        parallel: true
+        jobs:
+          - name: biome
+            glob: '*.{ts,tsx,js,jsx,json,jsonc}'
+            run: bunx biome check --no-errors-on-unmatched {staged_files}
+          - name: test
+            run: bun run test:fast
+
+pre-merge-commit:
+  jobs:
+    - name: secrets
+      run: sh -c '. .githooks/hook-lib.sh; secrets_scan_index'
 
 pre-push:
+  piped: true
   jobs:
+    # A script, not a command: lefthook can skip a pre-push command by file matching.
+    # It scans only the pushed range, so history already on the remote is not re-judged.
+    - script: secrets
+      runner: sh
+      use_stdin: true
     - name: story
       run: bun run typecheck && bun run test:story
 
