@@ -1,50 +1,17 @@
-# xp project config — EDIT the tiers for your stack, then re-run your first commit
-release: sprint      # sprint = stories integrate on a sprint branch, sprint close PRs trunk
-# codex_sandbox: danger-full-access  # Codex only: workspace-write | danger-full-access
+# xp project config (xp-plugin 1.0.0)
 trunk: develop       # sprints land and tag here; the develop -> main release cut stays ours
-# lifecycle_command: ./scripts/xp-lifecycle "fixed value"  # argv prefix, no shell
-#                    # receives sprint-open/story-close/sprint-close and the id
-preflight: docker info  # the bun test preload auto-starts the compose Postgres
-sprint_cap: 6        # max stories per sprint
-debt_budget: 0.2     # maximum share of scheduled debt; no allocation to fill
-constraints_chars_cap: 4500  # hard character ceiling; retire or shorten a rule
-profile_target: 806  # story-card token allowance; also the default when absent
-# versioning: off     # disables XP versions and tags; version_files is then ignored
+versioning: on       # each release is tagged; version_files must match the tag
 version_files: packages/beacon/package.json, packages/beacon-client/package.json, apps/server/package.json
-# teardown_timeout: 60  # seconds before close kills worktree teardown
-# review:
-#   verify_batches: 2   # sprint-close verifier AGENTS per round. Bounds the
-#                       # spend: candidates are batched across this many, never
-#                       # one agent per candidate.
-
-roles:               # harness/model[/effort]; the lead overrides per story in plan.md
+worktree_setup: bun install --frozen-lockfile   # in a new story/free worktree, before agents
+worktree_teardown: ./scripts/teardown-worktree.sh   # before removal; red warns, removes anyway
+debt_budget: 0.2
+# codex_sandbox: danger-full-access   # workspace-write | danger-full-access
+roles:               # harness/model[/effort]; a card's Executor: line overrides
   lead: codex/gpt-6.1-sol/medium
   planner: codex/gpt-6.1-sol/medium
   executor: codex/gpt-6.1-sol/medium
   reviewer: codex/gpt-6.1-sol/medium
-  slate-reviewer: codex/gpt-6.1-sol/medium
-  card-refresher: codex/gpt-6.1-sol/medium
   plan-reviewer: codex/gpt-6.1-sol/medium
-  finder: codex/gpt-6.1-sol/medium
-  verifier: codex/gpt-6.1-sol/medium
+  slate-reviewer: codex/gpt-6.1-sol/medium
+  angle-reviewer: codex/gpt-6.1-sol/medium   # was finder/verifier in 0.x
   fixer: codex/gpt-6.1-sol/medium
-  closer: codex/gpt-6.1-sol/medium
-
-tests:
-  # Tiers are package.json scripts shared with lefthook.yml (fast = pre-commit,
-  # story = pre-push). test:story and test:slow partition the bun suite: slow holds
-  # the subprocess suites (~27s of a ~31s run), so commits and stories stay quick.
-  fast: bun run test:fast   # ~1s, DB-free
-  story: bun run typecheck && bun run test:story   # ~6s, DB-backed
-  # Full re-runs typecheck + story so a sprint-close fixer's patch is gated too.
-  full: bun run lint && bun run typecheck && bun run test:story && bun run test:slow && bun run test:e2e
-
-full_legs:
-  lint: bun run lint
-  typecheck: bun run typecheck
-  story: bun run test:story
-  slow: bun run test:slow
-  e2e: bun run test:e2e
-
-tier_coverage:       # e.g. covered: covering
-tier_coverage_pins:  # e.g. tier: exact configured command

@@ -1,27 +1,54 @@
 # Runs lint + tests before every commit (SMM constraint: git commit hooks).
 # Install the git hooks once with: bunx lefthook install
 #
-# These hooks ARE the xp wall: .xp/config.yml's tests.fast / tests.story name the
-# same package.json scripts, so the tiers have one definition.
+# Test commands live here and nowhere else (xp-plugin 1.0.0 reads no test config).
 #
-# pre-commit (xp fast, ~1s) is DB-free: BEACON_TEST_DB=off tells the bun test
+# pre-commit (~1s) is DB-free: BEACON_TEST_DB=off tells the bun test
 # preload (test/setup/ensure-test-db.ts) not to start Postgres, so the
-# integration suites skip. pre-push (xp story, ~6s) adds typecheck and the
+# integration suites skip. pre-push (~6s) adds typecheck and the
 # DB-backed suites. Both exclude the ~27s subprocess suites in test:slow, which
-# run at sprint close (xp full) and in CI.
+# run in the sprint hook (xp sprint land) and in CI.
+#
+# Secrets go first in pre-commit, pre-merge-commit and pre-push, and refuse when
+# gitleaks is missing: a scan that ran on nothing must not look like a pass.
+source_dir: .githooks
 pre-commit:
-  parallel: true
+  piped: true
   jobs:
-    - name: biome
-      glob: '*.{ts,tsx,js,jsx,json,jsonc}'
-      run: bunx biome check --no-errors-on-unmatched {staged_files}
-    - name: test
-      run: bun run test:fast
-    # No glob: a cap read from config.yml must hold whichever .xp file changed.
-    - name: constraints-size
-      run: sh scripts/check-constraints-size.sh
+    - name: secrets
+      run: sh -c '. .githooks/hook-lib.sh; secrets_scan_index'
+    - group:
+        parallel: true
+        jobs:
+          - name: biome
+            glob: '*.{ts,tsx,js,jsx,json,jsonc}'
+            run: bunx biome check --no-errors-on-unmatched {staged_files}
+          - name: test
+            run: bun run test:fast
+
+pre-merge-commit:
+  jobs:
+    - name: secrets
+      run: sh -c '. .githooks/hook-lib.sh; secrets_scan_index'
 
 pre-push:
+  piped: true
   jobs:
+    # A script, not a command: lefthook can skip a pre-push command by file matching.
+    # It scans only the pushed range, so history already on the remote is not re-judged.
+    - script: secrets
+      runner: sh
+      use_stdin: true
     - name: story
       run: bun run typecheck && bun run test:story
+
+# The release suite: xp sprint land runs `lefthook run sprint` on the trial-merged tree.
+# No `skip:` here: land runs this mid-merge.
+sprint:
+  piped: true
+  jobs:
+    # 0.x's preflight: the bun test preload auto-starts the compose Postgres.
+    - name: preflight
+      run: docker info > /dev/null
+    - name: release
+      run: bun run lint && bun run typecheck && bun run test:story && bun run test:slow && bun run test:e2e
