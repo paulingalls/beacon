@@ -1,17 +1,5 @@
 import { defineConfig, devices } from '@playwright/test';
 
-// Playwright harness for the dashboard browser-UI acceptance surface (story-006,
-// concern 1d36a7e08bee). The bun:test http_websocket harness asserts only the
-// dashboard HTML string; these specs drive a real browser against the mounted app.
-//
-// Runner isolation: specs use the `*.e2e.ts` suffix (NOT `*.test.ts` / `*.spec.ts`),
-// so `bun test` — which globs the latter — never executes them, and Playwright's
-// testMatch below claims exactly this set. The two runners stay disjoint without any
-// bunfig ignore patterns.
-//
-// serve.ts bootstraps Postgres, seeds a known fixture, and serves the mounted admin app on
-// ADMIN_PORT (+ a non-admin app on DENY_PORT for the 403 case). It runs under Bun; Playwright
-// waits for the dashboard route to answer before the specs run.
 const ADMIN_PORT = 3917;
 const DENY_PORT = 3918;
 
