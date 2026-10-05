@@ -2,6 +2,8 @@
 trunk: develop       # sprints land and tag here; the develop -> main release cut stays ours
 versioning: on       # each release is tagged; version_files must match the tag
 version_files: packages/beacon/package.json, packages/beacon-client/package.json, apps/server/package.json
+worktree_setup: bun install --frozen-lockfile   # in a new story/free worktree, before agents
+worktree_teardown: ./scripts/teardown-worktree.sh   # before removal; red warns, removes anyway
 debt_budget: 0.2
 # codex_sandbox: danger-full-access   # workspace-write | danger-full-access
 roles:               # harness/model[/effort]; a card's Executor: line overrides

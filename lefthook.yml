@@ -47,5 +47,8 @@ pre-push:
 sprint:
   piped: true
   jobs:
+    # 0.x's preflight: the bun test preload auto-starts the compose Postgres.
+    - name: preflight
+      run: docker info > /dev/null
     - name: release
       run: bun run lint && bun run typecheck && bun run test:story && bun run test:slow && bun run test:e2e

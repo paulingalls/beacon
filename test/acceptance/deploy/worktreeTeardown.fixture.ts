@@ -72,12 +72,12 @@ export function observe(name: string, check: () => void, boundary: string) {
   console.log(`observed red: ${name} (${boundary})`);
 }
 export function configured(cwd: string) {
-  const lines = readFileSync(join(cwd, '.xp/system.md'), 'utf8')
+  const lines = readFileSync(join(cwd, '.xp/config.yml'), 'utf8')
     .split('\n')
-    .filter((line) => line.startsWith('**Worktree teardown**:'));
+    .filter((line) => line.startsWith('worktree_teardown:'));
   expect(lines).toHaveLength(1);
-  expect(lines[0]).toMatch(/^\*\*Worktree teardown\*\*: `[^`]+`$/);
-  const argv = (lines[0] as string).split('`')[1]?.split(' ') as string[];
+  const value = (lines[0] as string).slice('worktree_teardown:'.length).split('#')[0]?.trim();
+  const argv = value?.split(' ') as string[];
   expect(argv).toEqual([`./${scriptPath}`]);
   expect(statSync(join(cwd, argv[0] as string)).mode & 0o111).not.toBe(0);
   return argv;
@@ -87,7 +87,7 @@ export function install(cwd: string, text = source()) {
   mkdirSync(join(cwd, '.xp'), { recursive: true });
   writeFileSync(join(cwd, scriptPath), text);
   chmodSync(join(cwd, scriptPath), 0o755);
-  writeFileSync(join(cwd, '.xp/system.md'), readFileSync(join(root, '.xp/system.md')));
+  writeFileSync(join(cwd, '.xp/config.yml'), readFileSync(join(root, '.xp/config.yml')));
 }
 function fixture() {
   const dir = mkdtempSync(join(tmpdir(), 'beacon-teardown-'));

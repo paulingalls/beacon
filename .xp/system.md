@@ -49,13 +49,3 @@ Biome for lint/format; lefthook git hooks; GitHub Actions CI and deploy.
 - Register any new subprocess or seconds-scale suite in BOTH `test:story`'s ignore list
   and `test:slow`, so the per-commit tiers stay fast.
 - Run `bun run format` before committing (Biome import-sort blocks the hook).
-
-Keep each of the two worktree labels below and its value on one colon-delimited
-line. A Markdown heading with the value on the next line is unreadable.
-
-**Worktree bootstrap**: `bun install --frozen-lockfile`
-
-**Worktree teardown**: `./scripts/teardown-worktree.sh`
-Same value grammar as bootstrap: ONE backticked command, or "none". It runs in
-the checkout before removal; unlike bootstrap, failure is reported and removal
-continues. `config.yml`'s `teardown_timeout` caps it.
