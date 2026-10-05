@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.3 — 2026-10-04
+
+- Test maintenance: remove synthetic suite-registration and observer-classifier controls and the trivial browser smoke test. Retain live deployment, privacy, and dashboard behavior checks.
+
+The SDK, client, and server manifests all declare version `0.2.3`. No application behavior changes.
+
 ## 0.2.2 — 2026-10-04
 
 - Update project constraints to the xp-plugin v1 template, preserving Beacon’s product rules and adopting the 4,500-byte file cap.

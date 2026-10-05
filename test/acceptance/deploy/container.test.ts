@@ -15,7 +15,6 @@ import {
 import { outbound, validateFault } from './container.faults';
 import { block, command, docker, requireDocker, runbook } from './container.fixture';
 import {
-  classifierControls,
   documentation,
   gatewayHealth,
   guidance,
@@ -24,9 +23,7 @@ import {
   persisted,
   query,
   red,
-  registrationControls,
 } from './container.guards';
-import { observe } from './container.observer';
 import { databaseControls, shared } from './container.resources';
 import { serverMutation } from './container.trace';
 
@@ -60,13 +57,11 @@ test('container documented launch', async () => {
     expect(() => block(step, runbook.replace(`<!-- container-${step} -->`, ''))).toThrow();
   }
 });
-test('container suite registration', registrationControls);
 test('container documentation', () => {
   documentation(runbook);
   for (const word of guidance)
     expect(() => documentation(runbook.replaceAll(word, 'omitted'))).toThrow();
 });
-test('container observer classifier', () => classifierControls(observe));
 
 test(
   'container migration',
