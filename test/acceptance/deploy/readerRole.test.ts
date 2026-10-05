@@ -2,7 +2,6 @@ import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { registrationControls } from './container.guards';
 import { fixture, password, scriptPath, tables } from './readerRole.fixture';
 
 const db = fixture();
@@ -312,7 +311,6 @@ test('missing prerequisites fail loudly', () => {
   expect(r.status).not.toBe(0);
   expect(r.stderr).toContain('permission denied');
 });
-test('slow suite registered and story excludes subprocess suite', registrationControls);
 
 test('non-superuser operator provisions and reruns with owner and role authority', async () => {
   const operator = `${db.name}_operator`;

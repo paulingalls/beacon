@@ -11,8 +11,7 @@ import { defineConfig, devices } from '@playwright/test';
 //
 // serve.ts bootstraps Postgres, seeds a known fixture, and serves the mounted admin app on
 // ADMIN_PORT (+ a non-admin app on DENY_PORT for the 403 case). It runs under Bun; Playwright
-// waits for the dashboard route to answer before the specs run. The self-contained smoke spec
-// needs no server but coexists under the same webServer.
+// waits for the dashboard route to answer before the specs run.
 const ADMIN_PORT = 3917;
 const DENY_PORT = 3918;
 
