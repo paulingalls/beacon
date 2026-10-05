@@ -1,111 +1,93 @@
 import { expect, test } from '@playwright/test';
-
-// Browser-UI acceptance for the admin dashboard (story-006, closes concern 1d36a7e08bee):
-// the bun:test http_websocket harness asserts only the rendered HTML string — these specs
-// drive a real Chromium against the seeded, mounted app (see serve.ts) and prove the inline
-// JS actually fetches the query API and renders every widget, switches on the filters, and
-// degrades to empty states. Ports match playwright.config.ts's webServer.
-const ADMIN = 'http://127.0.0.1:3917';
-const DENY = 'http://127.0.0.1:3918';
-const DASH = '/analytics/dashboard';
-
-/** The Events metric value in the Overview widget — scoped so the number is unambiguous. */
-function eventsCard(page: import('@playwright/test').Page) {
-  return page
-    .locator('#beacon-widget-overview .beacon-metric')
-    .filter({ hasText: 'Events' })
-    .locator('.beacon-metric-value');
-}
+import { DASH, metric, widget } from './helpers';
 
 test('renders all four widgets with the seeded data', async ({ page }) => {
-  await page.goto(ADMIN + DASH);
-
-  // Overview: the three §5.4 metric cards reflect the all-products seed (10 events, 4 users,
-  // 7 visitors), and the daily-volume canvas is in the DOM (Chart.js draw rides the CDN and
-  // is best-effort — we assert the element, not pixels).
-  const overview = page.locator('#beacon-widget-overview');
-  await expect(eventsCard(page)).toHaveText('10');
+  await page.goto(DASH);
+  for (const [name, value] of [
+    ['Events', '10'],
+    ['Users', '4'],
+    ['Visitors', '7'],
+  ]) {
+    await expect(metric(page, name)).toHaveText(value + name);
+  }
+  await expect(widget(page, 'Overview').locator('canvas')).toHaveCount(1);
+  for (const path of ['/home', '/pricing']) {
+    await expect(
+      widget(page, 'Top Pages').getByRole('cell', { name: path, exact: true }),
+    ).toBeVisible();
+  }
   await expect(
-    overview.locator('.beacon-metric').filter({ hasText: 'Users' }).locator('.beacon-metric-value'),
-  ).toHaveText('4');
-  await expect(
-    overview
-      .locator('.beacon-metric')
-      .filter({ hasText: 'Visitors' })
-      .locator('.beacon-metric-value'),
-  ).toHaveText('7');
-  await expect(overview.locator('canvas')).toHaveCount(1);
-
-  // Top Pages: a real /events tally renders the seeded paths.
-  const top = page.locator('#beacon-widget-top-pages');
-  await expect(top.getByText('/home')).toBeVisible();
-  await expect(top.getByText('/pricing')).toBeVisible();
-
-  // Attribution: the seeded utm_source groups render.
-  const attribution = page.locator('#beacon-widget-attribution');
-  await expect(attribution.getByText('google')).toBeVisible();
-  await expect(attribution.getByText('twitter')).toBeVisible();
-
-  // Funnel: the default request→signup funnel draws its bars.
-  await expect(page.locator('#beacon-widget-funnel .beacon-funnel-bar').first()).toBeVisible();
+    widget(page, 'Attribution').getByRole('row', { name: 'google 3 2 66.7%' }),
+  ).toBeVisible();
+  const funnel = widget(page, 'Funnel');
+  await expect(funnel.getByText('Overall conversion: 42.9%', { exact: true })).toBeVisible();
+  await expect(funnel.getByText('↓57.1%', { exact: true })).toBeVisible();
+  await expect(funnel.getByText('7', { exact: true })).toBeVisible();
+  await expect(funnel.getByText('3', { exact: true })).toBeVisible();
+  await funnel.getByRole('combobox').nth(1).selectOption('');
+  await expect(funnel.getByText('Select at least 2 steps to see the funnel.')).toBeVisible();
+  await funnel.getByRole('combobox').nth(1).selectOption('signup');
+  await expect(funnel.getByText('Overall conversion: 42.9%')).toBeVisible();
+  await funnel.getByRole('combobox').nth(0).selectOption('signup');
+  await funnel.getByRole('combobox').nth(1).selectOption('request');
+  await expect(funnel.getByText('Overall conversion: 0.0%')).toBeVisible();
+  await expect(funnel.getByText('3', { exact: true })).toBeVisible();
+  await expect(funnel.getByText('0', { exact: true })).toBeVisible();
 });
 
-test('the product selector re-fetches every widget', async ({ page }) => {
-  await page.goto(ADMIN + DASH);
-  await expect(eventsCard(page)).toHaveText('10'); // all products
-
-  await page.selectOption('#beacon-product-select', 'clipcast');
-  await expect(eventsCard(page)).toHaveText('7'); // re-fetched, scoped to clipcast
-  await expect(page.locator('#beacon-widget-attribution').getByText('google')).toBeVisible();
-
-  await page.selectOption('#beacon-product-select', 'lensflare');
-  await expect(eventsCard(page)).toHaveText('3'); // re-fetched again
-  await expect(page.locator('#beacon-widget-top-pages').getByText('/dash')).toBeVisible();
-  await expect(page.locator('#beacon-widget-attribution').getByText('bing')).toBeVisible();
-  await expect(page.locator('#beacon-widget-attribution').getByText('google')).toHaveCount(0);
+test('the product selector and attribution grouping re-fetch real results', async ({ page }) => {
+  await page.goto(DASH);
+  await expect(metric(page)).toHaveText('10Events');
+  await page.getByLabel('Product').selectOption('clipcast');
+  await expect(metric(page)).toHaveText('7Events');
+  const attribution = widget(page, 'Attribution');
+  await expect(attribution.getByRole('row', { name: 'google 3 2 66.7%' })).toBeVisible();
+  await expect(attribution.getByRole('row', { name: 'twitter 2 0 0.0%' })).toBeVisible();
+  await attribution.getByLabel('Group by').selectOption({ label: 'Medium' });
+  await expect(attribution.getByRole('row', { name: 'search 3 2 66.7%' })).toBeVisible();
+  await expect(attribution.getByRole('row', { name: 'social 2 0 0.0%' })).toBeVisible();
+  await attribution.getByLabel('Group by').selectOption({ label: 'Campaign' });
+  await expect(attribution.getByRole('row', { name: 'clipcast-launch 5 2 40.0%' })).toBeVisible();
+  await page.getByLabel('Product').selectOption('lensflare');
+  await expect(metric(page)).toHaveText('3Events');
+  await expect(widget(page, 'Top Pages').getByRole('row', { name: '/dash 2 2' })).toBeVisible();
+  await expect(attribution.getByRole('row', { name: 'lensflare-launch 2 1 50.0%' })).toBeVisible();
+  await expect(attribution.getByText('clipcast-launch')).toHaveCount(0);
+  await attribution.getByLabel('Group by').selectOption({ label: 'Source' });
+  await expect(attribution.getByRole('row', { name: 'bing 2 1 50.0%' })).toBeVisible();
+  await expect(attribution.getByText('google')).toHaveCount(0);
 });
 
 test('narrowing the date range to 7d shows empty states, not errors', async ({ page }) => {
-  await page.goto(ADMIN + DASH);
-  await expect(page.locator('#beacon-widget-top-pages').getByText('/home')).toBeVisible();
-
-  // The seed is ~10 days old, so the 7d preset window holds no events.
+  await page.goto(DASH);
+  await expect(widget(page, 'Top Pages').getByText('/home')).toBeVisible();
+  // The seed is ten days old.
   await page.getByRole('button', { name: '7d', exact: true }).click();
-
-  await expect(page.locator('#beacon-widget-overview').getByText(/No data/i)).toBeVisible();
-  await expect(
-    page.locator('#beacon-widget-top-pages').getByText(/No request events/i),
-  ).toBeVisible();
-  await expect(
-    page.locator('#beacon-widget-attribution').getByText(/No attribution data/i),
-  ).toBeVisible();
-  // None of the widgets fell into their error state.
-  await expect(page.locator('.beacon-error')).toHaveCount(0);
+  for (const [name, text] of [
+    ['Overview', /No data/],
+    ['Top Pages', /No request events/],
+    ['Attribution', /No attribution data/],
+    ['Funnel', /No funnel data/],
+  ] as const) {
+    await expect(widget(page, name).getByText(text)).toBeVisible();
+  }
+  await expect(page.getByText(/Failed to load/)).toHaveCount(0);
 });
 
 test('a custom From/To date range re-fetches against that window', async ({ page }) => {
-  await page.goto(ADMIN + DASH);
-  // Start from the empty 7d window (seed is ~10 days old) to prove the re-fetch flips state.
+  await page.goto(DASH);
   await page.getByRole('button', { name: '7d', exact: true }).click();
-  await expect(
-    page.locator('#beacon-widget-top-pages').getByText(/No request events/i),
-  ).toBeVisible();
-
-  // A custom range that comfortably brackets the ~10-day-old seed (15d→5d ago) — wide enough
-  // that the exact time-of-day can't shift the seed out of the window near a midnight run.
-  // This exercises the bootstrap's localDayIso custom-range path (both From and To inputs).
+  await expect(widget(page, 'Top Pages').getByText(/No request events/)).toBeVisible();
   const fmt = (d: Date) =>
     `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-  await page.fill('#beacon-range-after', fmt(new Date(Date.now() - 15 * 86_400_000)));
-  await page.fill('#beacon-range-before', fmt(new Date(Date.now() - 5 * 86_400_000)));
-
-  await expect(eventsCard(page)).toHaveText('10');
-  await expect(page.locator('#beacon-widget-top-pages').getByText('/home')).toBeVisible();
+  await page.getByLabel('From').fill(fmt(new Date(Date.now() - 15 * 86_400_000)));
+  await page.getByLabel('To', { exact: true }).fill(fmt(new Date(Date.now() - 5 * 86_400_000)));
+  await expect(metric(page)).toHaveText('10Events');
+  await expect(widget(page, 'Top Pages').getByText('/home')).toBeVisible();
 });
 
 test('a non-admin caller is denied the dashboard with a 403', async ({ request }) => {
-  const res = await request.get(DENY + DASH);
+  const res = await request.get('http://127.0.0.1:3918/analytics/dashboard');
   expect(res.status()).toBe(403);
-  const body = (await res.json()) as { error: { code: string } };
-  expect(body.error.code).toBe('UNAUTHORIZED');
+  expect((await res.json()).error.code).toBe('UNAUTHORIZED');
 });

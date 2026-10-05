@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.4 — 2026-10-04
+
+- Consolidate dashboard tests at the served browser boundary: cover recovery, safe text, latest controls, attribution, funnels, bounded top pages and local calendar dates; remove six duplicate unit suites.
+
+The SDK, client, and server manifests all declare version `0.2.4`. No application behavior changes.
+
 ## 0.2.3 — 2026-10-04
 
 - Test maintenance: remove synthetic suite-registration and observer-classifier controls and the trivial browser smoke test. Retain live deployment, privacy, and dashboard behavior checks.
