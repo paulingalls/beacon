@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.2 — 2026-10-04
+
+- Update project constraints to the xp-plugin v1 template, preserving Beacon’s product rules and adopting the 4,500-byte file cap.
+
+The SDK, client, and server manifests all declare version `0.2.2`. No application behavior changes.
+
 ## 0.2.1 — 2026-10-02
 
 - Remove attached anonymous Postgres data volumes when disposable worktrees are torn down. Refuse teardown from the primary checkout and preserve named volumes and unrelated Docker projects.
