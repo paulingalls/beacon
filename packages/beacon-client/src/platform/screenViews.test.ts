@@ -85,6 +85,22 @@ describe('useBeaconScreenViews', () => {
     });
   }
 
+  test('uses properties only for a new route and never carries them forward', async () => {
+    const { client, calls } = build();
+    const host = makeRenderHarness();
+    host.render(() =>
+      useBeaconScreenViews(client, 'A', host.bindings, { utm_source: 'news', screen: 'x' }),
+    );
+    host.render(() => useBeaconScreenViews(client, 'A', host.bindings, { utm_source: 'other' }));
+    host.render(() => useBeaconScreenViews(client, 'B', host.bindings, undefined));
+    await client.flush();
+    expect(screens(calls)).toEqual([
+      { event_type: 'screen_view', properties: { utm_source: 'news', screen: 'A' } },
+      { event_type: 'screen_view', properties: { screen: 'B' } },
+    ]);
+    client.shutdown();
+  });
+
   test('emits the first non-null route once on mount', async () => {
     const { client, calls } = build();
     const host = makeRenderHarness();

@@ -63,33 +63,64 @@ describe.skipIf(!TEST_DB)('SDK acceptance — beacon-client → live ingest → 
   }, 15_000);
 
   test('a consumer tracks + flushes and the events persist via the live ingest', async () => {
-    const client = new BeaconClient({
-      endpoint,
-      productId: PRODUCT,
-      appContext: { appVersion: '1.0.0', platform: 'web' },
-      flushInterval: 60_000,
-    });
+    const now = Date.now();
+    const client = new BeaconClient(
+      {
+        endpoint,
+        productId: PRODUCT,
+        appContext: { appVersion: '1.0.0', platform: 'web' },
+        flushInterval: 60_000,
+      },
+      { now: () => now },
+    );
     try {
       client.track('button_tap', { button: 'create_clip' });
       client.screenView('HomeScreen');
+      client.screenView('CampaignScreen', { utm_source: 'news' });
+      client.screenView('DetailsScreen', { utm_source: 'news', screen: 'x' });
       await client.flush(); // SDK POSTs the batch to the live ingest (202)
       await beacon.flush(); // drain the server buffer to Postgres
 
       const rows = (await sql`
-        SELECT event_type, properties, platform, context
-        FROM beacon_events WHERE product_id = ${PRODUCT} ORDER BY event_type
+        SELECT event_type, properties, platform, context, timestamp
+        FROM beacon_events WHERE product_id = ${PRODUCT} ORDER BY event_type, properties->>'screen'
       `) as Array<{
+        timestamp: Date;
         event_type: string;
         properties: Record<string, unknown>;
         platform: string;
         context: { app_context?: Record<string, unknown> };
       }>;
 
-      expect(rows.map((r) => r.event_type)).toEqual(['button_tap', 'screen_view']);
-      const tap = rows.find((r) => r.event_type === 'button_tap');
-      expect(tap?.properties).toEqual({ button: 'create_clip' });
-      const screen = rows.find((r) => r.event_type === 'screen_view');
-      expect(screen?.properties).toEqual({ screen: 'HomeScreen' });
+      expect(
+        rows.map((row) => ({
+          event_type: row.event_type,
+          properties: row.properties,
+          timestamp: row.timestamp.toISOString(),
+        })),
+      ).toEqual([
+        {
+          event_type: 'button_tap',
+          properties: { button: 'create_clip' },
+          timestamp: new Date(now).toISOString(),
+        },
+        {
+          event_type: 'screen_view',
+          properties: { utm_source: 'news', screen: 'CampaignScreen' },
+          timestamp: new Date(now).toISOString(),
+        },
+        {
+          event_type: 'screen_view',
+          properties: { utm_source: 'news', screen: 'DetailsScreen' },
+          timestamp: new Date(now).toISOString(),
+        },
+        {
+          event_type: 'screen_view',
+          properties: { screen: 'HomeScreen' },
+          timestamp: new Date(now).toISOString(),
+        },
+      ]);
+      const tap = rows.find((row) => row.event_type === 'button_tap');
       // The X-App-Context the SDK attached round-trips into the event context + platform.
       expect(tap?.platform).toBe('web');
       expect(tap?.context.app_context).toMatchObject({ appVersion: '1.0.0', platform: 'web' });
