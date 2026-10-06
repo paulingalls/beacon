@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.5 — 2026-10-06
+
+- Refuse delayed user events stamped at or before an erasure cutoff at the single persistence boundary.
+- Serialize erasure and event writes across server instances; count only admitted rows in metadata and flushed statistics.
+
+The SDK, client, and server manifests all declare version `0.2.5`. SDK and client behavior is unchanged.
+
 ## 0.2.4 — 2026-10-04
 
 - Consolidate dashboard tests at the served browser boundary: cover recovery, safe text, latest controls, attribution, funnels, bounded top pages and local calendar dates; remove six duplicate unit suites.
