@@ -5,6 +5,7 @@
 // attribution onto the earliest event, drop the token. Best-effort — never throws
 // (§1.3), so a Postgres outage during login can't crash the host.
 
+import { createHash } from 'node:crypto';
 import type { Sql } from 'postgres';
 import type { EventBuffer } from '../events/buffer';
 import type { VisitorTokenStore } from './tokenStore';
@@ -58,9 +59,16 @@ export async function associateVisitor(
   if (!token) return; // direct login, no anonymous trail
   try {
     await sql.begin(async (tx) => {
+      // A separate lock statement gives the UPDATE a fresh snapshot after an erasure wait.
+      await tx`LOCK TABLE beacon_events IN ROW EXCLUSIVE MODE`;
+      const hash = createHash('sha256').update(userId).digest('hex');
       await tx`
         UPDATE beacon_events SET user_id = ${userId}
-        WHERE visitor_token = ${token} AND user_id IS NULL`;
+        WHERE visitor_token = ${token} AND user_id IS NULL
+          AND NOT EXISTS (
+            SELECT 1 FROM beacon_erasures
+            WHERE user_id_hash = ${hash} AND erased_at >= beacon_events.timestamp
+          )`;
 
       const record = store.get(token);
       if (record?.attribution) {
