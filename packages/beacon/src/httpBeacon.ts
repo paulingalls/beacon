@@ -52,14 +52,15 @@ export interface HttpBeacon {
     opts?: { clientAddress?: string; status?: number; responseTimeMs?: number },
   ): void;
   /**
-   * Record a custom product event. Throws only on an invalid event_type
-   * (empty/whitespace or >100 chars). Fire-and-forget otherwise.
+   * Record a custom product event. Throws on an invalid event_type
+   * (empty/whitespace or >100 chars) or timestamp (not a valid Date).
+   * Fire-and-forget otherwise.
    */
   track(
     request: Request,
     eventType: string,
     properties?: Record<string, unknown>,
-    opts?: { clientAddress?: string },
+    opts?: { clientAddress?: string; timestamp?: Date },
   ): void;
   /** Flush one batch to the ingest endpoint now. */
   flush(): Promise<void>;
@@ -141,11 +142,18 @@ export function createHttpBeacon(opts: HttpBeaconOptions): HttpBeacon {
           `[beacon] httpBeacon.track: event_type must be a non-empty string of at most ${MAX_EVENT_TYPE_LENGTH} characters`,
         );
       }
+      const timestamp = trackOpts?.timestamp;
+      if (
+        timestamp !== undefined &&
+        (!(timestamp instanceof Date) || !Number.isFinite(timestamp.getTime()))
+      ) {
+        throw new Error('[beacon] httpBeacon.track: timestamp must be a valid Date');
+      }
       const { fields } = prepare(request, trackOpts?.clientAddress);
       sink.push({
         productId: opts.productId,
         eventType: trimmed,
-        timestamp: new Date(),
+        timestamp: timestamp === undefined ? new Date() : timestamp,
         userId: fields.userId,
         visitorToken: fields.visitorToken,
         platform: fields.platform,

@@ -97,6 +97,30 @@ describe('createHttpBeacon.track', () => {
     expect(ff.calls).toHaveLength(0);
   });
 
+  test('invalid capture timestamps throw synchronously without pushing', async () => {
+    const ff = fakeFetch();
+    const b = beacon(ff.fn, { flushInterval: 60_000 });
+    try {
+      for (const timestamp of [new Date(NaN), '2026-10-06T00:00:00Z', 0, null]) {
+        expect(() =>
+          b.track(
+            new Request('https://app.example/'),
+            'tap',
+            {},
+            {
+              timestamp: timestamp as Date,
+            },
+          ),
+        ).toThrow(/httpBeacon.track.*valid Date/);
+        expect(b.stats().buffered).toBe(0);
+      }
+      await b.flush();
+      expect(ff.calls).toHaveLength(0);
+    } finally {
+      await b.shutdown();
+    }
+  });
+
   test('a throwing getUserId is failure-isolated to a null user id (§1.3)', async () => {
     const ff = fakeFetch();
     const b = beacon(ff.fn, {

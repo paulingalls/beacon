@@ -93,11 +93,13 @@ describe.skipIf(!TEST_DB)('erasure cutoff socket', () => {
       const audit = await sql`SELECT * FROM beacon_erasures WHERE user_id_hash = ${HASH}`;
       expect(audit).toHaveLength(1);
       expect(Number(audit[0]?.count)).toBe(1);
+      await until(async () => Date.now() > +audit[0]?.erased_at);
+      producer.track(req, 'held-old', {}, { timestamp: upper });
       await producer.flush();
       await f.beacon.flush();
-      expect(await sql`SELECT * FROM beacon_events WHERE event_type = 'queued-old'`).toHaveLength(
-        0,
-      );
+      expect(
+        await sql`SELECT * FROM beacon_events WHERE event_type IN ('queued-old', 'held-old')`,
+      ).toHaveLength(0);
       expect([...(await sql`SELECT * FROM beacon_erasures`)]).toEqual([...audit]);
       await until(async () => Date.now() > +audit[0]?.erased_at);
       producer.track(req, 'later');
@@ -146,6 +148,46 @@ describe.skipIf(!TEST_DB)('erasure cutoff socket', () => {
       await f.close();
     }
   });
+
+  for (const explicit of [true, false]) {
+    test(`track preserves ${explicit ? 'capture' : 'push'} time after erasure`, async () => {
+      const sql = getDb();
+      const f = fixture();
+      const producer = createHttpBeacon({
+        productId: 'business',
+        endpoint: `${f.url}/events`,
+        trustedIngestToken: 'secret',
+        getUserId: () => U,
+        flushInterval: 60_000,
+      });
+      try {
+        expect((await f.erase()).status).toBe(200);
+        const audit = await sql`SELECT erased_at FROM beacon_erasures WHERE user_id_hash = ${HASH}`;
+        await until(async () => Date.now() > +audit[0]?.erased_at);
+        const captured = new Date();
+        await until(async () => Date.now() > +captured);
+        const req = new Request('http://producer/visit');
+        const before = Date.now();
+        if (explicit) producer.track(req, 'timed', {}, { timestamp: captured });
+        else producer.track(req, 'timed', {});
+        const after = Date.now();
+        await until(async () => Date.now() > after);
+        await producer.flush();
+        await f.beacon.flush();
+        const rows = await sql`SELECT timestamp FROM beacon_events
+          WHERE user_id = ${U} AND event_type = 'timed'`;
+        expect(rows).toHaveLength(1);
+        if (explicit) expect(rows[0]?.timestamp).toEqual(captured);
+        else {
+          expect(+rows[0]?.timestamp).toBeGreaterThanOrEqual(before);
+          expect(+rows[0]?.timestamp).toBeLessThanOrEqual(after);
+        }
+      } finally {
+        await producer.shutdown();
+        await f.close();
+      }
+    });
+  }
 
   test('anonymous replay stays anonymous after HTTP and in-process association', async () => {
     const sql = getDb();

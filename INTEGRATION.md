@@ -102,11 +102,13 @@ beacon.capture(request, {
 });
 ```
 
-Record custom product events. `track` is fire-and-forget — it buffers and returns immediately, throwing only on an invalid `event_type` (empty or >100 chars):
+Record custom product events. `track` is fire-and-forget — it buffers and returns immediately, throwing on an invalid `event_type` (empty or >100 chars) or an invalid `timestamp` (not a valid Date):
 
 ```typescript
 beacon.track(request, 'clip_created', { clipId: 'abc123', duration: 45 });
 ```
+
+Pass the optional fourth-argument `timestamp: Date` when a relay re-emits device events so their capture time is preserved; omitting it uses push time.
 
 Drain on shutdown so nothing in flight is lost:
 
