@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import type { BeaconEvent, BufferStats } from '@pi-innovations/beacon-sdk';
 import type { Sql } from 'postgres';
 
@@ -102,8 +103,7 @@ export class EventBuffer {
     const batch = this.queue.splice(0, this.maxBatchSize);
     this.activeBatch = batch;
     try {
-      await this.writeBatch(batch.map((q) => q.event));
-      this.flushed += batch.length;
+      this.flushed += await this.writeBatch(batch.map((q) => q.event));
     } catch {
       this.requeueFailed(batch);
     } finally {
@@ -179,29 +179,57 @@ export class EventBuffer {
   }
 
   /** Bulk-insert events and upsert beacon_meta in one transaction. */
-  private async writeBatch(events: BeaconEvent[]): Promise<void> {
-    const rows = events.map((e) => ({
-      product_id: e.productId,
-      event_type: e.eventType,
-      timestamp: e.timestamp ?? new Date(),
-      user_id: e.userId ?? null,
-      visitor_token: e.visitorToken ?? null,
-      platform: e.platform ?? 'web',
-      // jsonb columns must be wrapped so postgres.js serializes them as JSON
-      // rather than rejecting the plain object.
-      properties: this.sql.json((e.properties ?? {}) as JsonInput),
-      context: this.sql.json((e.context ?? {}) as JsonInput),
-      attribution: this.sql.json((e.attribution ?? {}) as JsonInput),
-    }));
+  private async writeBatch(events: BeaconEvent[]): Promise<number> {
+    return this.sql.begin(async (tx) => {
+      await tx`LOCK TABLE beacon_events IN ROW EXCLUSIVE MODE`;
+      const rows = events.map((e) => ({
+        product_id: e.productId,
+        event_type: e.eventType,
+        timestamp: e.timestamp ?? new Date(),
+        user_id: e.userId ?? null,
+        visitor_token: e.visitorToken ?? null,
+        platform: e.platform ?? 'web',
+        // jsonb columns must be wrapped so postgres.js serializes them as JSON
+        // rather than rejecting the plain object.
+        properties: this.sql.json((e.properties ?? {}) as JsonInput),
+        context: this.sql.json((e.context ?? {}) as JsonInput),
+        attribution: this.sql.json((e.attribution ?? {}) as JsonInput),
+      }));
 
-    await this.sql.begin(async (tx) => {
-      await tx`INSERT INTO beacon_events ${tx(rows)}`;
-      const metaRows = aggregateMeta(events);
+      const candidates = rows.flatMap((row, ordinal) =>
+        row.user_id === null
+          ? []
+          : [
+              {
+                ordinal,
+                hash: createHash('sha256').update(row.user_id).digest('hex'),
+                timestamp: row.timestamp.toISOString(),
+              },
+            ],
+      );
+      // Producer stamps and Postgres erasure time assume accepted NTP-bounded cross-host skew.
+      const refused = candidates.length
+        ? await tx<{ ordinal: number }[]>`
+        SELECT candidate.ordinal
+        FROM jsonb_to_recordset(${this.sql.json(candidates)})
+          AS candidate(ordinal integer, hash text, timestamp timestamptz)
+        WHERE EXISTS (
+          SELECT 1 FROM beacon_erasures
+          WHERE user_id_hash = candidate.hash AND erased_at >= candidate.timestamp
+        )
+      `
+        : [];
+      const refusedOrdinals = new Set(refused.map((row) => row.ordinal));
+      const admittedRows = rows.filter((_, ordinal) => !refusedOrdinals.has(ordinal));
+      if (admittedRows.length === 0) return 0;
+      await tx`INSERT INTO beacon_events ${tx(admittedRows)}`;
+      const metaRows = aggregateMeta(events.filter((_, ordinal) => !refusedOrdinals.has(ordinal)));
       await tx`
         INSERT INTO beacon_meta ${tx(metaRows, 'product_id', 'event_type', 'count')}
         ON CONFLICT (product_id, event_type)
         DO UPDATE SET count = beacon_meta.count + EXCLUDED.count, last_seen = now()
       `;
+      return admittedRows.length;
     });
   }
 }

@@ -93,9 +93,7 @@ describe.skipIf(!TEST_DB)('erasure cutoff socket', () => {
         0,
       );
       expect([...(await sql`SELECT * FROM beacon_erasures`)]).toEqual([...audit]);
-      await until(
-        async () => (await sql`SELECT clock_timestamp() > ${new Date()} AS ready`)[0]?.ready,
-      );
+      await until(async () => Date.now() > +audit[0]?.erased_at);
       producer.track(req, 'later');
       await producer.flush();
       await f.beacon.flush();
