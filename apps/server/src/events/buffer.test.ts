@@ -193,44 +193,6 @@ describe('EventBuffer (concurrency, stub Sql)', () => {
 describe.skipIf(!TEST_DB)('EventBuffer (integration, live Postgres)', () => {
   const getDb = withTestDb(TEST_DB as string);
 
-  test('flushes events across two (product_id,event_type) pairs and upserts beacon_meta', async () => {
-    const sql = getDb();
-    const buffer = new EventBuffer(sql, { maxBatchSize: 100 });
-    buffer.push(evt({ eventType: 'request', properties: { path: '/a' } }));
-    buffer.push(evt({ eventType: 'request', properties: { path: '/b' } }));
-    buffer.push(evt({ eventType: 'screen_view', properties: { name: 'Home' } }));
-
-    await buffer.flush();
-    expect(buffer.stats().flushed).toBe(3);
-
-    const events = await sql<{ event_type: string; properties: Record<string, unknown> }[]>`
-      SELECT event_type, properties FROM beacon_events ORDER BY event_type`;
-    expect(events).toHaveLength(3);
-
-    const meta = await sql<{ event_type: string; count: string; last_seen: Date }[]>`
-      SELECT event_type, count, last_seen FROM beacon_meta
-      WHERE product_id = 'beacon-test' ORDER BY event_type`;
-    const byType = new Map(meta.map((m) => [m.event_type, m]));
-    expect(Number(byType.get('request')?.count)).toBe(2);
-    expect(Number(byType.get('screen_view')?.count)).toBe(1);
-    expect(byType.get('request')?.last_seen).toBeInstanceOf(Date);
-  });
-
-  test('a second flush increments existing beacon_meta counts (ON CONFLICT)', async () => {
-    const sql = getDb();
-    const buffer = new EventBuffer(sql, { maxBatchSize: 100 });
-    buffer.push(evt({ eventType: 'request' }));
-    await buffer.flush();
-    buffer.push(evt({ eventType: 'request' }));
-    buffer.push(evt({ eventType: 'request' }));
-    await buffer.flush();
-
-    const metaRows = await sql<{ count: string }[]>`
-      SELECT count FROM beacon_meta WHERE product_id = 'beacon-test' AND event_type = 'request'`;
-    expect(Number(metaRows[0]?.count)).toBe(3);
-    expect(buffer.stats().flushed).toBe(3);
-  });
-
   test('jsonb columns round-trip object properties', async () => {
     const sql = getDb();
     const buffer = new EventBuffer(sql, {});

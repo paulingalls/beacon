@@ -1,5 +1,38 @@
 # Changelog
 
+## 0.2.6 — 2026-10-06
+
+- Preserve the optional capture timestamp in SDK `track()` so relayed events cannot cross an erasure cutoff; omitted timestamps still use push time.
+- Reject invalid track timestamps synchronously without buffering an event.
+
+The SDK, client, and server manifests all declare version `0.2.6`. Server and client behavior is unchanged.
+
+## 0.2.5 — 2026-10-06
+
+- Refuse delayed user events stamped at or before an erasure cutoff at the event insertion boundary.
+- Keep anonymous replay at or before the cutoff anonymous during visitor association.
+- Serialize erasure, insertion, and visitor association across server instances; count only admitted rows in metadata and flushed statistics.
+
+The SDK, client, and server manifests all declare version `0.2.5`. SDK and client behavior is unchanged.
+
+## 0.2.4 — 2026-10-04
+
+- Consolidate dashboard tests at the served browser boundary: cover recovery, safe text, latest controls, attribution, funnels, bounded top pages and local calendar dates; remove six duplicate unit suites.
+
+The SDK, client, and server manifests all declare version `0.2.4`. No application behavior changes.
+
+## 0.2.3 — 2026-10-04
+
+- Test maintenance: remove synthetic suite-registration and observer-classifier controls and the trivial browser smoke test. Retain live deployment, privacy, and dashboard behavior checks.
+
+The SDK, client, and server manifests all declare version `0.2.3`. No application behavior changes.
+
+## 0.2.2 — 2026-10-04
+
+- Update project constraints to the xp-plugin v1 template, preserving Beacon’s product rules and adopting the 4,500-byte file cap.
+
+The SDK, client, and server manifests all declare version `0.2.2`. No application behavior changes.
+
 ## 0.2.1 — 2026-10-02
 
 - Remove attached anonymous Postgres data volumes when disposable worktrees are torn down. Refuse teardown from the primary checkout and preserve named volumes and unrelated Docker projects.
