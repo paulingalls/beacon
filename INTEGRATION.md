@@ -207,6 +207,9 @@ client.track('clip_played', { clipId: 'abc123', duration: 45 });
 await client.flush();
 ```
 
+`client.screenView(name, properties?)` merges optional properties into the event with `screen` always set to `name`; omitting properties preserves the existing event shape.
+`useBeaconScreenViews(client, route, react, properties?)` includes properties only when it emits a new non-null route, emits nothing on same-route re-renders, and carries no properties to a later route when its argument is undefined.
+
 Call `client.shutdown()` to clear the queue, stop the flush timer, and clear any durable store (e.g. on logout).
 
 ### Delivery callbacks

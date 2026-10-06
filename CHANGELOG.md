@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.7 — 2026-10-06
+
+- Allow optional properties on client screen views, with the supplied screen name always taking precedence.
+- Forward optional route properties through `useBeaconScreenViews` only when a new route emits; same-route renders remain deduplicated and properties do not carry forward.
+
+The SDK, client, and server manifests all declare version `0.2.7`. SDK and server behavior is unchanged.
+
 ## 0.2.6 — 2026-10-06
 
 - Preserve the optional capture timestamp in SDK `track()` so relayed events cannot cross an erasure cutoff; omitted timestamps still use push time.

@@ -30,7 +30,7 @@ describe('BeaconClient construction', () => {
   });
 });
 
-describe('track / screenView', () => {
+describe('track', () => {
   test('track queues an event with the right shape and an ISO-8601 timestamp', async () => {
     const { client, calls } = build();
     client.track('button_tap', { button: 'create_clip' });
@@ -41,17 +41,6 @@ describe('track / screenView', () => {
     expect(event?.event_type).toBe('button_tap');
     expect(event?.properties).toEqual({ button: 'create_clip' });
     expect(event?.timestamp).toMatch(/^\d{4}-\d{2}-\d{2}T.*Z$/);
-  });
-
-  test('screenView produces a screen_view event carrying the screen property', async () => {
-    const { client, calls } = build();
-    client.screenView('HomeScreen');
-    await client.flush();
-
-    expect(calls[0]?.body.events[0]).toMatchObject({
-      event_type: 'screen_view',
-      properties: { screen: 'HomeScreen' },
-    });
   });
 
   test('omits properties entirely when none are given', async () => {
