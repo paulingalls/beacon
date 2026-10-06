@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.6 — 2026-10-06
+
+- Preserve the optional capture timestamp in SDK `track()` so relayed events cannot cross an erasure cutoff; omitted timestamps still use push time.
+- Reject invalid track timestamps synchronously without buffering an event.
+
+The SDK, client, and server manifests all declare version `0.2.6`. Server and client behavior is unchanged.
+
 ## 0.2.5 — 2026-10-06
 
 - Refuse delayed user events stamped at or before an erasure cutoff at the event insertion boundary.
