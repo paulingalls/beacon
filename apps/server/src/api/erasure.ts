@@ -11,6 +11,7 @@ export function createErasureHandler(sql: Sql, buffer: EventBuffer): Handler {
       if (userId === undefined) throw new Error('missing erasure route parameter');
       await buffer.purgeUser(userId);
       const count = await sql.begin(async (tx) => {
+        await tx`LOCK TABLE beacon_events IN SHARE ROW EXCLUSIVE MODE`;
         const deleted = await tx`DELETE FROM beacon_events WHERE user_id = ${userId}`;
         const count = deleted.count;
         const hash = createHash('sha256').update(userId).digest('hex');
