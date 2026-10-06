@@ -120,8 +120,8 @@ export class BeaconClient {
   }
 
   /** Convenience for a screen-view event (§8.1). */
-  screenView(screenName: string): void {
-    this.track('screen_view', { screen: screenName });
+  screenView(screenName: string, properties?: Record<string, unknown>): void {
+    this.track('screen_view', { ...properties, screen: screenName });
   }
 
   /** Headers the host app attaches to every outgoing request so the server captures context. */
