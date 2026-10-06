@@ -64,12 +64,13 @@ export function useBeaconScreenViews(
   client: BeaconClient,
   route: string | null,
   react: ReactScreenBindings,
+  properties?: Record<string, unknown>,
 ): void {
   const lastScreen = react.useRef<string | null>(null);
   react.useEffect(() => {
     if (route === null || route === lastScreen.current) return undefined;
-    client.screenView(route);
+    client.screenView(route, properties);
     lastScreen.current = route;
     return undefined;
-  }, [client, route, react]);
+  }, [client, route, react, properties]);
 }
