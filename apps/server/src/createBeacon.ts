@@ -192,6 +192,7 @@ export function createBeacon(
     const origin = c.req.header('Origin');
     if (
       !origin ||
+      origin === '*' ||
       !config.corsOrigins?.includes(origin) ||
       !['POST', 'OPTIONS'].includes(c.req.method)
     )

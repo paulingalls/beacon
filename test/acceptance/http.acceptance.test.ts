@@ -437,16 +437,18 @@ for (const prefix of ['/analytics', '/custom']) {
 test('unset, empty and wildcard CORS configuration preserve closed baselines', async () => {
   for (const origins of [undefined, ' , , ', '*']) {
     await withCorsServer({ CORS_ORIGINS: origins } as ServerEnv, async (url) => {
-      for (const method of ['OPTIONS', 'POST']) {
-        const response = await fetch(`${url}/analytics/events`, {
-          method,
-          headers: { origin: 'https://app.test' },
-          ...(method === 'POST' ? { body: '{"events":[{"event_type":"view"}]}' } : {}),
-        });
-        expect(response.status).toBe(method === 'POST' ? 202 : 404);
-        noCors(response);
-        if (method === 'POST')
-          expect(await response.json()).toEqual({ accepted: 1, product_id_used: 'beacon' });
+      for (const origin of ['https://app.test', '*']) {
+        for (const method of ['OPTIONS', 'POST']) {
+          const response = await fetch(`${url}/analytics/events`, {
+            method,
+            headers: { origin },
+            ...(method === 'POST' ? { body: '{"events":[{"event_type":"view"}]}' } : {}),
+          });
+          expect(response.status).toBe(method === 'POST' ? 202 : 404);
+          noCors(response);
+          if (method === 'POST')
+            expect(await response.json()).toEqual({ accepted: 1, product_id_used: 'beacon' });
+        }
       }
     });
   }
