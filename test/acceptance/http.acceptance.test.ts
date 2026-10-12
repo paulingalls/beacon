@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { Hono } from 'hono';
 import { createBeacon } from '../../apps/server/src/createBeacon';
+import { buildServer, type ServerEnv } from '../../apps/server/src/server';
 // Reach the package's DB internals by relative path for live-DB setup, exactly
 // as the package's own integration suites do (apps/server/test/helpers.ts).
 import { closeDb, createDb } from '../../apps/server/src/storage/db';
@@ -321,3 +322,134 @@ describe.skipIf(!TEST_DB)('http acceptance — body visitor_token round-trip (st
     expect(body.events[0]?.user_id).toBeNull(); // body user_id never honored on the public path
   });
 });
+
+function noCors(response: Response) {
+  expect([...response.headers.keys()].filter((key) => key.startsWith('access-control-'))).toEqual(
+    [],
+  );
+}
+
+async function withCorsServer(
+  env: ServerEnv,
+  run: (url: string, beacon: ReturnType<typeof createBeacon>) => Promise<void>,
+) {
+  const { app, beacon } = buildServer({ DATABASE_URL: 'postgres://u:p@127.0.0.1:1/db', ...env });
+  const host = new Hono();
+  host.use('*', beacon.middleware());
+  host.route('/', app);
+  const server = Bun.serve({ port: 0, fetch: host.fetch });
+  try {
+    await run(`http://localhost:${server.port}`, beacon);
+  } finally {
+    server.stop(true);
+    await beacon.shutdown();
+  }
+}
+
+for (const prefix of ['/analytics', '/custom']) {
+  test(`exact-origin ingest CORS at ${prefix}, with capture and route isolation`, async () => {
+    await withCorsServer(
+      {
+        BASE_PATH: prefix,
+        CORS_ORIGINS: ' , https://app.test , https://second.test, ',
+      } as ServerEnv,
+      async (url, beacon) => {
+        for (const origin of ['https://app.test', 'https://second.test']) {
+          const preflight = await fetch(`${url}${prefix}/events`, {
+            method: 'OPTIONS',
+            headers: {
+              origin,
+              'access-control-request-method': 'POST',
+              'access-control-request-headers': 'content-type,x-app-context',
+            },
+          });
+          expect(preflight.status).toBe(204);
+          expect(await preflight.text()).toBe('');
+          expect(preflight.headers.get('access-control-allow-origin')).toBe(origin);
+          expect(preflight.headers.get('access-control-allow-credentials')).toBe('true');
+          expect(preflight.headers.get('access-control-allow-methods')).toBe('POST');
+          expect(
+            preflight.headers.get('access-control-allow-headers')?.toLowerCase().split(','),
+          ).toEqual(['content-type', 'x-app-context']);
+          expect(Number(preflight.headers.get('access-control-max-age'))).toBeGreaterThan(0);
+          expect(preflight.headers.get('vary')?.split(/,\s*/)).toContain('Origin');
+        }
+        const before = beacon.stats().buffered;
+        const post = await fetch(`${url}${prefix}/events`, {
+          method: 'POST',
+          headers: {
+            origin: 'https://app.test',
+            'content-type': 'application/json',
+            'x-app-context': '{"platform":"web","appVersion":"1"}',
+          },
+          body: JSON.stringify({ events: [{ event_type: 'view' }, { event_type: 'click' }] }),
+        });
+        expect(post.status).toBe(202);
+        expect(await post.json()).toEqual({ accepted: 2, product_id_used: 'beacon' });
+        expect(post.headers.get('access-control-allow-origin')).toBe('https://app.test');
+        expect(post.headers.get('access-control-allow-credentials')).toBe('true');
+        expect(post.headers.get('vary')?.split(/,\s*/)).toContain('Origin');
+        expect(post.headers.has('set-cookie')).toBe(false);
+        expect(beacon.stats().buffered - before).toBe(3);
+        for (const origin of [
+          'https://other.test',
+          'https://sub.app.test',
+          'https://app.test:443',
+          '',
+        ]) {
+          for (const method of ['OPTIONS', 'POST']) {
+            const response = await fetch(`${url}${prefix}/events`, {
+              method,
+              headers: origin ? { origin } : {},
+              ...(method === 'POST' ? { body: '{"events":[{"event_type":"view"}]}' } : {}),
+            });
+            expect(response.status).toBe(method === 'POST' ? 202 : 404);
+            noCors(response);
+          }
+        }
+        for (const path of ['/identify', '/schema', '/aggregate', '/funnel', '/attribution']) {
+          for (const method of ['OPTIONS', 'POST']) {
+            const response = await fetch(`${url}${prefix}${path}`, {
+              method,
+              headers: { origin: 'https://app.test' },
+            });
+            expect(response.status).toBe(method === 'POST' && path === '/identify' ? 403 : 404);
+            noCors(response);
+          }
+        }
+        for (const [path, method] of [
+          [`${prefix}/events`, 'GET'],
+          [`${prefix}/dashboard`, 'GET'],
+          ['/short', 'POST'],
+        ]) {
+          const response = await fetch(`${url}${path}`, {
+            method,
+            headers: { origin: 'https://app.test' },
+          });
+          expect(response.status).toBe(403);
+          noCors(response);
+        }
+      },
+    );
+  }, 15000);
+}
+
+test('unset, empty and wildcard CORS configuration preserve closed baselines', async () => {
+  for (const origins of [undefined, ' , , ', '*']) {
+    await withCorsServer({ CORS_ORIGINS: origins } as ServerEnv, async (url) => {
+      for (const origin of ['https://app.test', '*']) {
+        for (const method of ['OPTIONS', 'POST']) {
+          const response = await fetch(`${url}/analytics/events`, {
+            method,
+            headers: { origin },
+            ...(method === 'POST' ? { body: '{"events":[{"event_type":"view"}]}' } : {}),
+          });
+          expect(response.status).toBe(method === 'POST' ? 202 : 404);
+          noCors(response);
+          if (method === 'POST')
+            expect(await response.json()).toEqual({ accepted: 1, product_id_used: 'beacon' });
+        }
+      }
+    });
+  }
+}, 15000);

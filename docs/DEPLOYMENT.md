@@ -166,6 +166,7 @@ systemctl enable --now beacon
 | `SHORT_DOMAIN` | no | Absolute base for generated short URLs. Without it the shortener emits relative `/CODE` redirects. |
 | `PRODUCT_ID` | no | Fallback `product_id` for events whose batch omits one (default `beacon`). |
 | `PRODUCT_ALLOWLIST` | no | Comma-separated allowlist of accepted `product_id`s. |
+| `CORS_ORIGINS` | no | Comma-separated exact browser origins (scheme and port included), e.g. `https://vodshorter.com`. Unset disables CORS. Applies only to ingest POST/OPTIONS; credentials allowed for native JSON sendBeacon. |
 | `BASE_PATH` | no | API mount prefix (default `/analytics`). |
 
 These map to `ServerEnv` in [`apps/server/src/server.ts`](../apps/server/src/server.ts).
