@@ -68,6 +68,7 @@ The Beacon server (`apps/server`) is the single writer: it holds the Postgres cr
 | `TRUSTED_INGEST_TOKEN` | no | Bearer secret authorizing a trusted server-to-server caller to assert per-event `user_id`/context in the ingest body. **Unset ⇒ trusted ingest disabled (anonymous-only).** |
 | `PRODUCT_ID` | no | Fallback `product_id` for events whose batch omits one (default `beacon`). |
 | `PRODUCT_ALLOWLIST` | no | Comma-separated allowlist of accepted `product_id`s. Unset ⇒ accept any. |
+| `CORS_ORIGINS` | no | Comma-separated exact browser origins allowed on ingest POST/preflight. Unset disables CORS. |
 | `BASE_PATH` | no | API mount prefix (default `/analytics`). |
 | `SHORT_DOMAIN` | no | Absolute base for generated short URLs (e.g. `https://pi.ink`). |
 | `PORT` | no | Listen port (default `8080`). |
@@ -134,6 +135,12 @@ import { honoRequest, track, resolveEventFields } from '@pi-innovations/beacon-s
 Importing the subpath requires `hono` (the optional peer). Most products want the agnostic `createHttpBeacon` above; reach for `./hono` only when you hold a Hono `Context`.
 
 ## Browser SPAs
+
+For a SPA on another origin, set the Beacon server's `CORS_ORIGINS=https://vodshorter.com` (or a comma-separated list). Origins match exactly, including scheme and port; unset or blank disables CORS. Only `POST {basePath}/events` and its OPTIONS preflight receive CORS headers. Identify, query, dashboard and shortener routes receive none.
+
+Listed origins receive `Access-Control-Allow-Credentials: true` because native `sendBeacon` sends with credentials mode include. Beacon sets and reads no cookies; received cookies are ignored. Never give the browser the trusted ingest bearer; preflight permits only `content-type` and `x-app-context`.
+
+For normal browser flushes, construct `BeaconClient` with `{ fetch: window.fetch.bind(window) }` as its second argument, as vodshorter does. The current client's default unbound fetch can raise `Illegal invocation` in Chromium; server CORS does not fix that separate client defect.
 
 A browser SPA reports events with the client SDK, posting to the deployed Beacon's `POST /events`. The optional web wrapper flushes on `visibilitychange → hidden` and delivers the final batch via `navigator.sendBeacon` on `beforeunload`. Like the React Native wrapper it takes an injected `web` bindings object (`{ document, window, navigator }`) and uses no cookies or storage:
 
@@ -378,6 +385,7 @@ The deployed server is configured by environment (see [Deploying the Beacon serv
 
 | Option | Type | Default | Description |
 |---|---|---|---|
+| `corsOrigins` | `string[]` | unset | Exact origins allowed for ingest POST and OPTIONS only; credentials allowed, no wildcard matching. |
 | `referrerMode` | `'raw' \| 'origin' \| 'origin-and-path'` | `'raw'` | Server-owned policy for newly stored referrers on logger, ingest (including trusted relay), `Beacon.track()`, and short-link clicks. Scrubbing removes query, fragment, and credentials; invalid or non-HTTP(S) referrers are omitted. Landing-URL attribution is unchanged. |
 | `ipMode` | `'sha256' \| 'daily-salt' \| 'none'` | unset | `sha256` preserves legacy hashing; `daily-salt` uses HMAC-SHA-256 with a random in-memory salt; `none` omits IP from stored context. |
 | `hashIPs` | `boolean` | `true` | Legacy setting when `ipMode` is absent; `false` preserves raw storage. |

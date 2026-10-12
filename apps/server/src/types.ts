@@ -31,6 +31,7 @@ export interface BeaconConfig {
    * the allowlist. When unset, any product_id is accepted (current behavior).
    */
   productAllowlist?: string[];
+  corsOrigins?: string[];
   postgres: { connectionString: string; maxConnections?: number };
   /**
    * Shared secret authorizing a trusted server-to-server caller to assert per-event

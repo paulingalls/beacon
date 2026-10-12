@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.8 — 2026-10-12
+
+- Enable exact-origin browser ingest CORS with `CORS_ORIGINS`, including credentialed native JSON sendBeacon delivery. Other server routes retain their existing behavior.
+
+The SDK, client, and server manifests all declare version `0.2.8`. SDK and client behavior is unchanged.
+
 ## 0.2.7 — 2026-10-06
 
 - Allow optional properties on client screen views, with the supplied screen name always taking precedence.
