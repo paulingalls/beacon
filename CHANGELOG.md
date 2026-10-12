@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.9 — 2026-10-12
+
+- Restore normal browser client flushes without an injected fetch by binding the default fetch to its global receiver.
+
+The SDK, client, and server manifests all declare version `0.2.9`. SDK and server behavior is unchanged.
+
 ## 0.2.8 — 2026-10-12
 
 - Enable exact-origin browser ingest CORS with `CORS_ORIGINS`, including credentialed native JSON sendBeacon delivery. Other server routes retain their existing behavior.

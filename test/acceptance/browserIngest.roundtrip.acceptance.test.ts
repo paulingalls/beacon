@@ -41,7 +41,7 @@ describe.skipIf(!TEST_DB)('browser ingest through native transports', () => {
         import { useBeaconWeb } from '/web.js';
         const client = new BeaconClient({ endpoint: '${endpoint}', productId: '${product}',
           appContext: { platform: 'web', appVersion: '1' }, visitorToken: 'browser-memory-token',
-          flushInterval: 600000 }, { fetch: window.fetch.bind(window) });
+          flushInterval: 600000 });
         useBeaconWeb(client, { document, window, navigator });
         window.client = client;
         window.ready = true;

@@ -85,7 +85,7 @@ export class BeaconClient {
     this.config = config;
     this.flushInterval = flushInterval;
     this.maxBatchSize = maxBatchSize;
-    this.fetchFn = deps.fetch ?? globalThis.fetch;
+    this.fetchFn = deps.fetch ?? globalThis.fetch.bind(globalThis);
     this.setIntervalFn = deps.setInterval ?? ((h, ms) => setInterval(h, ms));
     this.clearIntervalFn = deps.clearInterval ?? ((t) => clearInterval(t));
     this.now = deps.now ?? Date.now;
