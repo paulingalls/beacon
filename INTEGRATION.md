@@ -140,8 +140,6 @@ For a SPA on another origin, set the Beacon server's `CORS_ORIGINS=https://vodsh
 
 Listed origins receive `Access-Control-Allow-Credentials: true` because native `sendBeacon` sends with credentials mode include. Beacon sets and reads no cookies; received cookies are ignored. Never give the browser the trusted ingest bearer; preflight permits only `content-type` and `x-app-context`.
 
-For normal browser flushes, construct `BeaconClient` with `{ fetch: window.fetch.bind(window) }` as its second argument, as vodshorter does. The current client's default unbound fetch can raise `Illegal invocation` in Chromium; server CORS does not fix that separate client defect.
-
 A browser SPA reports events with the client SDK, posting to the deployed Beacon's `POST /events`. The optional web wrapper flushes on `visibilitychange → hidden` and delivers the final batch via `navigator.sendBeacon` on `beforeunload`. Like the React Native wrapper it takes an injected `web` bindings object (`{ document, window, navigator }`) and uses no cookies or storage:
 
 ```typescript
