@@ -188,6 +188,26 @@ export function createBeacon(
   // persists across requests (a fresh handler per router() call would reset it).
   // The route is relative to basePath; the host mounts the sub-app there.
   const apiRouter = new Hono();
+  apiRouter.use('/events', async (c, next) => {
+    const origin = c.req.header('Origin');
+    if (
+      !origin ||
+      !config.corsOrigins?.includes(origin) ||
+      !['POST', 'OPTIONS'].includes(c.req.method)
+    )
+      return next();
+    c.header('Access-Control-Allow-Origin', origin);
+    // Native JSON sendBeacon uses credentials mode include, even without cookies.
+    c.header('Access-Control-Allow-Credentials', 'true');
+    c.header('Vary', 'Origin', { append: true });
+    if (c.req.method === 'OPTIONS') {
+      c.header('Access-Control-Allow-Methods', 'POST');
+      c.header('Access-Control-Allow-Headers', 'content-type,x-app-context');
+      c.header('Access-Control-Max-Age', '600');
+      return c.body(null, 204);
+    }
+    return next();
+  });
   // The allowlist is ingest-only (track() never reads body.product_id), so add it
   // at the call site rather than to the shared eventOptions.
   apiRouter.post(

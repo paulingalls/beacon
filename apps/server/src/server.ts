@@ -27,6 +27,7 @@ export interface ServerEnv {
   PRODUCT_ID?: string;
   /** Comma-separated allowlist of accepted product_ids (opt-in). Unset ⇒ accept any. */
   PRODUCT_ALLOWLIST?: string;
+  CORS_ORIGINS?: string;
   /** Absolute base for generated short URLs, e.g. 'https://pi.ink'. */
   SHORT_DOMAIN?: string;
   RETENTION_DAYS?: string;
@@ -46,7 +47,7 @@ function makeIsAdmin(adminToken: string | undefined): (c: Context) => boolean {
   return (c) => verifyTrustedBearer(c.req.header('authorization'), adminToken);
 }
 
-/** Parse the comma-separated PRODUCT_ALLOWLIST env into a trimmed, non-empty list. */
+/** Parse a comma-separated env list into a trimmed, non-empty list. */
 function parseAllowlist(raw: string | undefined): string[] | undefined {
   if (!raw) return undefined;
   const list = raw
@@ -85,6 +86,7 @@ export function buildServer(env: ServerEnv): { app: Hono; beacon: Beacon } {
 
   const allowlist = parseAllowlist(env.PRODUCT_ALLOWLIST);
   const beacon = createBeacon({
+    corsOrigins: parseAllowlist(env.CORS_ORIGINS),
     retentionDays: parseRetentionDays(env.RETENTION_DAYS),
     productId: env.PRODUCT_ID ?? 'beacon',
     postgres: { connectionString },
