@@ -7,11 +7,19 @@ worktree_teardown: ./scripts/teardown-worktree.sh   # before removal; red warns,
 debt_budget: 0.2
 # codex_sandbox: danger-full-access   # workspace-write | danger-full-access
 roles:               # harness/model[/effort]; a card's Executor: line overrides
-  lead: codex/gpt-6.1-sol/medium
-  planner: codex/gpt-6.1-sol/medium
+  # A reviewer that shares the implementer's priors agrees with it for the same reasons, so
+  # each seat that argues with work runs in the other model family from the seat that wrote it.
+  # The judgment seats (planner, slate-reviewer, angle-reviewer) run on codex's frontier model.
+  # The long multi-step seats (executor, fixer) run on the cheaper workhorse at medium, because
+  # low effort there cuts corners that only surface at land.
+  lead: claude/claude-opus-5-5
+  planner: codex/gpt-6-astra/medium
   executor: codex/gpt-6.1-sol/medium
-  reviewer: codex/gpt-6.1-sol/medium
-  plan-reviewer: codex/gpt-6.1-sol/medium
-  slate-reviewer: codex/gpt-6.1-sol/medium
-  angle-reviewer: codex/gpt-6.1-sol/medium   # was finder/verifier in 0.x
+  # claude, so the story diff review is a cross-family look at the codex executor's work.
+  reviewer: claude/claude-opus-5-5/medium
+  # /high: a plan review costs little next to a story built on a plan nobody argued with.
+  plan-reviewer: claude/claude-opus-5-5/high
+  # codex, because the lead writes the slate on claude.
+  slate-reviewer: codex/gpt-6-astra/medium
+  angle-reviewer: codex/gpt-6-astra/medium
   fixer: codex/gpt-6.1-sol/medium
