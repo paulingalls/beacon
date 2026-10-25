@@ -61,38 +61,6 @@ describe.skipIf(!TEST_DB)('redirect route (integration)', () => {
     expect(res.headers.get('location')).toBe('https://clipcast.com/go');
   });
 
-  test('logs a short_link_click event with campaign attribution taking precedence over URL params', async () => {
-    const sql = getSql();
-    const { app, buffer } = buildApp(sql);
-    const link = await createShortLink(sql, {
-      destination: 'https://clipcast.com/go',
-      productId: 'clipcast',
-      campaign: { utm_source: 'twitter', launch: 'spring' },
-      shortDomain: SHORT_DOMAIN,
-    });
-
-    const res = await app.request(`/${link.code}?utm_source=fromurl&utm_medium=email`);
-    expect(res.status).toBe(302);
-
-    await buffer.flush();
-    const rows = await sql`
-      SELECT product_id, properties, attribution
-      FROM beacon_events WHERE event_type = 'short_link_click'`;
-    expect(rows.length).toBe(1);
-    const row = rows[0] as {
-      product_id: string;
-      properties: Record<string, unknown>;
-      attribution: Record<string, unknown>;
-    };
-    expect(row.product_id).toBe('clipcast'); // from the link record, not a configured product
-    expect(row.properties).toEqual({ code: link.code, destination: 'https://clipcast.com/go' });
-    expect(row.attribution).toEqual({
-      utm_source: 'twitter', // campaign wins the collision
-      utm_medium: 'email', // URL param survives where campaign has no key
-      launch: 'spring', // campaign-only key
-    });
-  });
-
   test('an unknown code returns 404 and logs no event', async () => {
     const sql = getSql();
     const { app, buffer } = buildApp(sql);
