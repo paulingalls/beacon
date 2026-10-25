@@ -136,7 +136,7 @@ export function buildServer(env: ServerEnv): { app: Hono; beacon: Beacon } {
 if (import.meta.main) {
   const { app, beacon } = buildServer(process.env as ServerEnv);
   const port = Number(process.env.PORT ?? 8080);
-  const server = Bun.serve({ port, hostname: process.env.HOST ?? '127.0.0.1', fetch: app.fetch });
+  const server = Bun.serve({ port, hostname: process.env.HOST || '127.0.0.1', fetch: app.fetch });
   console.log(`[server] listening on ${server.hostname}:${server.port}`);
 
   const shutdown = async () => {

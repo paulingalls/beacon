@@ -8,7 +8,7 @@ const DATABASE_URL = 'postgres://stub:stub@127.0.0.1:1/stub';
 const health = (host: string, port: string) =>
   fetch(`http://${host}:${port}/health`, { proxy: null, signal: AbortSignal.timeout(2000) });
 
-test.each([undefined, '0.0.0.0'])('production listener with HOST=%s', async (HOST) => {
+test.each([undefined, '', '0.0.0.0'])('production listener with HOST=%s', async (HOST) => {
   if (!address) throw new Error('A non-loopback IPv4 interface is required');
   const env = { ...process.env, HOST, PORT: '0', DATABASE_URL };
   const child = Bun.spawn([process.execPath, 'apps/server/src/server.ts'], {
