@@ -27,7 +27,10 @@ const faults: Array<[string, string, (f: Awaited<ReturnType<typeof fixture>>) =>
     'second key file',
     'Keys',
     (f) =>
-      f.put('home/paul/.ssh/authorized_keys2', readFileSync(join(f.root, 'extra.pub'), 'utf8')),
+      f.put(
+        'home/paul/.ssh/authorized_keys2',
+        readFileSync(join(f.root, 'extra.pub'), 'utf8').trimEnd(),
+      ),
   ],
   [
     'uid zero',
@@ -42,6 +45,16 @@ const faults: Array<[string, string, (f: Awaited<ReturnType<typeof fixture>>) =>
     'extra sudo grant',
     'Sudoers',
     (f) => f.put('etc/sudoers.d/intruder', 'beacon ALL=(ALL) NOPASSWD:ALL\n'),
+  ],
+  [
+    'uid rule shaped like a comment',
+    'Sudoers',
+    (f) => f.put('etc/sudoers.d/README', '#1000 ALL=(ALL) ALL\n'),
+  ],
+  [
+    'legacy include directive',
+    'Sudoers',
+    (f) => f.put('etc/sudoers.d/README', '#includedir /tmp\n'),
   ],
   ['unowned SUID', 'SUID/SGID', (f) => f.put('usr/bin/intruder', 'bad', 0o4755)],
   ['literal dpkg wildcard', 'SUID/SGID', (f) => f.put('usr/bin/*', 'bad', 0o4755)],

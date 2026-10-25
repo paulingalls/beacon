@@ -130,7 +130,8 @@ sudoers() {
   while IFS= read -r file; do
     name=$(basename "$file")
     expected=$(jq -er --arg name "$name" '.sudoers[$name] | join("\n")' "$POLICY/allowlist")
-    actual=$(sed '/^[[:space:]]*#/d; /^[[:space:]]*$/d' "$file")
+    # sudo parses #include, #includedir, #uid and #-uid lines as rules, not comments.
+    actual=$(awk '!/^[[:space:]]*$/ && (!/^[[:space:]]*#/ || /^[[:space:]]*#([-0-9]|include)/)' "$file")
     [ "$actual" = "$expected" ] || { echo "$name rules differ"; return 1; }
   done < "$WORK/sudo-files"
   actual=$(sed 's|.*/||' "$WORK/sudo-files" | sort)
