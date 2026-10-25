@@ -116,7 +116,7 @@ pull runner/units and the root integrity checker/baseline. The integrity timer
 is enabled automatically; the pull timer requires explicit operator activation.
 
 ```bash
-set -o pipefail
+set -euo pipefail
 git fetch origin main
 git archive origin/main scripts deploy | ssh -i ~/.ssh/<maintenance-key> root@<droplet-ip> \
   'rm -rf /root/beacon-provision && install -d -o root -g root -m 0700 /root/beacon-provision && tar -x -C /root/beacon-provision'
@@ -152,7 +152,7 @@ Approve `tag:beacon` in the tailnet admin console (Paul's ACL grants
 ```bash
 ssh beacon 'sudo systemctl stop beacon-deploy.timer; systemctl status beacon-deploy.service'
 # Wait until the service is idle, then deliver from the operator workstation:
-set -o pipefail
+set -euo pipefail
 git fetch origin main
 git archive origin/main scripts deploy | ssh beacon \
   'sudo rm -rf /root/beacon-provision && sudo install -d -o root -g root -m 0700 /root/beacon-provision && sudo tar -x -C /root/beacon-provision'

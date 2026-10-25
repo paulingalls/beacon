@@ -228,7 +228,7 @@ the checkout, then run from the workstation:
 ```bash
 ssh beacon 'sudo systemctl stop beacon-deploy.timer; systemctl status beacon-deploy.service'
 # Wait for idle. On the operator workstation:
-set -o pipefail
+set -euo pipefail
 git fetch origin main
 git archive origin/main scripts deploy | ssh beacon \
   'sudo rm -rf /root/beacon-provision && sudo install -d -o root -g root -m 0700 /root/beacon-provision && sudo tar -x -C /root/beacon-provision'
@@ -260,8 +260,12 @@ Fetch the replacement CA using the same cluster UUID and `--context default`,
 inspect its subject, dates and provider provenance, then stage it beside the
 existing file as root:root 0644. Use the documented `openssl s_client` command
 with `-CAfile /etc/beacon/db-ca.crt.next` and the DATABASE_URL private hostname;
-require verification code 0 before `sudo mv /etc/beacon/db-ca.crt.next
-/etc/beacon/db-ca.crt` (one command, atomic on that filesystem). Keep a valid
+require verification code 0 before atomically replacing the file on the same filesystem:
+
+```bash
+sudo mv /etc/beacon/db-ca.crt.next /etc/beacon/db-ca.crt
+```
+ Keep a valid
 overlap PEM bundle when the provider requires both old and new CAs during
 rotation. CA contents are read when each client is created: pause pulls, wait
 for idle, restart Beacon or deploy, verify the migration journal and authenticated
