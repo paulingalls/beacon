@@ -110,7 +110,7 @@ The short URL base domain is configurable via `shortDomain` config (e.g., `https
 3. Increment `click_count` (fire-and-forget, non-blocking)
 4. Log a `short_link_click` event to the event buffer with:
    - `product_id` from the short link record
-   - `properties`: `{ code, destination }`
+   - `properties`: `{ code }` — a destination may carry a bearer credential; retrieve it by joining the event's `properties.code` to `beacon_short_links.code`.
    - `attribution`: campaign data from the short link record, merged with any URL params on the short link request
    - Standard request metadata (IP, user-agent, referrer)
 5. Return `302` redirect to `destination`
