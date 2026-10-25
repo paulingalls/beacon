@@ -119,5 +119,8 @@ export async function red(name: string, action: () => Promise<unknown>, target: 
 export async function gatewayHealth(url: string) {
   const response = await fetch(`${url}/health`, { signal: AbortSignal.timeout(2000) });
   expect(response.status).toBe(200);
-  expect(await response.json()).toEqual({ status: 'ok' });
+  expect(await response.json()).toEqual({
+    status: 'ok',
+    commit: Bun.spawnSync(['git', 'rev-parse', 'HEAD']).stdout.toString().trim(),
+  });
 }

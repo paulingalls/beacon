@@ -13,19 +13,23 @@ cluster, reached over the VPC private network.
 
 ## Shell in
 
-Root SSH is disabled. Connect as the `beacon` user (passwordless sudo):
+Use your workstation-only maintenance key with OpenSSH over the tailnet:
 
 ```bash
-ssh beacon            # uses ~/.ssh/config alias → beacon@165.232.141.200
-# or explicitly:
-ssh -i ~/.ssh/beacon_deploy beacon@165.232.141.200
+ssh beacon            # configure this alias as beacon@beacon-prod over Tailscale
+sudo -n true
 ```
 
-The app lives in `~/app`; runtime secrets are in `~/.env.production` (chmod 600).
+Root SSH and public TCP 22 are disabled after cut-over. `beacon-prod` has
+`tag:beacon`; Paul's ACL allows autogroup:admin TCP 22. UFW allows incoming
+`tailscale0`, 80 and 443. DO `beacon-fw` also closes public 22. Keep the DO
+console as break-glass; verify a second tailnet SSH/sudo session before access
+changes. For a rebuilt host run `sudo tailscale up --hostname=beacon-prod`,
+approve its tag and verify access before the provisioner's enrolled rerun:
+`ssh beacon 'sudo bash -s' < scripts/provision-droplet.sh`.
 
-> `~/.ssh/beacon_deploy` is also the GitHub `SSH_PRIVATE_KEY` deploy secret — it
-> has no passphrase, so guard it. The droplet-local `~/.ssh/github_deploy` key is
-> the read-only key the droplet uses to pull the repo, not for interactive login.
+The app lives in `~/app`; secrets are `~/.env.production` (chmod 600).
+The droplet's `~/.ssh/github_deploy` is a separate read-only GitHub key.
 
 ---
 
@@ -33,7 +37,7 @@ The app lives in `~/app`; runtime secrets are in `~/.env.production` (chmod 600)
 
 ```bash
 # From anywhere — public health (DB-free; should stay 200 even during a DB outage):
-curl https://beacon.vodshorter.com/health            # => {"status":"ok"}
+curl https://beacon.vodshorter.com/health            # => {"status":"ok","commit":"<boot SHA>"}
 
 # On the droplet:
 systemctl is-active beacon                            # => active
@@ -62,61 +66,82 @@ sudo systemctl restart caddy                           # full Caddy restart
 
 ## Deploys
 
-Deploys are **automatic on merge to `main`** — `.github/workflows/deploy.yml`
-re-runs the full CI suite as a gate, then SSHes in and runs `~/deploy.sh`
-(fast-forward `~/app` to `origin/main` → `scripts/deploy.sh`: install → migrate →
-restart → health-check → rollback on failure). `develop` is the integration
-branch; a `develop`→`main` PR is a release.
+A merge to `main` runs full CI, publishes its gated SHA to `release`, then waits
+up to five minutes for public health.commit. The minute `beacon-deploy.timer`
+fetches main/release under flock, verifies both ancestry checks, resets and runs
+`scripts/deploy.sh`. No inbound GitHub SSH is involved. Failed-run email from
+the workflow's commit poll is the alarm; a healthy older process still fails it.
 
 ```bash
-# Watch the latest deploy:
 gh run list --workflow=deploy.yml --limit 3
 gh run watch <run-id>
-
-# Deploy manually from the droplet (same path CI uses):
-ssh beacon 'bash ~/deploy.sh'
-
-# Pause / resume autodeploy (e.g. during maintenance):
-gh workflow disable deploy.yml
-gh workflow enable  deploy.yml
+journalctl -u beacon-deploy --since today
+systemctl list-timers beacon-deploy.timer
 ```
 
-**Rollback:** `scripts/deploy.sh` auto-rolls back **code only** if the new commit
-fails its health check (resets to the prior commit, reinstalls, re-checks). Exit
-codes: `0` healthy, `1` rolled back and healthy (investigate the bad commit), `2`
-rollback also unhealthy — **manual intervention** (see below), `3` stopped before
-restart (below). Migrations are forward-only and are NOT reverted, so a breaking
-migration can't be auto-recovered.
+Pause before maintenance, retry, rollback or replacing the installed runner/units:
 
-Before deployment, `scripts/deploy.sh` compares `$BUN --version` with the
-checked-out `.bun-version`. A missing pin, a mismatch, or a failed dependency install
-or migration stops the deploy before the restart with exit `3`: the running service
-stays up and `~/app` is reset to the previous commit, so its `.bun-version` is the
-OLD pin. Install the pin of the commit being deployed as the beacon user, verify it,
-then retry through the bootstrap, which re-fetches `origin/main`. Rerunning
-`scripts/deploy.sh` in place would redeploy the previous commit, report it healthy,
-and make the never-installed commit its rollback target:
+```bash
+sudo systemctl stop beacon-deploy.timer
+systemctl status beacon-deploy.service   # wait until no deploy is running
+# After the operation and health.commit verification:
+sudo systemctl start beacon-deploy.timer
+```
+
+Stopping the timer does not cancel an active deploy. Disabling the GitHub
+workflow does not stop a release already published. Never unlink the live lock
+at `~/.local/state/beacon-deploy/lock`. `last-failed` in that directory suppresses
+retries of the same SHA; a newer release supersedes it. A skip exits 0, so the
+next tick clears failed unit status; the marker and journal remain evidence.
+
+`scripts/deploy.sh` rolls back code only. Exit `1` means rollback healthy; `2`
+means rollback unhealthy; `3` restores HEAD before restart on runtime pin,
+install or migration failure. Migrations are additive and never reverted.
+For runtime repair, read the pin from the fetched release, as beacon, while paused:
 
 ```bash
 cd ~/app
 set -o pipefail
-git fetch origin
-curl -fsSL https://bun.sh/install | bash -s "bun-v$(git show origin/main:.bun-version)"
+git fetch origin '+refs/heads/release:refs/remotes/origin/release'
+curl -fsSL https://bun.sh/install | bash -s "bun-v$(git show origin/release:.bun-version)"
 ~/.bun/bin/bun --version
-bash ~/deploy.sh
 ```
 
-Manual rollback to a known-good commit:
+After fixing the cause, retry through the runner (not the restored old checkout):
 
 ```bash
-ssh beacon
-cd ~/app
-git log --oneline -n 5
-git reset --hard <good-sha>
-~/.bun/bin/bun install --frozen-lockfile --production --ignore-scripts
-sudo systemctl restart beacon
-curl -sf http://localhost:8080/health
+rm ~/.local/state/beacon-deploy/last-failed
+sudo systemctl start beacon-deploy.service
+curl -fsS https://beacon.vodshorter.com/health  # verify expected commit
+sudo systemctl start beacon-deploy.timer
 ```
+
+Manual rollback, as beacon with timer paused and service idle:
+
+```bash
+cd ~/app
+git fetch origin '+refs/heads/release:refs/remotes/origin/release'
+mkdir -p ~/.local/state/beacon-deploy
+git rev-parse origin/release > ~/.local/state/beacon-deploy/last-failed
+git reset --hard <good-sha>
+bash scripts/deploy.sh
+curl -fsS https://beacon.vodshorter.com/health  # verify good-sha, not just status
+# Resume deliberately once healthy:
+sudo systemctl start beacon-deploy.timer
+```
+
+Do not force release backwards. After this manual reset, deploy.sh's `HEAD@{1}`
+rollback target is the bad SHA. If the rollback deploy itself fails health,
+deploy.sh restores that bad release: inspect health.commit before resuming.
+
+A timeout, reboot or kill can leave HEAD equal to release while the old process
+still serves. Ticks then skip and the workflow poll fails. Inspect the journal,
+run `cd ~/app && bash scripts/deploy.sh` deliberately while paused, and verify
+health.commit. Canceling GitHub does not stop an on-droplet deploy.
+
+The runner and units live outside the checkout. After changing them, pause and
+wait for idle, reinstall from the intended reviewed source with the commands in
+DEPLOYMENT.md and run `sudo systemctl daemon-reload` before resuming.
 
 ---
 

@@ -16,6 +16,9 @@ COPY apps/server/package.json apps/server/
 # pins to bun.lock so the image matches local/CI installs exactly.
 RUN bun install --frozen-lockfile --production --ignore-scripts
 
+ARG BEACON_COMMIT
+ENV BEACON_COMMIT=${BEACON_COMMIT}
+
 COPY . .
 
 ENV HOST=0.0.0.0
