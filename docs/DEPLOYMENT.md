@@ -156,7 +156,8 @@ Set up root-only alert credentials and deliberately update the reviewed key
 baseline for a rebuilt host with a different key; see [integrity operations](./OPERATIONS.md).
 The enrolled rerun writes `00-hardening.conf` before cloud-init's SSH config:
 root/password/keyboard-interactive login off, publickey required, MaxAuthTries 3,
-X11 forwarding off; `sshd -t` must pass before reloading `ssh`. It sets ufw deny
+X11 forwarding off; `sshd -t` must pass before reloading `ssh`. It then empties
+root's authorized keys, as the integrity baseline expects. It sets ufw deny
 incoming, allow outgoing, 80/443 and incoming `tailscale0`, enables ufw, then removes public
 22 rules (IPv4 and IPv6). OpenSSH runs over Tailscale;
 `tailscale up` does not enable Tailscale SSH. Remove public 22 from DO's

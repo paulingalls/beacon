@@ -182,13 +182,16 @@ SIGKILL and an unreadable alert config cannot deliver one.
 
 Triage the failed name before changing the baseline:
 
-- **Packages / Config**: package binaries/libraries or reviewed Caddyfile differ;
-  main sudoers drift also fails. Other conffile differences are informational.
-- **Keys / Accounts / Sudoers**: inspect both authorized key files per account,
-  uid-zero/login-shell accounts, and every sudoers.d file. Beacon can only
+- **Packages / Config**: a packaged file outside `/etc` or the reviewed Caddyfile
+  differs; main sudoers drift also fails. Other `/etc` differences are informational.
+- **Keys / Accounts / Sudoers**: inspect both authorized key files for every
+  account, including nologin ones, uid-zero/login-shell accounts, and every
+  sudoers.d file. Beacon can only
   restart `beacon` or `beacon.service`; paul has full sudo.
-- **SUID/SGID / Units / Loader**: investigate unowned privileged files, unknown
-  local unit targets/drop-ins or `/etc/ld.so.preload`. Package ownership resolves
+- **SUID/SGID / Units / Loader**: investigate setuid/setgid files that are unowned
+  or missing from the allowlist's exact `suid` list (dpkg does not verify modes; an
+  upgrade that adds one needs a reviewed list update), unknown local unit
+  targets/drop-ins or `/etc/ld.so.preload`. Package ownership resolves
   usrmerge aliases; exact local unit exceptions live in the reviewed allowlist.
   Generated dangling dependencies require an exact path/target pair. Runtime
   scopes group existing processes and are excluded from the file check.
