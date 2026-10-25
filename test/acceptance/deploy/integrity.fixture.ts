@@ -119,7 +119,12 @@ sys.exit(0 if any(fnmatch.fnmatchcase(x,p) for x in (r/'owned').read_text().spli
     0o755,
   );
   put('bin/uname', '#!/bin/bash\necho x86_64\n', 0o755);
-  put('bin/getent', '#!/bin/bash\ncat "$INTEGRITY_ROOT/passwd"\n', 0o755);
+  put('group', 'sudo:x:27:\nadmin:x:80:\n');
+  put(
+    'bin/getent',
+    '#!/bin/bash\nif [ "$1" = passwd ]; then cat "$INTEGRITY_ROOT/passwd"; else grep "^$2:" "$INTEGRITY_ROOT/group" || exit 2; fi\n',
+    0o755,
+  );
   put('bin/visudo', '#!/bin/bash\nexit 0\n', 0o755);
   put(
     'sshd-config',
@@ -133,6 +138,19 @@ sys.exit(0 if any(fnmatch.fnmatchcase(x,p) for x in (r/'owned').read_text().spli
   command(['git', 'add', '.'], join(root, 'app'));
   command(['git', 'commit', '-qm', 'baseline'], join(root, 'app'));
   command(['git', 'update-ref', 'refs/remotes/origin/release', 'HEAD'], join(root, 'app'));
+  command(['git', 'clone', '-q', '--bare', join(root, 'app'), join(root, 'remote')]);
+  command(['git', 'update-ref', 'refs/heads/release', 'HEAD'], join(root, 'remote'));
+  put(
+    'bin/ssh',
+    `#!/bin/bash
+printf '%s\\n' "$*" >> "${root}/ssh-args"
+[ ! -f "${root}/remote-error" ] || exit 1
+[ ! -f "${root}/remote-empty" ] || exit 0
+exec git-upload-pack '${root}/remote'
+`,
+    0o755,
+  );
+  put('policy/known_hosts', readFileSync('deploy/github_known_hosts', 'utf8'));
   put('lock', '');
   put('asset/bun-linux-x64/bun', 'official binary');
   put('bun', 'official binary');

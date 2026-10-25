@@ -26,7 +26,7 @@ Root SSH and public TCP 22 are disabled after cut-over. `beacon-prod` has
 console as break-glass; verify a fresh paul tailnet SSH/sudo session before access
 changes. For a rebuilt host run `sudo tailscale up --hostname=beacon-prod`,
 approve its tag and verify access before the provisioner's enrolled rerun:
-`ssh beacon 'sudo bash -s' < scripts/provision-droplet.sh`.
+use the root-bundle delivery and execution sequence below.
 
 The app lives in `/home/beacon/app`; secrets are `/home/beacon/.env.production` (chmod 600).
 The droplet's `/home/beacon/.ssh/github_deploy` is a separate read-only GitHub key.
@@ -44,6 +44,14 @@ systemctl is-active beacon                            # => active
 sudo systemctl status beacon --no-pager               # full unit status
 curl -sf http://localhost:8080/health                 # local probe (bypasses Caddy)
 ```
+
+## Monitoring
+
+Vodshorter's external monitor probes `https://beacon.vodshorter.com/health` every
+15 minutes and emails Paul after two consecutive failures (incident `beacon-down`).
+It has been live since 2026-10-25 ~06:25Z in vodshorter v0.2.5. This is an external
+contract: keep `/health` unauthenticated, DB-free, HTTP 200 with
+`{"status":"ok","commit":...}` over HTTPS, with **no redirect**; redirects fail the probe.
 
 ## Logs
 
@@ -186,7 +194,7 @@ Triage the failed name before changing the baseline:
   differs; main sudoers drift also fails. Other `/etc` differences are informational.
 - **Keys / Accounts / Sudoers**: inspect both authorized key files for every
   account, including nologin ones, uid-zero/login-shell accounts, and every
-  sudoers.d file. "sshd key sources differ" means `sudo sshd -T` reports an
+  sudoers.d file. Both `sudo` and `admin` groups must have no supplementary or primary-GID members (an absent admin group is fine). "sshd key sources differ" means `sudo sshd -T` reports an
   AuthorizedKeysFile/Command, TrustedUserCAKeys or principals setting other than
   the defaults: look for a new file in `/etc/ssh/sshd_config.d/`. Beacon can only
   restart `beacon` or `beacon.service`; paul has full sudo.
@@ -199,7 +207,12 @@ Triage the failed name before changing the baseline:
   scopes group existing processes and are excluded from the file check.
 - **Processes**: a daemon may still run a deleted binary after an upgrade.
   Confirm the upgrade and restart that daemon, then rerun the check.
-- **Checkout**: inspect status and HEAD versus stored origin/release as beacon.
+- **Checkout**: compare the clean app HEAD with GitHub's authoritative `release`.
+  Root runs `git ls-remote` against the explicit repository URL outside the app
+  repo, ignoring inherited Git configuration and app SSH config. It uses the
+  read-only `/home/beacon/.ssh/github_deploy` key and root-owned
+  `/etc/beacon-integrity/known_hosts`, with strict checking and no global fallback.
+  Local tracking refs cannot authorize a checkout. Lookup failure fails Checkout.
   The check waits for the deploy lock, never fetches, resets or cleans.
 - **Bun**: compare the pin/installed runtime with the official Linux release.
   The root cache keys binary digests by version and asset, after verifying the zip.
@@ -213,13 +226,48 @@ To update installed integrity artifacts, pause pulls and wait for idle, review
 the checkout, then run from the workstation:
 
 ```bash
-ssh beacon 'sudo bash -s' < scripts/provision-droplet.sh
+ssh beacon 'sudo systemctl stop beacon-deploy.timer; systemctl status beacon-deploy.service'
+# Wait for idle. On the operator workstation:
+set -o pipefail
+git fetch origin main
+git archive origin/main scripts deploy | ssh beacon \
+  'sudo rm -rf /root/beacon-provision && sudo install -d -o root -g root -m 0700 /root/beacon-provision && sudo tar -x -C /root/beacon-provision'
+# Execute only after successful delivery:
+ssh beacon 'sudo bash /root/beacon-provision/scripts/provision-droplet.sh'
 ssh beacon 'sudo systemctl start beacon-integrity.service'
 ```
 
 Inspect all eleven verdicts and service exit status before resuming pulls. The
 rerun also reapplies Caddyfile and access policy; keep DO console access and
 verify a fresh paul session before lockdown.
+
+GitHub host-key changes require an operator review of `https://api.github.com/meta`
+SSH keys against GitHub's published SSH key fingerprints, then a commit to
+`deploy/github_known_hosts` and delivery/install from the root bundle. Never
+accept a replacement from the app's known_hosts or disable strict checking.
+Runner, unit and baseline reinstalls also use `/root/beacon-provision/deploy`;
+see DEPLOYMENT.md for exact install commands. Reruns preserve the CA and alert.env.
+
+## Database CA rotation
+
+`DATABASE_CA_CERT=/etc/beacon/db-ca.crt` is required for the managed deployment;
+local plaintext databases leave it unset. See DEPLOYMENT.md for initial doctl
+fetch/install and the mandatory pre-release hostname proof. A bad explicit path
+or PEM fails before opening Postgres, naming the variable. Handshake failures
+remain certificate/hostname errors, including in the migration CLI.
+
+Fetch the replacement CA using the same cluster UUID and `--context default`,
+inspect its subject, dates and provider provenance, then stage it beside the
+existing file as root:root 0644. Use the documented `openssl s_client` command
+with `-CAfile /etc/beacon/db-ca.crt.next` and the DATABASE_URL private hostname;
+require verification code 0 before `sudo mv /etc/beacon/db-ca.crt.next
+/etc/beacon/db-ca.crt` (one command, atomic on that filesystem). Keep a valid
+overlap PEM bundle when the provider requires both old and new CAs during
+rotation. CA contents are read when each client is created: pause pulls, wait
+for idle, restart Beacon or deploy, verify the migration journal and authenticated
+schema response, then resume pulls. Never disable verification to recover;
+restore a valid CA bundle. After cut-over run the installed integrity checker
+and inspect all eleven PASS verdicts with the CA present.
 
 ## When things get weird
 
@@ -294,7 +342,7 @@ ignores the body-asserted `user_id`/`context` and falls back to the anonymous pa
 | URL | https://beacon.vodshorter.com |
 | Droplet | `beacon`, `165.232.141.200`, sfo3 |
 | App dir | `/home/beacon/app` (user `beacon`) |
-| Env file | `/home/beacon/.env.production` (DATABASE_URL, ADMIN_TOKEN, TRUSTED_INGEST_TOKEN, SHORT_DOMAIN) |
+| Env file | `/home/beacon/.env.production` (DATABASE_URL, DATABASE_CA_CERT, ADMIN_TOKEN, TRUSTED_INGEST_TOKEN, SHORT_DOMAIN) |
 | Port | `8080` (behind Caddy) |
 | DB | `beacon_prod` on `simplyhuman-db` (VPC private host, `sslmode=require`) |
 | Autodeploy | merge to `main` → `.github/workflows/deploy.yml` |

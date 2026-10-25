@@ -62,7 +62,8 @@ The Beacon server (`apps/server`) is the single writer: it holds the Postgres cr
 
 | Variable | Required | Purpose |
 |---|---|---|
-| `DATABASE_URL` | yes | Postgres connection string (the one fail-fast). |
+| `DATABASE_URL` | yes | Postgres connection string; required at startup. |
+| `DATABASE_CA_CERT` | required for managed deployment; optional locally | PEM CA bundle file path, e.g. `/etc/beacon/db-ca.crt`. When set, server and migrations verify the certificate chain and hostname, overriding URL sslmode. Empty, unreadable or invalid PEM fails synchronously naming DATABASE_CA_CERT before Postgres opens. Unset preserves existing local/CI behavior. |
 | `RETENTION_DAYS` | optional | Unset or 0 = disabled. Positive finite decimal days enable pruning; invalid or unrepresentable cutoff values fail startup before resources are created. |
 | `ADMIN_TOKEN` | no | Bearer token gating the dashboard + query API. **Unset ⇒ those surfaces fail closed (403).** |
 | `TRUSTED_INGEST_TOKEN` | no | Bearer secret authorizing a trusted server-to-server caller to assert per-event `user_id`/context in the ingest body. **Unset ⇒ trusted ingest disabled (anonymous-only).** |

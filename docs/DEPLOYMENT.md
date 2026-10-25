@@ -116,8 +116,19 @@ pull runner/units and the root integrity checker/baseline. The integrity timer
 is enabled automatically; the pull timer requires explicit operator activation.
 
 ```bash
-ssh -i ~/.ssh/<maintenance-key> root@<droplet-ip> 'bash -s' < scripts/provision-droplet.sh
+set -o pipefail
+git fetch origin main
+git archive origin/main scripts deploy | ssh -i ~/.ssh/<maintenance-key> root@<droplet-ip> \
+  'rm -rf /root/beacon-provision && install -d -o root -g root -m 0700 /root/beacon-provision && tar -x -C /root/beacon-provision'
+# Run only after successful delivery:
+ssh -i ~/.ssh/<maintenance-key> root@<droplet-ip> 'bash /root/beacon-provision/scripts/provision-droplet.sh'
 ```
+
+The physical asset directory must be root-owned mode 0700; required assets must
+exist, and descendants must be root-owned, free of symlinks and unwritable by
+group/other. Refusal precedes host changes. Root never installs assets from the
+beacon-writable checkout. Archive delivery from the operator's reviewed source
+is the trust boundary; never archive on the app host.
 
 The first clone fails until the printed public key is registered read-only:
 
@@ -139,7 +150,14 @@ Approve `tag:beacon` in the tailnet admin console (Paul's ACL grants
 `sudo -n true`, with the DO console available. Then rerun from your workstation:
 
 ```bash
-ssh beacon 'sudo bash -s' < scripts/provision-droplet.sh
+ssh beacon 'sudo systemctl stop beacon-deploy.timer; systemctl status beacon-deploy.service'
+# Wait until the service is idle, then deliver from the operator workstation:
+set -o pipefail
+git fetch origin main
+git archive origin/main scripts deploy | ssh beacon \
+  'sudo rm -rf /root/beacon-provision && sudo install -d -o root -g root -m 0700 /root/beacon-provision && sudo tar -x -C /root/beacon-provision'
+# Run only after successful delivery:
+ssh beacon 'sudo bash /root/beacon-provision/scripts/provision-droplet.sh'
 ```
 
 Configure the local alias before using it:
@@ -179,10 +197,39 @@ committed**; `.env.*` is gitignored and this lives outside the repo:
 
 ```bash
 DATABASE_URL=postgres://beacon:<password>@private-<cluster-host>:25060/beacon_prod?sslmode=require
+DATABASE_CA_CERT=/etc/beacon/db-ca.crt
 ADMIN_TOKEN=<openssl rand -hex 32>
 TRUSTED_INGEST_TOKEN=<openssl rand -hex 32>
 SHORT_DOMAIN=https://beacon.vodshorter.com
 ```
+
+Before the 0.2.15 release, the lead installs the managed cluster CA and env line
+on the existing host. Old code ignores the new variable. From the workstation:
+
+```bash
+doctl --context default databases get-ca 9785744c-ed60-4075-9a2f-9d65247982ab > /tmp/beacon-db-ca.crt
+openssl x509 -in /tmp/beacon-db-ca.crt -noout -subject -dates
+scp /tmp/beacon-db-ca.crt beacon:/tmp/beacon-db-ca.crt
+ssh beacon 'sudo install -d -o root -g root -m 0755 /etc/beacon && sudo install -o root -g root -m 0644 /tmp/beacon-db-ca.crt /etc/beacon/db-ca.crt && rm /tmp/beacon-db-ca.crt'
+```
+
+Add `DATABASE_CA_CERT=/etc/beacon/db-ca.crt` to `/home/beacon/.env.production`.
+Before release, on the droplet substitute the private host and port from
+DATABASE_URL (do not print its credentials):
+
+```bash
+openssl s_client -starttls postgres -connect <host>:<port> -servername <host> \
+  -CAfile /etc/beacon/db-ca.crt -verify_hostname <host> -verify_return_error </dev/null
+```
+
+Require `Verify return code: 0 (ok)`; resolve a SAN mismatch before releasing.
+After release, confirm migration success in the deploy journal and authenticated
+`/analytics/schema` HTTP 200. Then deliver `origin/main`'s root bundle and rerun
+provisioning as above to install the new checker and GitHub host pins. Run
+`sudo /usr/local/sbin/beacon-integrity` and inspect all eleven PASS verdicts with
+the CA installed; a regular `/etc/beacon/db-ca.crt` needs no integrity allowlist
+entry. Check public HTTPS `/health` with redirects disabled: HTTP 200, status ok,
+and the expected boot commit. See [CA rotation](./OPERATIONS.md#database-ca-rotation).
 
 Then reload Caddy (provision installs the Caddyfile but does not reload the
 running Caddy), install, migrate, and start:
@@ -197,6 +244,7 @@ sudo systemctl enable --now beacon
 | Variable | Required | Purpose |
 |---|---|---|
 | `DATABASE_URL` | yes | Postgres connection string; use TLS for managed Postgres. Host fails fast if unset. |
+| `DATABASE_CA_CERT` | required for managed deployment; optional locally | PEM CA bundle file path, e.g. `/etc/beacon/db-ca.crt`. When set, server and migrations verify the certificate chain and hostname, overriding URL sslmode. Empty, unreadable or invalid PEM fails synchronously naming DATABASE_CA_CERT before Postgres opens. Unset preserves existing local/CI behavior. |
 | `PORT` | no | HTTP port (default `8080`); also used by the container HEALTHCHECK. |
 | `HOST` | no | Listen address: default `127.0.0.1` on the host, `0.0.0.0` in the Docker image; set explicitly to override. Host Caddy proxies to `localhost:8080`. |
 | `RETENTION_DAYS` | optional | Unset or 0 = disabled. Positive finite decimal days enable pruning; invalid or unrepresentable cutoff values fail startup before resources are created. |
@@ -246,6 +294,22 @@ A boot older than ten minutes can trigger a check during provisioning.
 
 Later runner/unit changes require explicit reinstall with the timer paused and
 service idle; a checkout reset cannot update `/usr/local/bin/beacon-deploy`.
+For a selective reinstall after delivering the reviewed root bundle, while paused:
+
+```bash
+sudo install -o root -g root -m 0755 /root/beacon-provision/deploy/beacon-deploy.sh /usr/local/bin/beacon-deploy
+for unit in beacon.service beacon-deploy.service beacon-deploy.timer beacon-integrity.service beacon-integrity.timer; do
+  sudo install -o root -g root -m 0644 "/root/beacon-provision/deploy/$unit" "/etc/systemd/system/$unit"
+done
+sudo install -o root -g root -m 0755 /root/beacon-provision/deploy/beacon-integrity.sh /usr/local/sbin/beacon-integrity
+sudo install -o root -g root -m 0600 /root/beacon-provision/deploy/integrity-allowlist /etc/beacon-integrity/allowlist
+sudo install -o root -g root -m 0600 /root/beacon-provision/deploy/github_known_hosts /etc/beacon-integrity/known_hosts
+sudo install -o root -g root -m 0600 /root/beacon-provision/deploy/Caddyfile /etc/beacon-integrity/Caddyfile
+sudo install -o root -g root -m 0644 /root/beacon-provision/deploy/Caddyfile /etc/caddy/Caddyfile
+sudo systemctl daemon-reload
+sudo systemctl reload caddy
+```
+
 For pause, retry, manual rollback and timeout recovery see [OPERATIONS.md](./OPERATIONS.md).
 For macOS runner tests install `brew install flock coreutils`; Linux fixture
 hosts also need `zip` (the checker itself only needs `unzip`).
