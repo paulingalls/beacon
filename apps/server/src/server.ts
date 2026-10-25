@@ -17,6 +17,7 @@ export interface ServerEnv {
   BEACON_COMMIT?: string;
   /** Postgres connection string. Required. */
   DATABASE_URL?: string;
+  DATABASE_CA_CERT?: string;
   /** Bearer token gating the dashboard + query API. Unset ⇒ those surfaces fail closed. */
   ADMIN_TOKEN?: string;
   /**
@@ -115,7 +116,7 @@ export function buildServer(env: ServerEnv): { app: Hono; beacon: Beacon } {
     corsOrigins: parseAllowlist(env.CORS_ORIGINS),
     retentionDays: parseRetentionDays(env.RETENTION_DAYS),
     productId: env.PRODUCT_ID ?? 'beacon',
-    postgres: { connectionString },
+    postgres: { connectionString, caCertPath: env.DATABASE_CA_CERT },
     isAdmin: makeIsAdmin(env.ADMIN_TOKEN),
     trustedIngestToken: env.TRUSTED_INGEST_TOKEN,
     basePath: env.BASE_PATH ?? '/analytics',

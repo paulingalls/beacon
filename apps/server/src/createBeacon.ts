@@ -100,7 +100,7 @@ export interface Beacon {
  * token store, and wire the request-logging middleware (REQUIREMENTS.md §1–§3).
  *
  * Throws on invalid configuration. Runtime failure
- * isolation (§1.3) is handled downstream: createDb never throws and the buffer
+ * isolation (§1.3) is handled downstream: createDb throws only for explicit CA configuration and the buffer
  * retries, so a Postgres outage never crashes the host.
  */
 export function createBeacon(
@@ -125,6 +125,7 @@ export function createBeacon(
   const sql = createDb({
     connectionString: config.postgres.connectionString,
     maxConnections: config.postgres.maxConnections,
+    caCertPath: config.postgres.caCertPath,
   });
   const buffer = new EventBuffer(sql, {
     flushInterval: config.flushInterval,
