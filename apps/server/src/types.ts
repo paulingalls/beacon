@@ -81,8 +81,10 @@ export interface BeaconConfig {
   shortLinkCacheSize?: number;
   /** Short-link cache entry TTL in ms (REQUIREMENTS.md §7.3 §10). Default 300000 (5 min). */
   shortLinkCacheTTL?: number;
-  /** Short-link create limit: max creations/hr/admin (REQUIREMENTS.md §7.2). Default 100. */
+  /** Short-link create limit: max creations per configured window (REQUIREMENTS.md §7.2). Default 100. */
   shortLinkCreateRateLimit?: number;
+  /** Short-link create rate window in milliseconds. Default 3600000 (1 hour). */
+  shortLinkCreateRateWindowMs?: number;
 }
 
 /** Tuning options for EventBuffer (REQUIREMENTS.md §1.2). */
