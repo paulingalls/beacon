@@ -8,7 +8,7 @@ single writer and the only holder of DB credentials. It writes everything to one
 with `product_id` as a first-class dimension, and serves an agent-friendly query API, an
 admin dashboard and a URL shortener. Production runs at beacon.vodshorter.com.
 
-**Stack**: TypeScript (strict) on Bun 1.3+; Hono; Postgres 16 via `postgres` (postgres.js,
+**Stack**: TypeScript (strict) on Bun (pinned in `.bun-version`); Hono; Postgres 17 via `postgres` (postgres.js,
 tagged templates, no ORM); Bun workspaces; `bun:test`; Playwright for the browser surface;
 Biome for lint/format; lefthook git hooks; GitHub Actions CI and deploy.
 
