@@ -186,7 +186,9 @@ Triage the failed name before changing the baseline:
   differs; main sudoers drift also fails. Other `/etc` differences are informational.
 - **Keys / Accounts / Sudoers**: inspect both authorized key files for every
   account, including nologin ones, uid-zero/login-shell accounts, and every
-  sudoers.d file. Beacon can only
+  sudoers.d file. "sshd key sources differ" means `sudo sshd -T` reports an
+  AuthorizedKeysFile/Command, TrustedUserCAKeys or principals setting other than
+  the defaults: look for a new file in `/etc/ssh/sshd_config.d/`. Beacon can only
   restart `beacon` or `beacon.service`; paul has full sudo.
 - **SUID/SGID / Units / Loader**: investigate setuid/setgid files that are unowned
   or missing from the allowlist's exact `suid` list (dpkg does not verify modes; an

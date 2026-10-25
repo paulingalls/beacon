@@ -121,6 +121,11 @@ sys.exit(0 if any(fnmatch.fnmatchcase(x,p) for x in (r/'owned').read_text().spli
   put('bin/uname', '#!/bin/bash\necho x86_64\n', 0o755);
   put('bin/getent', '#!/bin/bash\ncat "$INTEGRITY_ROOT/passwd"\n', 0o755);
   put('bin/visudo', '#!/bin/bash\nexit 0\n', 0o755);
+  put(
+    'sshd-config',
+    'authorizedkeysfile .ssh/authorized_keys .ssh/authorized_keys2\nauthorizedkeyscommand none\ntrustedusercakeys none\nauthorizedprincipalsfile none\nauthorizedprincipalscommand none\nport 22\n',
+  );
+  put('bin/sshd', '#!/bin/bash\ncat "$INTEGRITY_ROOT/sshd-config"\n', 0o755);
   command(['git', 'init', '-qb', 'main', 'app']);
   command(['git', 'config', 'user.email', 'test@test'], join(root, 'app'));
   command(['git', 'config', 'user.name', 'test'], join(root, 'app'));

@@ -38,6 +38,18 @@ const faults: Array<[string, string, (f: Awaited<ReturnType<typeof fixture>>) =>
       ),
   ],
   [
+    'sshd key command drop-in',
+    'Keys',
+    (f) =>
+      f.put(
+        'sshd-config',
+        readFileSync(join(f.root, 'sshd-config'), 'utf8').replace(
+          'authorizedkeyscommand none',
+          'authorizedkeyscommand /var/tmp/k',
+        ),
+      ),
+  ],
+  [
     'key for a nologin account',
     'Keys',
     (f) => f.put('.ssh/authorized_keys', readFileSync(join(f.root, 'extra.pub'), 'utf8')),

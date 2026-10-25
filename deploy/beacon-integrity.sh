@@ -95,6 +95,12 @@ config() {
 }
 keys() {
   local user home file line fingerprint actual expected
+  # A root-written sshd drop-in can add key sources this loop never reads.
+  sshd -T | grep -Ei '^(authorizedkeysfile|authorizedkeyscommand|trustedusercakeys|authorizedprincipalsfile|authorizedprincipalscommand) ' |
+    sort > "$WORK/sshd-keys"
+  printf '%s\n' 'authorizedkeyscommand none' 'authorizedkeysfile .ssh/authorized_keys .ssh/authorized_keys2' \
+    'authorizedprincipalscommand none' 'authorizedprincipalsfile none' 'trustedusercakeys none' | sort > "$WORK/sshd-expected"
+  cmp -s "$WORK/sshd-keys" "$WORK/sshd-expected" || { echo "sshd key sources differ"; return 1; }
   # sshd accepts keys for any account, including nologin ones (port forwarding needs no shell).
   getent passwd | awk -F: '{print $1 ":" $6}' > "$WORK/homes"
   while IFS=: read -r user home; do
