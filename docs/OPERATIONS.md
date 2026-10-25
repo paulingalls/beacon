@@ -190,6 +190,8 @@ Triage the failed name before changing the baseline:
 - **SUID/SGID / Units / Loader**: investigate unowned privileged files, unknown
   local unit targets/drop-ins or `/etc/ld.so.preload`. Package ownership resolves
   usrmerge aliases; exact local unit exceptions live in the reviewed allowlist.
+  Generated dangling dependencies require an exact path/target pair. Runtime
+  scopes group existing processes and are excluded from the file check.
 - **Processes**: a daemon may still run a deleted binary after an upgrade.
   Confirm the upgrade and restart that daemon, then rerun the check.
 - **Checkout**: inspect status and HEAD versus stored origin/release as beacon.

@@ -246,7 +246,8 @@ A boot older than ten minutes can trigger a check during provisioning.
 Later runner/unit changes require explicit reinstall with the timer paused and
 service idle; a checkout reset cannot update `/usr/local/bin/beacon-deploy`.
 For pause, retry, manual rollback and timeout recovery see [OPERATIONS.md](./OPERATIONS.md).
-For macOS runner tests install real flock with `brew install flock`.
+For macOS runner tests install `brew install flock coreutils`; Linux fixture
+hosts also need `zip` (the checker itself only needs `unzip`).
 
 ---
 
