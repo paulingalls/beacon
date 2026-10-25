@@ -32,7 +32,7 @@ export interface BeaconConfig {
    */
   productAllowlist?: string[];
   corsOrigins?: string[];
-  postgres: { connectionString: string; maxConnections?: number };
+  postgres: { connectionString: string; maxConnections?: number; caCertPath?: string };
   /**
    * Shared secret authorizing a trusted server-to-server caller to assert per-event
    * user_id + context in the ingest body (the M2 security cornerstone). When unset,

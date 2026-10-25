@@ -2,11 +2,27 @@
 #
 # One-shot provisioning for a fresh Ubuntu 24.04 droplet, run as root:
 #
-#   ssh -i ~/.ssh/<key> root@<DROPLET_IP> 'bash -s' < scripts/provision-droplet.sh
+# Deliver scripts/ and deploy/ with git archive into root:root 0700
+# /root/beacon-provision, then run bash /root/beacon-provision/scripts/provision-droplet.sh.
+# See docs/DEPLOYMENT.md for the complete operator delivery commands.
 #
 # Rerun after Tailscale enrollment as paul with sudo; see docs/DEPLOYMENT.md.
 # Lockdown requires a logged-in, running Tailscale node.
 set -euo pipefail
+
+ASSETS=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
+for asset in beacon-deploy.sh beacon-deploy.service beacon-deploy.timer beacon.service Caddyfile beacon-integrity.sh integrity-allowlist beacon-integrity.service beacon-integrity.timer github_known_hosts; do
+  [ -f "$ASSETS/deploy/$asset" ] || { echo "Missing asset: deploy/$asset" >&2; exit 1; }
+done
+[ -n "$(find "$ASSETS" -maxdepth 0 -perm 0700 -print)" ] || {
+  echo 'Asset directory must have mode 0700' >&2; exit 1;
+}
+[ -n "$(find "$ASSETS" -maxdepth 0 -user root -print)" ] || {
+  echo 'Asset directory must be root-owned' >&2; exit 1;
+}
+# A trusted directory must not contain a link or writable descendant supplied by the app.
+unsafe=$(find "$ASSETS" \( -type l -o ! -user root -o -perm -0020 -o -perm -0002 \) -print)
+[ -z "$unsafe" ] || { echo "Unsafe asset ownership, mode or symlink: $unsafe" >&2; exit 1; }
 
 APP_USER=beacon
 APP_DIR="/home/${APP_USER}/app"
@@ -128,20 +144,22 @@ sudo -u "${APP_USER}" -H bash -lc '
 ' bash "${APP_DIR}"
 
 echo "==> external pull runner and units (timer activation is an operator step)"
-install -m 755 "${APP_DIR}/deploy/beacon-deploy.sh" /usr/local/bin/beacon-deploy
-install -m 644 "${APP_DIR}/deploy/beacon-deploy.service" /etc/systemd/system/beacon-deploy.service
-install -m 644 "${APP_DIR}/deploy/beacon-deploy.timer" /etc/systemd/system/beacon-deploy.timer
+install -m 755 "${ASSETS}/deploy/beacon-deploy.sh" /usr/local/bin/beacon-deploy
+install -m 644 "${ASSETS}/deploy/beacon-deploy.service" /etc/systemd/system/beacon-deploy.service
+install -m 644 "${ASSETS}/deploy/beacon-deploy.timer" /etc/systemd/system/beacon-deploy.timer
 
 echo "==> systemd unit + Caddyfile from the repo"
-install -m 644 "${APP_DIR}/deploy/beacon.service" /etc/systemd/system/beacon.service
-install -m 644 "${APP_DIR}/deploy/Caddyfile" /etc/caddy/Caddyfile
+install -m 644 "${ASSETS}/deploy/beacon.service" /etc/systemd/system/beacon.service
+install -m 644 "${ASSETS}/deploy/Caddyfile" /etc/caddy/Caddyfile
+install -d -o root -g root -m 755 /etc/beacon
 echo "==> root-owned integrity baseline, checker and automatic timer"
 install -d -o root -g root -m 700 /etc/beacon-integrity /var/cache/beacon-integrity
-install -o root -g root -m 755 "${APP_DIR}/deploy/beacon-integrity.sh" /usr/local/sbin/beacon-integrity
-install -o root -g root -m 600 "${APP_DIR}/deploy/integrity-allowlist" /etc/beacon-integrity/allowlist
-install -o root -g root -m 600 "${APP_DIR}/deploy/Caddyfile" /etc/beacon-integrity/Caddyfile
+install -o root -g root -m 755 "${ASSETS}/deploy/beacon-integrity.sh" /usr/local/sbin/beacon-integrity
+install -o root -g root -m 600 "${ASSETS}/deploy/integrity-allowlist" /etc/beacon-integrity/allowlist
+install -o root -g root -m 600 "${ASSETS}/deploy/Caddyfile" /etc/beacon-integrity/Caddyfile
+install -o root -g root -m 600 "${ASSETS}/deploy/github_known_hosts" /etc/beacon-integrity/known_hosts
 for unit in beacon-integrity.service beacon-integrity.timer; do
-  install -o root -g root -m 644 "${APP_DIR}/deploy/$unit" "/etc/systemd/system/$unit"
+  install -o root -g root -m 644 "${ASSETS}/deploy/$unit" "/etc/systemd/system/$unit"
 done
 sudo -u "${APP_USER}" -H bash -c 'mkdir -p "$HOME/.local/state/beacon-deploy"; touch "$HOME/.local/state/beacon-deploy/lock"'
 systemctl daemon-reload
@@ -151,7 +169,8 @@ systemctl enable --now beacon-integrity.timer
 echo
 echo "Provisioning done. REMAINING (deliberate) steps — see docs/DEPLOYMENT.md:"
 echo "  1. Create /home/${APP_USER}/.env.production (chmod 600) with real secrets:"
-echo "     DATABASE_URL, ADMIN_TOKEN, SHORT_DOMAIN (see docs/DEPLOYMENT.md)."
+echo "     DATABASE_URL, DATABASE_CA_CERT, ADMIN_TOKEN, SHORT_DOMAIN (see docs/DEPLOYMENT.md)."
+echo "     Install the managed DB CA root:root 0644 at /etc/beacon/db-ca.crt; verify the hostname first."
 echo "  2. Confirm the host in /etc/caddy/Caddyfile, then: systemctl reload caddy"
 echo "  3. sudo -u ${APP_USER} -H bash -lc 'cd ${APP_DIR} && ~/.bun/bin/bun install --frozen-lockfile --production --ignore-scripts'"
 echo "  4. sudo -u ${APP_USER} -H bash -lc 'cd ${APP_DIR} && set -a; . ~/.env.production; set +a; ~/.bun/bin/bun run migrate'"

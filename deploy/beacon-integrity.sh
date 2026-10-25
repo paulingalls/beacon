@@ -132,7 +132,20 @@ accounts() {
   [ "$actual" = "$expected" ]
 }
 sudoers() {
-  local file name actual expected
+  local file name actual expected group entry code gid members entries
+  entries=$(getent passwd)
+  for group in sudo admin; do
+    if entry=$(getent group "$group"); then
+      IFS=: read -r name _ gid members <<< "$entry"
+      [[ "$gid" =~ ^[0-9]+$ ]] && [ "$name" = "$group" ] || return 1
+      if [ -n "$members" ] || printf '%s\n' "$entries" | awk -F: -v gid="$gid" '$4 == gid {found=1} END {exit !found}'; then
+        echo "$group group has members"; return 1
+      fi
+    else
+      code=$?
+      [ "$group" = admin ] && [ "$code" -eq 2 ] || { echo "$group group inventory failed"; return 1; }
+    fi
+  done
   visudo -cf "$ROOT/etc/sudoers"
   find "$ROOT/etc/sudoers.d" -mindepth 1 -maxdepth 1 -print > "$WORK/sudo-files"
   while IFS= read -r file; do
@@ -206,8 +219,13 @@ checkout() (
   local status head release
   status=$(as_app git -C "$APP" status --porcelain)
   head=$(as_app git -C "$APP" rev-parse HEAD)
-  release=$(as_app git -C "$APP" rev-parse refs/remotes/origin/release)
-  [ -z "$status" ] && [ "$head" = "$release" ]
+  # Ignore app Git configuration and inherited transport overrides for the root lookup.
+  release=$(env -i PATH="$PATH" HOME=/root GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null \
+    GIT_TERMINAL_PROMPT=0 \
+    GIT_SSH_COMMAND="ssh -F /dev/null -i /home/beacon/.ssh/github_deploy -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile='$POLICY/known_hosts' -o GlobalKnownHostsFile=/dev/null -o ConnectTimeout=10 -o ConnectionAttempts=1" \
+    git -C "$WORK" ls-remote --exit-code git@github.com:paulingalls/beacon.git refs/heads/release)
+  [[ "$release" =~ ^([a-f0-9]{40})[[:space:]]refs/heads/release$ ]] || { echo 'Invalid authoritative release SHA'; return 1; }
+  [ -z "$status" ] && [ "$head" = "${BASH_REMATCH[1]}" ]
 )
 hash() { sha256sum "$1" | awk '{print $1}'; }
 bun_binary() {

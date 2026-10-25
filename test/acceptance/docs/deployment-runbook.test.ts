@@ -37,6 +37,7 @@ describe('docs/DEPLOYMENT.md droplet runbook', () => {
   test.each([
     'HOST',
     'DATABASE_URL',
+    'DATABASE_CA_CERT',
     'ADMIN_TOKEN',
     'SHORT_DOMAIN',
     'SHORT_LINK_CREATE_RATE_LIMIT',

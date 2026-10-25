@@ -108,6 +108,36 @@ const faults: Array<[string, string, (f: Awaited<ReturnType<typeof fixture>>) =>
     (f) => symlinkSync('/usr/bin/deleted (deleted)', join(f.root, 'proc/1/exe')),
   ],
   ['dirty checkout', 'Checkout', (f) => f.put('app/.bun-version', '1.4.4\n\n')],
+  [
+    'forged local release ref',
+    'Checkout',
+    (f) => {
+      const tree = f.command(['git', 'rev-parse', 'HEAD^{tree}'], join(f.root, 'app'));
+      const sha = f.command(
+        [
+          'git',
+          '-c',
+          'user.name=test',
+          '-c',
+          'user.email=test@test',
+          'commit-tree',
+          tree,
+          '-m',
+          'remote release',
+        ],
+        join(f.root, 'remote'),
+      );
+      f.command(['git', 'update-ref', 'refs/heads/release', sha], join(f.root, 'remote'));
+    },
+  ],
+  ['release transport failure', 'Checkout', (f) => f.put('remote-error', '')],
+  [
+    'absent release',
+    'Checkout',
+    (f) => {
+      f.command(['git', 'update-ref', '-d', 'refs/heads/release'], join(f.root, 'remote'));
+    },
+  ],
   ['changed Bun', 'Bun', (f) => f.put('bun', 'changed')],
 ];
 for (const [fault, name, inject] of faults)
@@ -162,6 +192,58 @@ test('TERM during a hung inventory leaves the service stop window for its alert'
     expect(f.alerts).toHaveLength(1);
     expect(f.alerts[0]?.text).toContain('runner aborted');
     expect(Date.now() - start).toBeLessThan(2000);
+  } finally {
+    f.close();
+  }
+});
+
+for (const group of ['sudo', 'admin']) {
+  for (const primary of [false, true]) {
+    test(`alerts for ${group} ${primary ? 'primary' : 'supplementary'} member`, async () => {
+      const f = await fixture();
+      try {
+        const gid = group === 'sudo' ? 27 : 80;
+        f.put(
+          'group',
+          `${group === 'admin' ? 'sudo:x:27:\n' : ''}${group}:x:${gid}:${primary ? '' : 'beacon'}\n`,
+        );
+        if (primary)
+          f.put(
+            'passwd',
+            readFileSync(join(f.root, 'passwd'), 'utf8').replace(
+              'beacon:x:1000:1000:',
+              `beacon:x:1000:${gid}:`,
+            ),
+          );
+        const result = await f.run();
+        expect(result.code, result.output).not.toBe(0);
+        expect(result.output).toContain('FAIL Sudoers:');
+        expect(result.output).toContain(`${group} group`);
+        expect(f.alerts).toHaveLength(1);
+        expect(f.alerts[0]?.text).toContain(`${group} group`);
+      } finally {
+        f.close();
+      }
+    });
+  }
+}
+test('authoritative remote succeeds despite a stale app tracking ref', async () => {
+  const f = await fixture();
+  try {
+    f.command(['git', 'update-ref', '-d', 'refs/remotes/origin/release'], join(f.root, 'app'));
+    const result = await f.run();
+    expect(result.code, result.output).toBe(0);
+    const args = readFileSync(join(f.root, 'ssh-args'), 'utf8');
+    for (const required of [
+      '-F /dev/null',
+      'IdentitiesOnly=yes',
+      'StrictHostKeyChecking=yes',
+      `UserKnownHostsFile=${f.root}/policy/known_hosts`,
+      'GlobalKnownHostsFile=/dev/null',
+      '/home/beacon/.ssh/github_deploy',
+      "git-upload-pack 'paulingalls/beacon.git'",
+    ])
+      expect(args).toContain(required);
   } finally {
     f.close();
   }
