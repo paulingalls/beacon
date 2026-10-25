@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.12 — 2026-10-24
+
+- Pin Bun 1.4.4 for CI, provisioning and container builds; refuse deployment on a runtime mismatch before changing the running service.
+- Upgrade Hono to 4.13.13 and Playwright to 1.64.1.
+- Bind the host server to loopback by default, with `HOST` overriding the address and the Docker image listening on all container interfaces.
+- Run CI and local tests on Postgres 17; authenticate CI service pulls to Docker Hub.
+
+The SDK, client, and server manifests all declare version `0.2.12`. SDK and client behavior is unchanged.
+
 ## 0.2.11 — 2026-10-24
 
 - Short-link click events retain only `code` in properties to avoid copying destination bearer credentials into analytics. Click events already stored are not rewritten.
