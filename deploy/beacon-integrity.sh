@@ -156,21 +156,21 @@ units() {
     case "$path" in /run/systemd/transient/*.scope) continue ;; esac
     if [ -L "$file" ]; then
       target=$(readlink "$file")
-      case "$target" in /*) resolved=$ROOT$target ;; *) resolved=$(dirname "$file")/$target ;; esac
-      if ! path=$(realpath -e "$resolved" 2>/dev/null); then
-        # systemd permits dangling dependency links. Approve exact reviewed pairs.
-        expected=$(jq -er --arg path "${file#"$ROOT"}" '.links[$path]' "$POLICY/allowlist")
+      # systemd permits dangling dependencies and masks. Review exact pairs.
+      expected=$(jq -r --arg path "$path" '.links[$path] // ""' "$POLICY/allowlist")
+      if [ -n "$expected" ]; then
         [ "$target" = "$expected" ]
         continue
       fi
-      path=${path#"$ROOT"}
+      case "$target" in /*) resolved=$ROOT$target ;; *) resolved=$(dirname "$file")/$target ;; esac
+      path=$(realpath -e "$resolved"); path=${path#"$ROOT"}
       # Packaged masks point at /dev/null, which is not itself package-owned.
       owned "${file#"$ROOT"}" && continue
       status=$?; [ "$status" -eq 1 ] || return 2
     fi
     owned "$path" && continue
     status=$?; [ "$status" -eq 1 ] || return 2
-    jq -e --arg path "$path" '.units | index($path) != null' "$POLICY/allowlist" >/dev/null || { echo "unapproved $path"; return 1; }
+    jq -e --arg path "$path" '.units | index($path) != null' "$POLICY/allowlist" >/dev/null || { echo "unapproved $path from ${file#"$ROOT"}"; return 1; }
   done < "$WORK/units"
 }
 loader() { [ ! -e "$ROOT/etc/ld.so.preload" ] && [ ! -L "$ROOT/etc/ld.so.preload" ]; }

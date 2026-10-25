@@ -41,6 +41,7 @@
     "/run/systemd/system/systemd-networkd-wait-online.service.d/10-netplan.conf"
   ],
   "links": {
-    "/run/systemd/generator/multi-user.target.wants/systemd-networkd.service": "../systemd-networkd.service"
+    "/run/systemd/generator/multi-user.target.wants/systemd-networkd.service": "../systemd-networkd.service",
+    "/usr/lib/systemd/system/screen-cleanup.service": "/dev/null"
   }
 }

@@ -82,6 +82,7 @@ export async function fixture() {
     join(root, 'run/systemd/generator/multi-user.target.wants/systemd-networkd.service'),
   );
   put('dev/null', '');
+  symlinkSync('/dev/null', join(root, 'usr/lib/systemd/system/screen-cleanup.service'));
   symlinkSync('/dev/null', join(root, 'usr/lib/systemd/system/masked.service'));
   symlinkSync(
     '/usr/lib/systemd/system/owned.service',
