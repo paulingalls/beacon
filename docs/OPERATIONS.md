@@ -100,9 +100,9 @@ install or migration failure. Migrations are additive and never reverted.
 For runtime repair, read the pin from the fetched release, as beacon, while paused:
 
 ```bash
-cd /home/beacon/app
 sudo -u beacon -H bash <<'APP'
-set -o pipefail
+cd /home/beacon/app
+set -eo pipefail
 git fetch origin '+refs/heads/release:refs/remotes/origin/release'
 curl -fsSL https://bun.sh/install | bash -s "bun-v$(git show origin/release:.bun-version)"
 ~/.bun/bin/bun --version
@@ -122,6 +122,7 @@ Manual rollback with timer paused and service idle:
 
 ```bash
 sudo -u beacon -H bash <<'APP'
+set -e
 cd /home/beacon/app
 git fetch origin '+refs/heads/release:refs/remotes/origin/release'
 mkdir -p ~/.local/state/beacon-deploy
@@ -160,7 +161,7 @@ The lead installs a sending-only Resend key, verified sender and Paul's recipien
 in `/etc/beacon-integrity/alert.env`, owned root:root, mode 0600 (directory 0700):
 
 ```bash
-sudo install -o root -g root -m 600 /dev/null /etc/beacon-integrity/alert.env
+sudo test -e /etc/beacon-integrity/alert.env || sudo install -o root -g root -m 600 /dev/null /etc/beacon-integrity/alert.env
 sudoedit /etc/beacon-integrity/alert.env
 # Shell assignments; quote addresses containing spaces or angle brackets:
 # RESEND_API_KEY=...

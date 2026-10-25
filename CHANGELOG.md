@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.14 — 2026-10-24
+
+- Separate full-sudo operator `paul` from the SSH-disabled app user, whose only sudo permission restarts Beacon. Preserve rotated operator keys on provisioning reruns.
+- Install a weekly/boot host integrity timer with eleven named checks and a root-owned baseline; send drift and aborted-run alerts directly through Resend. Alert credentials require operator setup.
+
+The SDK, client, and server manifests all declare version `0.2.14`. SDK and client behavior is unchanged.
+
 ## 0.2.13 — 2026-10-24
 
 - Publish CI-gated releases for a minute droplet timer to pull; remove inbound GitHub SSH deployment. Reject off-main releases and automatic downgrades, serialize deploys, and suppress repeated failed targets.

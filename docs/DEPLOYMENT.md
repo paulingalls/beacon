@@ -228,7 +228,7 @@ boot commit; failed-run email is the deployment alarm. Keep those notifications 
 
 `main` holds releases; integration happens on `develop`. GitHub has no inbound
 access to the droplet. The droplet's GitHub key is read-only. Deploying code still
-permits execution as `beacon`, which has passwordless sudo.
+permits execution as `beacon`, whose passwordless sudo only restarts the app.
 
 After the first healthy boot, verify the gated release exists as beacon and
 activate pulls as paul:
