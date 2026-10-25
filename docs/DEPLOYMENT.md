@@ -118,7 +118,7 @@ is enabled automatically; the pull timer requires explicit operator activation.
 ```bash
 set -euo pipefail
 git fetch origin main
-git archive origin/main scripts deploy | ssh -i ~/.ssh/<maintenance-key> root@<droplet-ip> \
+git -c tar.umask=0022 archive origin/main scripts deploy | ssh -i ~/.ssh/<maintenance-key> root@<droplet-ip> \
   'rm -rf /root/beacon-provision && install -d -o root -g root -m 0700 /root/beacon-provision && tar -x -C /root/beacon-provision'
 # Run only after successful delivery:
 ssh -i ~/.ssh/<maintenance-key> root@<droplet-ip> 'bash /root/beacon-provision/scripts/provision-droplet.sh'
@@ -127,7 +127,8 @@ ssh -i ~/.ssh/<maintenance-key> root@<droplet-ip> 'bash /root/beacon-provision/s
 The physical asset directory must be root-owned mode 0700; required assets must
 exist, and descendants must be root-owned, free of symlinks and unwritable by
 group/other. Refusal precedes host changes. Root never installs assets from the
-beacon-writable checkout. Archive delivery from the operator's reviewed source
+beacon-writable checkout. The explicit archive mask removes Git's default
+group-write bits so the trusted bundle satisfies the guard. Archive delivery from the operator's reviewed source
 is the trust boundary; never archive on the app host.
 
 The first clone fails until the printed public key is registered read-only:
@@ -154,7 +155,7 @@ ssh beacon 'sudo systemctl stop beacon-deploy.timer; systemctl status beacon-dep
 # Wait until the service is idle, then deliver from the operator workstation:
 set -euo pipefail
 git fetch origin main
-git archive origin/main scripts deploy | ssh beacon \
+git -c tar.umask=0022 archive origin/main scripts deploy | ssh beacon \
   'sudo rm -rf /root/beacon-provision && sudo install -d -o root -g root -m 0700 /root/beacon-provision && sudo tar -x -C /root/beacon-provision'
 # Run only after successful delivery:
 ssh beacon 'sudo bash /root/beacon-provision/scripts/provision-droplet.sh'
@@ -209,8 +210,7 @@ on the existing host. Old code ignores the new variable. From the workstation:
 ```bash
 doctl --context default databases get-ca 9785744c-ed60-4075-9a2f-9d65247982ab --no-header > /tmp/beacon-db-ca.crt
 openssl x509 -in /tmp/beacon-db-ca.crt -noout -subject -dates
-scp /tmp/beacon-db-ca.crt beacon:/tmp/beacon-db-ca.crt
-ssh beacon 'sudo install -d -o root -g root -m 0755 /etc/beacon && sudo install -o root -g root -m 0644 /tmp/beacon-db-ca.crt /etc/beacon/db-ca.crt && rm /tmp/beacon-db-ca.crt'
+ssh beacon 'sudo install -d -o root -g root -m 0755 /etc/beacon && sudo tee /etc/beacon/db-ca.crt.next >/dev/null && sudo chown root:root /etc/beacon/db-ca.crt.next && sudo chmod 0644 /etc/beacon/db-ca.crt.next && sudo mv /etc/beacon/db-ca.crt.next /etc/beacon/db-ca.crt' < /tmp/beacon-db-ca.crt
 ```
 
 Add `DATABASE_CA_CERT=/etc/beacon/db-ca.crt` to `/home/beacon/.env.production`.

@@ -230,7 +230,7 @@ ssh beacon 'sudo systemctl stop beacon-deploy.timer; systemctl status beacon-dep
 # Wait for idle. On the operator workstation:
 set -euo pipefail
 git fetch origin main
-git archive origin/main scripts deploy | ssh beacon \
+git -c tar.umask=0022 archive origin/main scripts deploy | ssh beacon \
   'sudo rm -rf /root/beacon-provision && sudo install -d -o root -g root -m 0700 /root/beacon-provision && sudo tar -x -C /root/beacon-provision'
 # Execute only after successful delivery:
 ssh beacon 'sudo bash /root/beacon-provision/scripts/provision-droplet.sh'
