@@ -1,0 +1,69 @@
+{
+  "keys": {
+    "root": [],
+    "beacon": [],
+    "paul": [
+      "SHA256:WinDDgEVbllrw7W1TuPfxM2k+SNTZZzcGtSZuwFUFVc"
+    ]
+  },
+  "uid0": [
+    "root"
+  ],
+  "logins": [
+    "beacon",
+    "paul",
+    "root"
+  ],
+  "sudoers": {
+    "90-cloud-init-users": [
+      "root ALL=(ALL) NOPASSWD:ALL"
+    ],
+    "README": [],
+    "beacon": [
+      "beacon ALL=(root) NOPASSWD: /usr/bin/systemctl restart beacon, /usr/bin/systemctl restart beacon.service"
+    ],
+    "paul": [
+      "paul ALL=(ALL) NOPASSWD:ALL"
+    ]
+  },
+  "units": [
+    "/etc/systemd/system/beacon.service",
+    "/etc/systemd/system/beacon-deploy.service",
+    "/etc/systemd/system/beacon-deploy.timer",
+    "/etc/systemd/system/beacon-integrity.service",
+    "/etc/systemd/system/beacon-integrity.timer",
+    "/etc/systemd/system/vpc-peering.service",
+    "/run/systemd/system/netplan-ovs-cleanup.service",
+    "/run/systemd/generator/-.mount",
+    "/run/systemd/generator/boot.mount",
+    "/run/systemd/generator/boot-efi.mount",
+    "/run/systemd/generator/netplan.stamp",
+    "/run/systemd/system/systemd-networkd-wait-online.service.d/10-netplan.conf"
+  ],
+  "links": {
+    "/run/systemd/generator/multi-user.target.wants/systemd-networkd.service": "../systemd-networkd.service",
+    "/usr/lib/systemd/system/screen-cleanup.service": "/dev/null"
+  },
+  "suid": [
+    "/usr/bin/chage",
+    "/usr/bin/chfn",
+    "/usr/bin/chsh",
+    "/usr/bin/crontab",
+    "/usr/bin/expiry",
+    "/usr/bin/fusermount3",
+    "/usr/bin/gpasswd",
+    "/usr/bin/mount",
+    "/usr/bin/newgrp",
+    "/usr/bin/passwd",
+    "/usr/bin/ssh-agent",
+    "/usr/bin/su",
+    "/usr/bin/sudo",
+    "/usr/bin/umount",
+    "/usr/lib/dbus-1.0/dbus-daemon-launch-helper",
+    "/usr/lib/openssh/ssh-keysign",
+    "/usr/lib/polkit-1/polkit-agent-helper-1",
+    "/usr/lib/x86_64-linux-gnu/utempter/utempter",
+    "/usr/sbin/pam_extrausers_chkpwd",
+    "/usr/sbin/unix_chkpwd"
+  ]
+}

@@ -1,0 +1,10 @@
+[Unit]
+Description=Weekly and boot Beacon host integrity check
+
+[Timer]
+OnCalendar=Mon *-*-* 12:00:00 UTC
+OnBootSec=10min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -16,20 +16,20 @@ cluster, reached over the VPC private network.
 Use your workstation-only maintenance key with OpenSSH over the tailnet:
 
 ```bash
-ssh beacon            # configure this alias as beacon@beacon-prod over Tailscale
+ssh beacon            # configure this alias as paul@beacon-prod over Tailscale
 sudo -n true
 ```
 
 Root SSH and public TCP 22 are disabled after cut-over. `beacon-prod` has
 `tag:beacon`; Paul's ACL allows autogroup:admin TCP 22. UFW allows incoming
 `tailscale0`, 80 and 443. DO `beacon-fw` also closes public 22. Keep the DO
-console as break-glass; verify a second tailnet SSH/sudo session before access
+console as break-glass; verify a fresh paul tailnet SSH/sudo session before access
 changes. For a rebuilt host run `sudo tailscale up --hostname=beacon-prod`,
 approve its tag and verify access before the provisioner's enrolled rerun:
 `ssh beacon 'sudo bash -s' < scripts/provision-droplet.sh`.
 
-The app lives in `~/app`; secrets are `~/.env.production` (chmod 600).
-The droplet's `~/.ssh/github_deploy` is a separate read-only GitHub key.
+The app lives in `/home/beacon/app`; secrets are `/home/beacon/.env.production` (chmod 600).
+The droplet's `/home/beacon/.ssh/github_deploy` is a separate read-only GitHub key.
 
 ---
 
@@ -90,7 +90,7 @@ sudo systemctl start beacon-deploy.timer
 
 Stopping the timer does not cancel an active deploy. Disabling the GitHub
 workflow does not stop a release already published. Never unlink the live lock
-at `~/.local/state/beacon-deploy/lock`. `last-failed` in that directory suppresses
+at `/home/beacon/.local/state/beacon-deploy/lock`. `last-failed` in that directory suppresses
 retries of the same SHA; a newer release supersedes it. A skip exits 0, so the
 next tick clears failed unit status; the marker and journal remain evidence.
 
@@ -100,31 +100,36 @@ install or migration failure. Migrations are additive and never reverted.
 For runtime repair, read the pin from the fetched release, as beacon, while paused:
 
 ```bash
-cd ~/app
-set -o pipefail
+sudo -u beacon -H bash <<'APP'
+cd /home/beacon/app
+set -eo pipefail
 git fetch origin '+refs/heads/release:refs/remotes/origin/release'
 curl -fsSL https://bun.sh/install | bash -s "bun-v$(git show origin/release:.bun-version)"
 ~/.bun/bin/bun --version
+APP
 ```
 
 After fixing the cause, retry through the runner (not the restored old checkout):
 
 ```bash
-rm ~/.local/state/beacon-deploy/last-failed
+sudo -u beacon rm /home/beacon/.local/state/beacon-deploy/last-failed
 sudo systemctl start beacon-deploy.service
 curl -fsS https://beacon.vodshorter.com/health  # verify expected commit
 sudo systemctl start beacon-deploy.timer
 ```
 
-Manual rollback, as beacon with timer paused and service idle:
+Manual rollback with timer paused and service idle:
 
 ```bash
-cd ~/app
+sudo -u beacon -H bash <<'APP'
+set -e
+cd /home/beacon/app
 git fetch origin '+refs/heads/release:refs/remotes/origin/release'
 mkdir -p ~/.local/state/beacon-deploy
 git rev-parse origin/release > ~/.local/state/beacon-deploy/last-failed
 git reset --hard <good-sha>
 bash scripts/deploy.sh
+APP
 curl -fsS https://beacon.vodshorter.com/health  # verify good-sha, not just status
 # Resume deliberately once healthy:
 sudo systemctl start beacon-deploy.timer
@@ -136,7 +141,7 @@ deploy.sh restores that bad release: inspect health.commit before resuming.
 
 A timeout, reboot or kill can leave HEAD equal to release while the old process
 still serves. Ticks then skip and the workflow poll fails. Inspect the journal,
-run `cd ~/app && bash scripts/deploy.sh` deliberately while paused, and verify
+run `sudo -u beacon -H bash -lc 'cd /home/beacon/app && bash scripts/deploy.sh'` deliberately while paused, and verify
 health.commit. Canceling GitHub does not stop an on-droplet deploy.
 
 The runner and units live outside the checkout. After changing them, pause and
@@ -145,11 +150,82 @@ DEPLOYMENT.md and run `sudo systemctl daemon-reload` before resuming.
 
 ---
 
+## Integrity checks and alerts
+
+`beacon-integrity.timer` is enabled by provisioning: Monday 12:00 UTC and ten
+minutes after boot, with missed calendar runs persisted. It runs as root, using
+`/usr/local/sbin/beacon-integrity`, `/etc/beacon-integrity/{allowlist,Caddyfile}`
+and `/var/cache/beacon-integrity`. The app cannot rewrite this baseline.
+
+The lead installs a sending-only Resend key, verified sender and Paul's recipient
+in `/etc/beacon-integrity/alert.env`, owned root:root, mode 0600 (directory 0700):
+
+```bash
+sudo test -e /etc/beacon-integrity/alert.env || sudo install -o root -g root -m 600 /dev/null /etc/beacon-integrity/alert.env
+sudoedit /etc/beacon-integrity/alert.env
+# Shell assignments; quote addresses containing spaces or angle brackets:
+# RESEND_API_KEY=...
+# ALERT_FROM='Beacon <verified-sender@example.com>'
+# ALERT_TO=paul@example.com
+sudo systemctl start beacon-integrity.service
+sudo journalctl -u beacon-integrity -n 100 --no-pager
+systemctl list-timers beacon-integrity.timer
+```
+
+Provisioning preserves this file on rerun. Without valid settings, failures
+cannot notify Paul. A failed run sends one email with host, UTC time and named
+failures. `Alert accepted: <id>` means Resend accepted the request; verify actual
+receipt during installation. `Alert delivery FAILED` requires checking the key,
+verified sender, recipient, provider status and outbound HTTPS immediately.
+A malformed baseline or a service timeout also attempts an alert. Power loss,
+SIGKILL and an unreadable alert config cannot deliver one.
+
+Triage the failed name before changing the baseline:
+
+- **Packages / Config**: a packaged file outside `/etc` or the reviewed Caddyfile
+  differs; main sudoers drift also fails. Other `/etc` differences are informational.
+- **Keys / Accounts / Sudoers**: inspect both authorized key files for every
+  account, including nologin ones, uid-zero/login-shell accounts, and every
+  sudoers.d file. "sshd key sources differ" means `sudo sshd -T` reports an
+  AuthorizedKeysFile/Command, TrustedUserCAKeys or principals setting other than
+  the defaults: look for a new file in `/etc/ssh/sshd_config.d/`. Beacon can only
+  restart `beacon` or `beacon.service`; paul has full sudo.
+- **SUID/SGID / Units / Loader**: investigate setuid/setgid files that are unowned
+  or missing from the allowlist's exact `suid` list (dpkg does not verify modes; an
+  upgrade that adds one needs a reviewed list update), unknown local unit
+  targets/drop-ins or `/etc/ld.so.preload`. Package ownership resolves
+  usrmerge aliases; exact local unit exceptions live in the reviewed allowlist.
+  Generated dangling dependencies require an exact path/target pair. Runtime
+  scopes group existing processes and are excluded from the file check.
+- **Processes**: a daemon may still run a deleted binary after an upgrade.
+  Confirm the upgrade and restart that daemon, then rerun the check.
+- **Checkout**: inspect status and HEAD versus stored origin/release as beacon.
+  The check waits for the deploy lock, never fetches, resets or cleans.
+- **Bun**: compare the pin/installed runtime with the official Linux release.
+  The root cache keys binary digests by version and asset, after verifying the zip.
+
+For deliberate key rotation, preserve a working paul session, install the new
+key, prove a fresh login/sudo session, then remove the revoked key. Commit the
+new SHA256 fingerprint in `deploy/integrity-allowlist`; root/beacon expect no keys.
+Reruns seed paul only when his authorized_keys is empty and root's is nonempty.
+
+To update installed integrity artifacts, pause pulls and wait for idle, review
+the checkout, then run from the workstation:
+
+```bash
+ssh beacon 'sudo bash -s' < scripts/provision-droplet.sh
+ssh beacon 'sudo systemctl start beacon-integrity.service'
+```
+
+Inspect all eleven verdicts and service exit status before resuming pulls. The
+rerun also reapplies Caddyfile and access policy; keep DO console access and
+verify a fresh paul session before lockdown.
+
 ## When things get weird
 
 ### `/health` fails / 502 from Caddy
 - `systemctl is-active beacon` — if not active: `sudo journalctl -u beacon -n 100`.
-- Common cause: a bad deploy. Check `git -C ~/app log -1` and roll back (above).
+- Common cause: a bad deploy. Check `sudo -u beacon -H git -C /home/beacon/app log -1` and roll back (above).
 - Caddy up but app down → 502s; the app restarting for a few seconds is normal
   during a deploy.
 
@@ -173,7 +249,7 @@ ssh beacon "timeout 5 bash -c 'cat </dev/null >/dev/tcp/<private-db-host>/25060'
 ### Migrations didn't apply
 ```bash
 ssh beacon
-cd ~/app && set -a; . ~/.env.production; set +a; ~/.bun/bin/bun run migrate
+sudo -u beacon -H bash -lc 'cd /home/beacon/app && set -a; . ~/.env.production; set +a; ~/.bun/bin/bun run migrate'
 ```
 Idempotent + advisory-locked; safe to re-run. `permission denied for schema
 public` ⇒ the GRANT in DEPLOYMENT.md §1b was never applied.
@@ -188,7 +264,7 @@ public` ⇒ the GRANT in DEPLOYMENT.md §1b was never applied.
 ### Rotate `ADMIN_TOKEN`
 ```bash
 ssh beacon
-# edit ADMIN_TOKEN in ~/.env.production, then:
+# edit ADMIN_TOKEN in /home/beacon/.env.production, then:
 sudo systemctl restart beacon
 ```
 
@@ -200,7 +276,7 @@ per-event `user_id`/`context` on the ingest boundary (M2). Rotate it on both end
 ```bash
 NEW=$(openssl rand -hex 32)
 ssh beacon
-# set TRUSTED_INGEST_TOKEN=$NEW in ~/.env.production, then:
+# set TRUSTED_INGEST_TOKEN=$NEW in /home/beacon/.env.production, then:
 sudo systemctl restart beacon
 # then roll the same value on the trusted caller's config.
 ```
@@ -217,8 +293,8 @@ ignores the body-asserted `user_id`/`context` and falls back to the anonymous pa
 |---|---|
 | URL | https://beacon.vodshorter.com |
 | Droplet | `beacon`, `165.232.141.200`, sfo3 |
-| App dir | `~/app` (user `beacon`) |
-| Env file | `~/.env.production` (DATABASE_URL, ADMIN_TOKEN, TRUSTED_INGEST_TOKEN, SHORT_DOMAIN) |
+| App dir | `/home/beacon/app` (user `beacon`) |
+| Env file | `/home/beacon/.env.production` (DATABASE_URL, ADMIN_TOKEN, TRUSTED_INGEST_TOKEN, SHORT_DOMAIN) |
 | Port | `8080` (behind Caddy) |
 | DB | `beacon_prod` on `simplyhuman-db` (VPC private host, `sslmode=require`) |
 | Autodeploy | merge to `main` → `.github/workflows/deploy.yml` |
