@@ -158,6 +158,7 @@ systemctl enable --now beacon
 |---|---|---|
 | `DATABASE_URL` | yes | Postgres connection string; use TLS for managed Postgres. Host fails fast if unset. |
 | `PORT` | no | HTTP port (default `8080`); also used by the container HEALTHCHECK. |
+| `HOST` | no | Listen address: default `127.0.0.1` on the host, `0.0.0.0` in the Docker image; set explicitly to override. Host Caddy proxies to `localhost:8080`. |
 | `RETENTION_DAYS` | optional | Unset or 0 = disabled. Positive finite decimal days enable pruning; invalid or unrepresentable cutoff values fail startup before resources are created. |
 | `ADMIN_TOKEN` | set in prod | Bearer token gating dashboard + query API. **Unset ⇒ those surfaces fail closed (403).** |
 | `REFERRER_MODE` | unset (`raw`) | Optional `raw`, `origin`, or `origin-and-path`. Server policy for all newly stored referrers, including trusted ingest, track, and short-link clicks. Scrubbing omits invalid or non-HTTP(S) referrers and removes credentials, query, and fragment. Landing-URL attribution is unchanged. Invalid modes fail startup. |

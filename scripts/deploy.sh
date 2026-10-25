@@ -25,6 +25,17 @@ HEALTH_RETRIES="${HEALTH_RETRIES:-20}"
 
 cd "$APP_DIR"
 
+EXPECTED_BUN="$(cat .bun-version)"
+if [ -z "$EXPECTED_BUN" ]; then
+  echo "Bun version pin .bun-version is empty" >&2
+  exit 1
+fi
+ACTUAL_BUN="$("$BUN" --version)"
+if [ "$ACTUAL_BUN" != "$EXPECTED_BUN" ]; then
+  echo "Bun version mismatch: expected $EXPECTED_BUN, actual $ACTUAL_BUN; deployment refused" >&2
+  exit 1
+fi
+
 # Where we'd roll back to: the commit HEAD pointed at before ~/deploy.sh reset it.
 PREV="$(git rev-parse 'HEAD@{1}' 2>/dev/null || git rev-parse HEAD)"
 HEAD_NOW="$(git rev-parse --short HEAD)"

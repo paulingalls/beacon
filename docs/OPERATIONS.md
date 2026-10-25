@@ -87,6 +87,20 @@ codes: `0` healthy, `1` rolled back and healthy (investigate the bad commit), `2
 rollback also unhealthy — **manual intervention** (see below). Migrations are
 forward-only and are NOT reverted, so a breaking migration can't be auto-recovered.
 
+Before deployment, `scripts/deploy.sh` compares `$BUN --version` with the
+checked-out `.bun-version`. A mismatch refuses deployment with both versions,
+before installing dependencies, migrating or restarting; the running service stays
+up. This exit 1 is a preflight refusal, distinct from exit 1 after a healthy rollback.
+Install the checked-out pin as the beacon user, verify it, then retry deployment:
+
+```bash
+cd ~/app
+set -o pipefail
+curl -fsSL https://bun.sh/install | bash -s "bun-v$(cat .bun-version)"
+~/.bun/bin/bun --version
+bash scripts/deploy.sh
+```
+
 Manual rollback to a known-good commit:
 
 ```bash
