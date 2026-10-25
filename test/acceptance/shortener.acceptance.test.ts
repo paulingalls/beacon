@@ -67,32 +67,45 @@ describe.skipIf(!TEST_DB)('shortener acceptance — real HTTP traffic', () => {
   }
 
   /** The short_link_click row for one code (scoped by code so tests don't collide). */
-  function clickRow(code: string): Promise<{ product_id: string; code: string; dest: string }[]> {
-    return sql<{ product_id: string; code: string; dest: string }[]>`
-      SELECT product_id, properties->>'code' AS code, properties->>'destination' AS dest
+  function clickRow(code: string) {
+    return sql<
+      {
+        product_id: string;
+        properties: Record<string, unknown>;
+        attribution: Record<string, unknown>;
+      }[]
+    >`
+      SELECT product_id, properties, attribution
       FROM beacon_events
       WHERE event_type = 'short_link_click' AND properties->>'code' = ${code}`;
   }
 
   test('admin POST /short → 201, visitor GET /:code → 302, and a short_link_click lands after flush', async () => {
+    const destination = `https://example.com/invitations/${'ab'.repeat(32)}`;
     const created = await postShort({
-      destination: 'https://example.com/landing',
+      destination,
       product_id: 'promo',
+      campaign: { utm_source: 'twitter', launch: 'spring' },
     });
     expect(created.status).toBe(201);
     const link = (await created.json()) as { code: string; url: string };
     expect(link.code).toBeTruthy();
     expect(link.url).toBe(`${SHORT_DOMAIN}/${link.code}`);
 
-    const redirect = await getCode(link.code);
+    const redirect = await getCode(`${link.code}?utm_source=fromurl&utm_medium=email`);
     expect(redirect.status).toBe(302);
-    expect(redirect.headers.get('location')).toBe('https://example.com/landing');
+    expect(redirect.headers.get('location')).toBe(destination);
 
     await beacon.flush();
     const rows = await clickRow(link.code);
     expect(rows).toHaveLength(1);
     expect(rows[0]?.product_id).toBe('promo'); // product_id from the LINK, not the Beacon
-    expect(rows[0]?.dest).toBe('https://example.com/landing');
+    expect(rows[0]?.properties).toEqual({ code: link.code });
+    expect(rows[0]?.attribution).toEqual({
+      utm_source: 'twitter',
+      utm_medium: 'email',
+      launch: 'spring',
+    });
   }, 15_000);
 
   test('createShortLink() (programmatic, no HTTP) yields a code that redirects + logs a click over the wire', async () => {
@@ -109,7 +122,7 @@ describe.skipIf(!TEST_DB)('shortener acceptance — real HTTP traffic', () => {
     await beacon.flush();
     const rows = await clickRow(link.code);
     expect(rows).toHaveLength(1);
-    expect(rows[0]?.dest).toBe('https://example.com/api-made');
+    expect(rows[0]?.properties).toEqual({ code: link.code });
   }, 15_000);
 
   test('an unknown code returns a 404 page (no redirect, no event)', async () => {
