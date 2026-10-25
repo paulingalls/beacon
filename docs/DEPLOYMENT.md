@@ -204,8 +204,8 @@ running Caddy), install, migrate, and start:
 
 ```bash
 sudo systemctl reload caddy   # picks up deploy/Caddyfile → obtains the TLS cert
-sudo -u beacon -H bash -lc 'cd ~/app && ~/.bun/bin/bun install --frozen-lockfile --production --ignore-scripts'
-sudo -u beacon -H bash -lc 'cd ~/app && set -a; . ~/.env.production; set +a; ~/.bun/bin/bun run migrate'
+sudo -u beacon -H bash -lc 'cd ~/app && ~/.bun/bin/bun install --no-env-file --frozen-lockfile --production --ignore-scripts'
+sudo -u beacon -H bash -lc 'cd ~/app && set -a; . ~/.env.production; set +a; ~/.bun/bin/bun --no-env-file run apps/server/src/storage/migrate.ts'
 sudo systemctl enable --now beacon
 ```
 

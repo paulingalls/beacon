@@ -172,8 +172,8 @@ echo "  1. Create /home/${APP_USER}/.env.production (chmod 600) with real secret
 echo "     DATABASE_URL, DATABASE_CA_CERT, ADMIN_TOKEN, SHORT_DOMAIN (see docs/DEPLOYMENT.md)."
 echo "     Install the managed DB CA root:root 0644 at /etc/beacon/db-ca.crt; verify the hostname first."
 echo "  2. Confirm the host in /etc/caddy/Caddyfile, then: systemctl reload caddy"
-echo "  3. sudo -u ${APP_USER} -H bash -lc 'cd ${APP_DIR} && ~/.bun/bin/bun install --frozen-lockfile --production --ignore-scripts'"
-echo "  4. sudo -u ${APP_USER} -H bash -lc 'cd ${APP_DIR} && set -a; . ~/.env.production; set +a; ~/.bun/bin/bun run migrate'"
+echo "  3. sudo -u ${APP_USER} -H bash -lc 'cd ${APP_DIR} && ~/.bun/bin/bun install --no-env-file --frozen-lockfile --production --ignore-scripts'"
+echo "  4. sudo -u ${APP_USER} -H bash -lc 'cd ${APP_DIR} && set -a; . ~/.env.production; set +a; ~/.bun/bin/bun --no-env-file run apps/server/src/storage/migrate.ts'"
 echo "  5. systemctl enable --now beacon && curl -sf http://localhost:8080/health"
 
 if [ ! -s /etc/beacon-integrity/alert.env ]; then
