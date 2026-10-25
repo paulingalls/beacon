@@ -35,6 +35,8 @@ describe('docs/DEPLOYMENT.md droplet runbook', () => {
     'DATABASE_URL',
     'ADMIN_TOKEN',
     'SHORT_DOMAIN',
+    'SHORT_LINK_CREATE_RATE_LIMIT',
+    'SHORT_LINK_CREATE_RATE_WINDOW_MS',
     'TRUSTED_INGEST_TOKEN',
     'IP_MODE',
     'REFERRER_MODE',

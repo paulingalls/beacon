@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.10 — 2026-10-24
+
+- Configure authenticated short-link creation limits with `SHORT_LINK_CREATE_RATE_LIMIT` and `SHORT_LINK_CREATE_RATE_WINDOW_MS`; defaults remain 100 creations per hour.
+- Reject invalid rate settings at startup, naming the variable before opening Postgres.
+
+The SDK, client, and server manifests all declare version `0.2.10`. SDK and client behavior is unchanged.
+
 ## 0.2.9 — 2026-10-12
 
 - Restore normal browser client flushes without an injected fetch by binding the default fetch to its global receiver.

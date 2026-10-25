@@ -7,9 +7,9 @@ import { createBeacon } from './createBeacon';
 import { buildServer } from './server';
 
 // Smoke test for the first-party host app (sprint-012 story-001). Boots the app via
-// buildServer (no port bind — Hono apps are directly fetchable) and exercises the four
-// surfaces it serves plus the DB-free /health probe. DB-gated like the rest of the
-// integration suite: the bunfig preload resolves TEST_DATABASE_URL before this evaluates.
+// buildServer and exercises the four surfaces it serves plus the DB-free /health probe.
+// DB-gated like the rest of the integration suite: the bunfig preload resolves
+// TEST_DATABASE_URL before this evaluates.
 registerDbCoverageGuard();
 
 const ADMIN_TOKEN = 'test-admin-secret';
@@ -37,6 +37,63 @@ describe.skipIf(!TEST_DB)('apps/server host', () => {
 
   afterAll(async () => {
     await Promise.all(built.map((beacon) => beacon.shutdown()));
+  });
+
+  async function withShortener(
+    env: Record<string, string>,
+    check: (post: () => Promise<Response>) => Promise<void>,
+  ) {
+    const { app } = build({ DATABASE_URL: TEST_DB, ADMIN_TOKEN, ...env });
+    const socket = Bun.serve({ port: 0, fetch: app.fetch });
+    try {
+      await check(() =>
+        fetch(`http://localhost:${socket.port}/short`, {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${ADMIN_TOKEN}`,
+            'content-type': 'application/json',
+          },
+          body: JSON.stringify({
+            destination: 'https://example.com/landing',
+            product_id: 'beacon',
+          }),
+        }),
+      );
+    } finally {
+      await socket.stop(true);
+    }
+  }
+
+  test('SHORT_LINK_CREATE_RATE_LIMIT caps authenticated creates with Retry-After', async () => {
+    await withShortener({ SHORT_LINK_CREATE_RATE_LIMIT: ' 2 ' }, async (post) => {
+      expect((await post()).status).toBe(201);
+      expect((await post()).status).toBe(201);
+      const limited = await post();
+      expect(limited.status).toBe(429);
+      expect(((await limited.json()) as { error: { code: string } }).error.code).toBe(
+        'RATE_LIMITED',
+      );
+      expect(Number(limited.headers.get('retry-after'))).toBeGreaterThan(0);
+    });
+  });
+
+  test('SHORT_LINK_CREATE_RATE_WINDOW_MS lets a caller create again after the window', async () => {
+    await withShortener(
+      { SHORT_LINK_CREATE_RATE_LIMIT: '1', SHORT_LINK_CREATE_RATE_WINDOW_MS: ' 200 ' },
+      async (post) => {
+        expect((await post()).status).toBe(201);
+        expect((await post()).status).toBe(429);
+        await Bun.sleep(250);
+        expect((await post()).status).toBe(201);
+      },
+    );
+  });
+
+  test('unset short-link create limit allows 100 creates then refuses request 101', async () => {
+    await withShortener({}, async (post) => {
+      for (let i = 0; i < 100; i++) expect((await post()).status).toBe(201);
+      expect((await post()).status).toBe(429);
+    });
   });
 
   test('GET /health answers 200 without touching Postgres', async () => {
@@ -283,4 +340,35 @@ for (const value of ['0', ' 0.5 ', '1e0', '100000000']) {
       clock.mockRestore();
     }
   });
+}
+
+for (const key of ['SHORT_LINK_CREATE_RATE_LIMIT', 'SHORT_LINK_CREATE_RATE_WINDOW_MS']) {
+  for (const value of [
+    '',
+    ' ',
+    '0',
+    '-1',
+    '1.5',
+    '1e3',
+    '0x10',
+    'abc',
+    '+1',
+    '01',
+    '9007199254740992',
+  ]) {
+    test(`${key} refuses ${JSON.stringify(value)} before resources`, async () => {
+      const harness = retentionHarness(retentionSql);
+      let beacon: ReturnType<typeof createBeacon> | undefined;
+      try {
+        expect(() => {
+          beacon = buildServer({ DATABASE_URL: 'postgres://localhost/db', [key]: value }).beacon;
+        }).toThrow(key);
+        expect(harness.connect).not.toHaveBeenCalled();
+        expect(harness.timers).toEqual([]);
+      } finally {
+        await beacon?.shutdown();
+        harness.restore();
+      }
+    });
+  }
 }
