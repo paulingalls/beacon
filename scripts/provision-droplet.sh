@@ -184,6 +184,9 @@ X11Forwarding no
 EOF
 sshd -t
 systemctl reload ssh
+# Root logs in only for the first, pre-enrollment run; the baseline expects no root keys.
+[ ! -e /root/.ssh/authorized_keys ] || install -m 600 /dev/null /root/.ssh/authorized_keys
+rm -f /root/.ssh/authorized_keys2
 
 ufw default deny incoming
 ufw default allow outgoing

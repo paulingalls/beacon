@@ -54,7 +54,8 @@ set -e
 WORK=$(mktemp -d)
 jq -e '(.keys | type == "object") and (.uid0 | type == "array") and
   (.logins | type == "array") and (.sudoers | type == "object") and
-  (.units | type == "array") and (.links | type == "object")' "$POLICY/allowlist" >/dev/null
+  (.units | type == "array") and (.links | type == "object") and
+  (.suid | type == "array")' "$POLICY/allowlist" >/dev/null
 set +e
 
 as_app() {
@@ -82,8 +83,8 @@ packages() {
     [ -n "$line" ] || continue
     path=/${line#*/}
     case "$path" in
-      /bin/*|/sbin/*|/lib/*|/lib64/*|/usr/bin/*|/usr/sbin/*|/usr/lib/*|/usr/lib64/*) echo "$line"; return 1 ;;
-      *) printf 'INFO package drift: %s\n' "$line" ;;
+      /etc/*) printf 'INFO package drift: %s\n' "$line" ;;
+      *) echo "$line"; return 1 ;;
     esac
   done < "$WORK/dpkg"
 }
@@ -94,8 +95,9 @@ config() {
 }
 keys() {
   local user home file line fingerprint actual expected
-  for user in root beacon paul; do
-    home=/home/$user; [ "$user" != root ] || home=/root
+  # sshd accepts keys for any account, including nologin ones (port forwarding needs no shell).
+  getent passwd | awk -F: '{print $1 ":" $6}' > "$WORK/homes"
+  while IFS=: read -r user home; do
     : > "$WORK/keys"
     for file in "$ROOT$home/.ssh/authorized_keys" "$ROOT$home/.ssh/authorized_keys2"; do
       if [ -e "$file" ] || [ -L "$file" ]; then
@@ -109,9 +111,9 @@ keys() {
       fi
     done
     actual=$(sort "$WORK/keys")
-    expected=$(jq -er --arg user "$user" '.keys[$user] | sort | join("\n")' "$POLICY/allowlist")
+    expected=$(jq -er --arg user "$user" '.keys[$user] // [] | sort | join("\n")' "$POLICY/allowlist")
     [ "$actual" = "$expected" ] || { echo "$user fingerprints differ"; return 1; }
-  done
+  done < "$WORK/homes"
 }
 accounts() {
   local entries actual expected
@@ -143,6 +145,9 @@ suid() {
   find "${ROOT:-/}" -xdev -type f \( -perm -4000 -o -perm -2000 \) -print0 > "$WORK/suid"
   while IFS= read -r -d '' file; do
     owned "${file#"$ROOT"}" || { echo "unowned ${file#"$ROOT"}"; return 1; }
+    # dpkg --verify compares digests, not modes, so an added setuid bit needs this list.
+    jq -e --arg path "${file#"$ROOT"}" '.suid | index($path) != null' "$POLICY/allowlist" >/dev/null ||
+      { echo "unlisted ${file#"$ROOT"}"; return 1; }
   done < "$WORK/suid"
 }
 units() {
@@ -177,7 +182,8 @@ units() {
 loader() { [ ! -e "$ROOT/etc/ld.so.preload" ] && [ ! -L "$ROOT/etc/ld.so.preload" ]; }
 processes() {
   local exe target
-  [ -r "$ROOT/proc" ] && [ -x "$ROOT/proc" ]
+  [ -r "$ROOT/proc" ] || return 1
+  [ -x "$ROOT/proc" ] || return 1
   for exe in "$ROOT"/proc/[0-9]*/exe; do
     if target=$(readlink "$exe"); then
       case "$target" in *' (deleted)') echo "deleted executable: $exe"; return 1 ;; esac

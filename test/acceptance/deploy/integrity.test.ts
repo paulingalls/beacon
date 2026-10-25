@@ -20,6 +20,11 @@ test('eleven named verdicts, usrmerge ownership, and warm authenticated Bun cach
 });
 const faults: Array<[string, string, (f: Awaited<ReturnType<typeof fixture>>) => void]> = [
   ['package executable', 'Packages', (f) => f.put('verify', '??5?????? /usr/bin/owned\n')],
+  [
+    'package helper outside bin/lib',
+    'Packages',
+    (f) => f.put('verify', '??5?????? /usr/libexec/sudo/sudoers.so\n'),
+  ],
   ['dpkg inventory failure', 'Packages', (f) => f.put('dpkg-error', '')],
   ['Caddy config', 'Config', (f) => f.put('etc/caddy/Caddyfile', 'changed')],
   ['main sudoers', 'Config', (f) => f.put('verify', '??5?????? c /etc/sudoers\n')],
@@ -31,6 +36,11 @@ const faults: Array<[string, string, (f: Awaited<ReturnType<typeof fixture>>) =>
         'home/paul/.ssh/authorized_keys2',
         readFileSync(join(f.root, 'extra.pub'), 'utf8').trimEnd(),
       ),
+  ],
+  [
+    'key for a nologin account',
+    'Keys',
+    (f) => f.put('.ssh/authorized_keys', readFileSync(join(f.root, 'extra.pub'), 'utf8')),
   ],
   [
     'uid zero',
@@ -58,6 +68,14 @@ const faults: Array<[string, string, (f: Awaited<ReturnType<typeof fixture>>) =>
   ],
   ['unowned SUID', 'SUID/SGID', (f) => f.put('usr/bin/intruder', 'bad', 0o4755)],
   ['literal dpkg wildcard', 'SUID/SGID', (f) => f.put('usr/bin/*', 'bad', 0o4755)],
+  [
+    'setuid added to a packaged binary',
+    'SUID/SGID',
+    (f) => {
+      f.put('usr/bin/python3', 'packaged', 0o4755);
+      f.put('owned', `${readFileSync(join(f.root, 'owned'), 'utf8')}/usr/bin/python3\n`);
+    },
+  ],
   ['unknown timer', 'Units', (f) => f.put('run/systemd/transient/intruder.timer', 'bad')],
   [
     'changed generated dependency link',

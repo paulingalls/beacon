@@ -74,6 +74,7 @@ export async function fixture() {
   )[1];
   const policy = JSON.parse(readFileSync('deploy/integrity-allowlist', 'utf8'));
   policy.keys.paul = [fingerprint];
+  policy.suid = ['/usr/bin/owned'];
   put('policy/allowlist', JSON.stringify(policy));
   put('run/systemd/transient/session-1.scope', '[Scope]\n');
   mkdirSync(join(root, 'run/systemd/generator/multi-user.target.wants'), { recursive: true });
