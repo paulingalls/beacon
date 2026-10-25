@@ -11,7 +11,7 @@
     "./hono": "./src/hono/index.ts"
   },
   "devDependencies": {
-    "hono": "^4.12.21"
+    "hono": "^4.13.13"
   },
   "peerDependencies": {
     "hono": "^4.12.21"
