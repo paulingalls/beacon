@@ -58,9 +58,6 @@ jq -e '(.keys | type == "object") and (.uid0 | type == "array") and
   (.suid | type == "array")' "$POLICY/allowlist" >/dev/null
 set +e
 
-as_app() {
-  if [ "$EUID" -eq 0 ]; then runuser -u beacon -- "$@"; else "$@"; fi
-}
 # dpkg leading-slash queries are fnmatch patterns, not literal filenames.
 owned() {
   local path status alias
@@ -216,16 +213,24 @@ processes() {
 checkout() (
   exec 9< "$LOCK"
   flock -w 60 9
-  local status head release
-  status=$(as_app git -C "$APP" status --porcelain)
-  head=$(as_app git -C "$APP" rev-parse HEAD)
-  # Ignore app Git configuration and inherited transport overrides for the root lookup.
-  release=$(env -i PATH="$PATH" HOME=/root GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null \
-    GIT_TERMINAL_PROMPT=0 \
-    GIT_SSH_COMMAND="ssh -F /dev/null -i /home/beacon/.ssh/github_deploy -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile='$POLICY/known_hosts' -o GlobalKnownHostsFile=/dev/null -o ConnectTimeout=10 -o ConnectionAttempts=1" \
-    git -C "$WORK" ls-remote --exit-code git@github.com:paulingalls/beacon.git refs/heads/release)
-  [[ "$release" =~ ^([a-f0-9]{40})[[:space:]]refs/heads/release$ ]] || { echo 'Invalid authoritative release SHA'; return 1; }
-  [ -z "$status" ] && [ "$head" = "${BASH_REMATCH[1]}" ]
+  local release untracked
+  mkdir -p "$CACHE"
+  trusted_git() {
+    env -i PATH="$PATH" HOME=/root GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null \
+      GIT_TERMINAL_PROMPT=0 GIT_INDEX_FILE="$WORK/checkout-index" \
+      GIT_SSH_COMMAND="ssh -F /dev/null -i /home/beacon/.ssh/github_deploy -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile='$POLICY/known_hosts' -o GlobalKnownHostsFile=/dev/null -o ConnectTimeout=10 -o ConnectionAttempts=1" \
+      git -C "$WORK" --git-dir="$CACHE/mirror.git" \
+      -c core.fsmonitor=false -c core.hooksPath=/dev/null "$@"
+  }
+  [ -d "$CACHE/mirror.git" ] || trusted_git init -q --bare
+  trusted_git fetch -q --force --no-tags git@github.com:paulingalls/beacon.git \
+    +refs/heads/release:refs/heads/release
+  release=$(trusted_git rev-parse --verify refs/heads/release^{commit})
+  trusted_git --work-tree="$APP" read-tree "$release"
+  trusted_git --work-tree="$APP" update-index -q --refresh
+  trusted_git --work-tree="$APP" diff-files --quiet
+  untracked=$(trusted_git --work-tree="$APP" ls-files --others --exclude=node_modules/)
+  [ -z "$untracked" ] || { printf '%s\n' "$untracked"; return 1; }
 )
 hash() { sha256sum "$1" | awk '{print $1}'; }
 bun_binary() {

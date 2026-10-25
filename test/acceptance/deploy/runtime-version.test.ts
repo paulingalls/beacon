@@ -16,10 +16,9 @@ test('service ignores planted dotenv and preserves its explicit environment', ()
       join(dir, 'apps/server/src/server.ts'),
       'console.log(JSON.stringify([process.env.PLANTED, process.env.EXPLICIT]));',
     );
-    const args = readFileSync('deploy/beacon.service', 'utf8')
-      .match(/^ExecStart=.+$/m)![0]
-      .split(' ')
-      .slice(1);
+    const start = readFileSync('deploy/beacon.service', 'utf8').match(/^ExecStart=.+$/m);
+    if (!start) throw new Error('Missing service ExecStart');
+    const args = start[0].split(' ').slice(1);
     const result = spawnSync(process.execPath, args, {
       cwd: dir,
       env: { ...process.env, NODE_ENV: 'production', EXPLICIT: 'operator' },
@@ -81,7 +80,7 @@ for (const failure of ['mismatched runtime', 'missing pin', 'failed migration', 
         );
         writeFileSync(
           join(app, 'bun.lock'),
-          '{"lockfileVersion":1,"workspaces":{"":{"name":"runtime-fixture","dependencies":{"beacon-fixture-missing":"1.0.0"}}},"packages":{}}',
+          '{"lockfileVersion":1,"workspaces":{"":{"name":"runtime-fixture","dependencies":{"beacon-fixture-missing":"1.0.0"}}},"packages":{"beacon-fixture-missing":["beacon-fixture-missing@1.0.0","",{},"sha512-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="]}}',
         );
       }
       writeFileSync(join(app, 'next.txt'), 'next\n');
@@ -129,7 +128,10 @@ for (const failure of ['mismatched runtime', 'missing pin', 'failed migration', 
       if (failure === 'failed migration')
         expect(JSON.parse(readFileSync(probe, 'utf8'))).toEqual([null, 'operator']);
       if (failure === 'failed install') {
-        expect(requests.some((path) => path.startsWith('/trusted/'))).toBe(true);
+        expect(
+          requests.some((path) => path.startsWith('/trusted/')),
+          stderr,
+        ).toBe(true);
         expect(requests.filter((path) => path.startsWith('/planted/'))).toEqual([]);
       }
       expect(
