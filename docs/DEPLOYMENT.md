@@ -108,10 +108,12 @@ doctl compute domain records create vodshorter.com \
 
 [`scripts/provision-droplet.sh`](../scripts/provision-droplet.sh) installs Caddy,
 Bun from `.bun-version`, real flock (util-linux), Tailscale, unattended-upgrades
-and ufw. It creates `beacon`, preserves existing maintenance authorized_keys,
-generates a read-only GitHub key and clones `release`. Existing checkouts are
+and ufw. It creates operator `paul` (full sudo), seeds his key from root only
+when he has none, and creates `beacon` with no inbound SSH keys and only the
+root service-restart sudo rule. It generates a read-only GitHub key and clones `release`. Existing checkouts are
 fetched without resetting HEAD. It installs the app unit, Caddyfile and external
-pull runner/units, leaving timer activation to the operator.
+pull runner/units and the root integrity checker/baseline. The integrity timer
+is enabled automatically; the pull timer requires explicit operator activation.
 
 ```bash
 ssh -i ~/.ssh/<maintenance-key> root@<droplet-ip> 'bash -s' < scripts/provision-droplet.sh
@@ -133,14 +135,25 @@ sudo tailscale up --hostname=beacon-prod
 ```
 
 Approve `tag:beacon` in the tailnet admin console (Paul's ACL grants
-`autogroup:admin` TCP 22). Verify a fresh `beacon` login over Tailscale and
+`autogroup:admin` TCP 22). Verify a fresh `paul` login over Tailscale and
 `sudo -n true`, with the DO console available. Then rerun from your workstation:
 
 ```bash
-ssh beacon@beacon-prod 'sudo bash -s' < scripts/provision-droplet.sh
+ssh beacon 'sudo bash -s' < scripts/provision-droplet.sh
 ```
 
-Configure the local `beacon` SSH alias to the tailnet host before using it.
+Configure the local alias before using it:
+
+```sshconfig
+Host beacon
+  HostName beacon-prod
+  User paul
+  IdentityFile ~/.ssh/beacon_ops
+  IdentitiesOnly yes
+```
+
+Set up root-only alert credentials and deliberately update the reviewed key
+baseline for a rebuilt host with a different key; see [integrity operations](./OPERATIONS.md).
 The enrolled rerun writes `00-hardening.conf` before cloud-init's SSH config:
 root/password/keyboard-interactive login off, publickey required, MaxAuthTries 3,
 X11 forwarding off; `sshd -t` must pass before reloading `ssh`. It sets ufw deny
@@ -151,10 +164,10 @@ incoming, allow outgoing, 80/443 and incoming `tailscale0`, enables ufw, then re
 
 The script preserves Ubuntu security update origins, adds Caddy
 `cloudsmith/caddy/stable` and `Tailscale` origins, and configures required reboots
-at 10:00 UTC with the system timezone UTC. Before enabling the timer, validate
+at 10:00 UTC with the system timezone UTC. Before enabling the pull timer, validate
 `systemd-analyze verify` on installed units, `sshd -t` and `sshd -T`,
 `apt-cache policy caddy tailscale`, `unattended-upgrade --dry-run --debug`,
-`timedatectl` and `ufw status verbose`. Reruns leave timer state unchanged.
+`timedatectl` and `ufw status verbose`. Reruns preserve pull timer state and enable the integrity timer.
 
 ---
 
@@ -174,10 +187,10 @@ Then reload Caddy (provision installs the Caddyfile but does not reload the
 running Caddy), install, migrate, and start:
 
 ```bash
-systemctl reload caddy        # picks up deploy/Caddyfile → obtains the TLS cert
+sudo systemctl reload caddy   # picks up deploy/Caddyfile → obtains the TLS cert
 sudo -u beacon -H bash -lc 'cd ~/app && ~/.bun/bin/bun install --frozen-lockfile --production --ignore-scripts'
 sudo -u beacon -H bash -lc 'cd ~/app && set -a; . ~/.env.production; set +a; ~/.bun/bin/bun run migrate'
-systemctl enable --now beacon
+sudo systemctl enable --now beacon
 ```
 
 | Variable | Required | Purpose |
@@ -217,39 +230,18 @@ boot commit; failed-run email is the deployment alarm. Keep those notifications 
 access to the droplet. The droplet's GitHub key is read-only. Deploying code still
 permits execution as `beacon`, which has passwordless sudo.
 
-**Lead cut-over, after develop merge and before the release PR merges:**
+After the first healthy boot, verify the gated release exists as beacon and
+activate pulls as paul:
 
-1. Keep public 22 available. Do not rerun provisioning during this installation:
-   it would apply lockdown before the pull flow is proven. Fetch files from
-   develop without changing production HEAD, as beacon:
+```bash
+sudo -u beacon -H git -C /home/beacon/app ls-remote --exit-code origin refs/heads/release
+sudo systemctl enable --now beacon-deploy.timer
+journalctl -u beacon-deploy --since '2 minutes ago'
+```
 
-   ```bash
-   set -euo pipefail
-   git -C ~/app fetch origin develop
-   git -C ~/app show origin/develop:deploy/beacon-deploy.sh | sudo install -m 755 /dev/stdin /usr/local/bin/beacon-deploy
-   git -C ~/app show origin/develop:deploy/beacon-deploy.service | sudo install -m 644 /dev/stdin /etc/systemd/system/beacon-deploy.service
-   git -C ~/app show origin/develop:deploy/beacon-deploy.timer | sudo install -m 644 /dev/stdin /etc/systemd/system/beacon-deploy.timer
-   sudo systemctl daemon-reload
-   ```
-
-2. Identify the actual serving SHA (before this release adds health.commit,
-   verify the running deployment's checkout). From an authorized local clone,
-   `git push origin <serving-sha>:refs/heads/release`. Never seed an unserved tip.
-3. After secrets and first healthy boot, on the droplet:
-
-   ```bash
-   git -C ~/app ls-remote --exit-code origin refs/heads/release
-   sudo systemctl enable --now beacon-deploy.timer
-   journalctl -u beacon-deploy --since '2 minutes ago'
-   ```
-
-   Confirm a real tick skips the serving SHA.
-4. Merge the release PR and confirm the actual workflow health poll goes green.
-5. Delete GitHub secrets `SSH_PRIVATE_KEY` and `DROPLET_IP`, retire `~/deploy.sh`
-   and remove the CI public key from authorized_keys. Preserve maintenance access.
-6. Rerun the shipped provisioner over Tailscale to apply/verify the enrolled path.
-   Remove public 22 from `beacon-fw` and ufw; verify fresh OpenSSH/sudo over
-   Tailscale and that external TCP 22 is closed. Keep the DO console as break-glass.
+Confirm a real tick skips the serving SHA. The integrity timer runs on Monday
+at 12:00 UTC and ten minutes after boot; it does not depend on enabling pulls.
+A boot older than ten minutes can trigger a check during provisioning.
 
 Later runner/unit changes require explicit reinstall with the timer paused and
 service idle; a checkout reset cannot update `/usr/local/bin/beacon-deploy`.
@@ -285,7 +277,7 @@ curl -i https://beacon.vodshorter.com/analytics/dashboard  # => 403
 sudo journalctl -u beacon -f     # app logs
 sudo journalctl -u caddy -f      # proxy / TLS logs
 sudo systemctl restart beacon    # manual restart
-gh workflow disable deploy.yml   # pause autodeploy during maintenance
+sudo systemctl stop beacon-deploy.timer  # pause on-box pulls; wait for idle
 ```
 
 ## Grafana database reader
