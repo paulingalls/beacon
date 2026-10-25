@@ -35,7 +35,7 @@ const faults: Array<[string, string, (f: Awaited<ReturnType<typeof fixture>>) =>
     (f) =>
       f.put(
         'passwd',
-        readFileSync(join(f.root, 'passwd'), 'utf8') + 'intruder:x:0:0::/root:/bin/bash\n',
+        `${readFileSync(join(f.root, 'passwd'), 'utf8')}intruder:x:0:0::/root:/bin/bash\n`,
       ),
   ],
   [
@@ -92,6 +92,21 @@ test('provider rejection is explicit and never claims acceptance', async () => {
     expect(f.alerts).toHaveLength(1);
     expect(r.output).toContain('Alert delivery FAILED');
     expect(r.output).not.toContain('Alert accepted');
+  } finally {
+    f.close();
+  }
+});
+
+test('TERM during a hung inventory leaves the service stop window for its alert', async () => {
+  const f = await fixture();
+  try {
+    f.put('bin/dpkg', '#!/bin/bash\nsleep 5\n', 0o755);
+    const start = Date.now();
+    const r = await f.run(true);
+    expect(r.code).toBe(143);
+    expect(f.alerts).toHaveLength(1);
+    expect(f.alerts[0]?.text).toContain('runner aborted');
+    expect(Date.now() - start).toBeLessThan(2000);
   } finally {
     f.close();
   }

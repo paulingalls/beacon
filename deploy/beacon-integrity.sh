@@ -12,28 +12,32 @@ ALERT_ENV=${INTEGRITY_ALERT_ENV:-/etc/beacon-integrity/alert.env}
 RELEASE_BASE=${INTEGRITY_RELEASE_BASE:-https://github.com/oven-sh/bun/releases/download/bun-v}
 ALERT_BASE=${INTEGRITY_ALERT_BASE:-https://api.resend.com}
 failures=
+check_pid=
 WORK=
 notify() (
   set -e
   # This root-owned config is separate from the app's environment.
+  # shellcheck disable=SC1090
   . "$ALERT_ENV"
   : "${RESEND_API_KEY:?}" "${ALERT_FROM:?}" "${ALERT_TO:?}"
   [[ "$RESEND_API_KEY" =~ ^[a-zA-Z0-9_-]+$ ]]
-  [ -n "$WORK" ] || WORK=$(mktemp -d)
-  printf 'Authorization: Bearer %s\nContent-Type: application/json\n' "$RESEND_API_KEY" > "$WORK/headers"
+  alert_work=$(mktemp -d)
+  trap 'rm -rf "$alert_work"' EXIT
+  printf 'Authorization: Bearer %s\nContent-Type: application/json\n' "$RESEND_API_KEY" > "$alert_work/headers"
   jq -n --arg from "$ALERT_FROM" --arg to "$ALERT_TO" \
     --arg subject "Beacon integrity failure on $(hostname)" \
     --arg text "$(date -u +%FT%TZ) on $(hostname)"$'\n'"${failures:-runner aborted}" \
-    '{from:$from,to:[$to],subject:$subject,text:$text}' > "$WORK/email"
-  status=$(curl -sS --connect-timeout 10 --max-time 30 -o "$WORK/response" -w '%{http_code}' \
-    -H "@$WORK/headers" --data-binary "@$WORK/email" "$ALERT_BASE/emails")
+    '{from:$from,to:[$to],subject:$subject,text:$text}' > "$alert_work/email"
+  status=$(curl -sS --connect-timeout 10 --max-time 30 -o "$alert_work/response" -w '%{http_code}' \
+    -H "@$alert_work/headers" --data-binary "@$alert_work/email" "$ALERT_BASE/emails")
   [[ "$status" = 2?? ]]
-  id=$(jq -er '.id | strings | select(length > 0)' "$WORK/response")
+  id=$(jq -er '.id | strings | select(length > 0)' "$alert_work/response")
   printf 'Alert accepted: %s\n' "$id"
 )
 finish() {
   local status=$?
   trap - EXIT TERM INT
+  [ -z "$check_pid" ] || kill "$check_pid" 2>/dev/null || true
   if [ "$status" -ne 0 ]; then
     set +e
     (notify)
@@ -213,8 +217,12 @@ check() {
   local name=$1 output status line
   shift
   # Calling a check in an if/|| would silently disable errexit inside its body.
-  output=$(set -e; "$@" 2>&1)
+  (set -e; "$@") > "$WORK/check" 2>&1 &
+  check_pid=$!
+  wait "$check_pid"
   status=$?
+  check_pid=
+  output=$(cat "$WORK/check")
   if [ "$status" -eq 0 ]; then
     [ -z "$output" ] || printf '%s\n' "$output"
     printf 'PASS %s: verified\n' "$name"

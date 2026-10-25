@@ -163,12 +163,13 @@ sys.exit(0 if any(fnmatch.fnmatchcase(x,p) for x in (r/'owned').read_text().spli
     reject: () => {
       responseStatus = 422;
     },
-    async run() {
+    async run(terminate = false) {
       const p = Bun.spawn(['bash', 'deploy/beacon-integrity.sh'], {
         env,
         stdout: 'pipe',
         stderr: 'pipe',
       });
+      if (terminate) setTimeout(() => p.kill('SIGTERM'), 100);
       const [stdout, stderr, code] = await Promise.all([
         new Response(p.stdout).text(),
         new Response(p.stderr).text(),
