@@ -37,6 +37,7 @@
     "/run/systemd/generator/-.mount",
     "/run/systemd/generator/boot.mount",
     "/run/systemd/generator/boot-efi.mount",
-    "/run/systemd/generator/netplan.stamp"
+    "/run/systemd/generator/netplan.stamp",
+    "/run/systemd/system/systemd-networkd-wait-online.service.d/10-netplan.conf"
   ]
 }

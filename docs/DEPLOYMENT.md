@@ -478,6 +478,8 @@ CDN dependency needs browser internet access and is not server outbound traffic.
 
 ## Related
 
+- [`deploy/beacon-integrity.sh`](../deploy/beacon-integrity.sh) — root checker; [service](../deploy/beacon-integrity.service) and [timer](../deploy/beacon-integrity.timer).
+
 - [`deploy/beacon-deploy.sh`](../deploy/beacon-deploy.sh) — external pull runner.
 - [`deploy/beacon-deploy.service`](../deploy/beacon-deploy.service) — deploy service.
 - [`deploy/beacon-deploy.timer`](../deploy/beacon-deploy.timer) — minute timer.
