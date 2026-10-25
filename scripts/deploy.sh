@@ -38,7 +38,7 @@ run_migrations() {
   # Source the env in a subshell so DATABASE_URL never persists in this shell's
   # environment beyond the migrate call. `set +x` is implied (never enabled).
   # shellcheck source=/dev/null  # runtime-only file on the droplet, not in repo
-  ( set -a; . "$ENV_FILE"; set +a; "$BUN" run migrate )
+  ( set -a && . "$ENV_FILE" && set +a && "$BUN" run migrate )
 }
 
 restart_and_check() {
@@ -50,11 +50,30 @@ restart_and_check() {
   return 1
 }
 
-install_deps
+# A deploy that stops before the restart leaves the old process serving, so put the checkout (and, once
+# touched, its deps) back on PREV: otherwise the next deploy's HEAD@{1} rollback target is this
+# never-installed, never-health-checked commit.
+refuse() {
+  echo "❌ $1 — restoring ${PREV:0:7}; the running version is untouched" >&2
+  git reset --hard "$PREV"
+  exit 3
+}
+restore() {
+  echo "❌ $1 — restoring ${PREV:0:7} and its dependencies; the running version is untouched" >&2
+  git reset --hard "$PREV"
+  install_deps
+  exit 3
+}
 
-# Migrate before restart. A migration failure aborts the deploy (set -e) BEFORE
-# the running service is touched, leaving the old version up.
-run_migrations
+EXPECTED_BUN="$(cat .bun-version 2>/dev/null || true)"
+[ -n "$EXPECTED_BUN" ] || refuse "Bun version pin .bun-version is missing or empty"
+ACTUAL_BUN="$("$BUN" --version 2>/dev/null || true)"
+[ "$ACTUAL_BUN" = "$EXPECTED_BUN" ] ||
+  refuse "Bun version mismatch: expected $EXPECTED_BUN, actual ${ACTUAL_BUN:-none}; deployment refused"
+
+install_deps || restore "dependency install failed"
+# Migrate before restart, so a migration failure never touches the running service.
+run_migrations || restore "migration failed"
 
 if restart_and_check; then
   echo "✅ Deploy healthy at ${HEAD_NOW}"

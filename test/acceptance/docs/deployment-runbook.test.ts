@@ -32,6 +32,7 @@ describe('docs/DEPLOYMENT.md droplet runbook', () => {
   // put in .env.production. DATABASE_URL/ADMIN_TOKEN/SHORT_DOMAIN are the ones that matter in prod;
   // TRUSTED_INGEST_TOKEN gates trusted s2s ingest (M2).
   test.each([
+    'HOST',
     'DATABASE_URL',
     'ADMIN_TOKEN',
     'SHORT_DOMAIN',

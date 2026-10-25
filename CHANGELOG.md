@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.2.12 — 2026-10-24
+
+- Pin Bun 1.4.4 (eMudhra CA distrust, brotli CVE-2026-111497) in `.bun-version` for CI, provisioning and container builds; deployment refuses a runtime that does not match the pin.
+- Upgrade Hono to 4.13.13 and Playwright to 1.64.1.
+- **Breaking for self-built containers:** the host server now binds `127.0.0.1` by default (an empty `HOST` counts as unset). Set `HOST=0.0.0.0` in any image you build yourself; Beacon's own Dockerfile already does. Behind a same-host reverse proxy, no change is needed.
+- A deploy that stops before restarting the service (Bun pin missing or mismatched, dependency install or migration failure) now restores the previous checkout and its dependencies and exits 3, so the next deploy's rollback target is always a commit that was installed and health-checked.
+- Run CI and local tests on Postgres 17; authenticate CI service pulls to Docker Hub.
+
+The SDK, client, and server manifests all declare version `0.2.12`. SDK and client behavior is unchanged.
+
 ## 0.2.11 — 2026-10-24
 
 - Short-link click events retain only `code` in properties to avoid copying destination bearer credentials into analytics. Click events already stored are not rewritten.

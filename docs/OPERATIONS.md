@@ -84,8 +84,27 @@ gh workflow enable  deploy.yml
 **Rollback:** `scripts/deploy.sh` auto-rolls back **code only** if the new commit
 fails its health check (resets to the prior commit, reinstalls, re-checks). Exit
 codes: `0` healthy, `1` rolled back and healthy (investigate the bad commit), `2`
-rollback also unhealthy — **manual intervention** (see below). Migrations are
-forward-only and are NOT reverted, so a breaking migration can't be auto-recovered.
+rollback also unhealthy — **manual intervention** (see below), `3` stopped before
+restart (below). Migrations are forward-only and are NOT reverted, so a breaking
+migration can't be auto-recovered.
+
+Before deployment, `scripts/deploy.sh` compares `$BUN --version` with the
+checked-out `.bun-version`. A missing pin, a mismatch, or a failed dependency install
+or migration stops the deploy before the restart with exit `3`: the running service
+stays up and `~/app` is reset to the previous commit, so its `.bun-version` is the
+OLD pin. Install the pin of the commit being deployed as the beacon user, verify it,
+then retry through the bootstrap, which re-fetches `origin/main`. Rerunning
+`scripts/deploy.sh` in place would redeploy the previous commit, report it healthy,
+and make the never-installed commit its rollback target:
+
+```bash
+cd ~/app
+set -o pipefail
+git fetch origin
+curl -fsSL https://bun.sh/install | bash -s "bun-v$(git show origin/main:.bun-version)"
+~/.bun/bin/bun --version
+bash ~/deploy.sh
+```
 
 Manual rollback to a known-good commit:
 

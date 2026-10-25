@@ -51,13 +51,6 @@ if [ -f /root/.ssh/authorized_keys ]; then
     /root/.ssh/authorized_keys "/home/${APP_USER}/.ssh/authorized_keys"
 fi
 
-echo "==> Bun (as ${APP_USER})"
-sudo -u "${APP_USER}" -H bash -lc '
-  set -e
-  if [ ! -x "$HOME/.bun/bin/bun" ]; then curl -fsSL https://bun.sh/install | bash; fi
-  grep -q ".bun/bin" "$HOME/.bashrc" || echo "export PATH=\"$HOME/.bun/bin:\$PATH\"" >> "$HOME/.bashrc"
-'
-
 echo "==> GitHub read-only deploy key (private repo)"
 sudo -u "${APP_USER}" -H bash -lc '
   set -e
@@ -88,6 +81,22 @@ if ! sudo -u "${APP_USER}" -H bash -lc "
   echo "   ---8<--------------------8<---"
   exit 3
 fi
+
+echo "==> Bun (as ${APP_USER}, from the checked-out pin)"
+sudo -u "${APP_USER}" -H bash -lc '
+  set -euo pipefail
+  version="$(cat "$1/.bun-version")"
+  if [ -z "$version" ]; then echo "Bun version pin is empty" >&2; exit 1; fi
+  if [ ! -x "$HOME/.bun/bin/bun" ] || [ "$("$HOME/.bun/bin/bun" --version)" != "$version" ]; then
+    curl -fsSL https://bun.sh/install | bash -s "bun-v${version}"
+  fi
+  actual="$("$HOME/.bun/bin/bun" --version)"
+  if [ "$actual" != "$version" ]; then
+    echo "Bun installation mismatch: expected $version, actual $actual" >&2
+    exit 1
+  fi
+  grep -q ".bun/bin" "$HOME/.bashrc" || echo "export PATH=\"$HOME/.bun/bin:\$PATH\"" >> "$HOME/.bashrc"
+' bash "${APP_DIR}"
 
 echo "==> install the deploy bootstrap (~/deploy.sh) for the CI SSH action"
 cat > "/home/${APP_USER}/deploy.sh" <<EOF

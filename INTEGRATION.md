@@ -74,6 +74,7 @@ The Beacon server (`apps/server`) is the single writer: it holds the Postgres cr
 | `SHORT_LINK_CREATE_RATE_LIMIT` | no | Max authenticated `POST /short` creations per window (default `100`), per client IP: first `X-Forwarded-For` hop, else socket address. The host supplies no per-admin identity; one server-side creator such as Cordelia shares one bucket. Trimmed positive decimal integer, no leading zero, at most `9007199254740991`; invalid values (including empty strings) fail startup naming the variable, before Postgres opens. |
 | `SHORT_LINK_CREATE_RATE_WINDOW_MS` | no | Creation rate window in milliseconds (default `3600000`, one hour). Trimmed positive decimal integer, no leading zero, at most `9007199254740991`; invalid values (including empty strings) fail startup naming the variable, before Postgres opens. |
 | `PORT` | no | Listen port (default `8080`). |
+| `HOST` | no | Listen address: default `127.0.0.1` on the host, `0.0.0.0` in the Docker image; set explicitly to override. Host Caddy proxies to `localhost:8080`. |
 
 The canonical, deployable wiring lives in [`apps/server/src/server.ts`](./apps/server/src/server.ts) — `/health` and the query router mount before the shortener's catch-all `GET /:code`, and the admin gate is a constant-time bearer compare that fails closed when `ADMIN_TOKEN` is unset. Deployment to a DigitalOcean droplet (Caddy + systemd, autodeploy on merge to `main`) is covered in [`docs/DEPLOYMENT.md`](./docs/DEPLOYMENT.md).
 

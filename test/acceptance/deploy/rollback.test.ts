@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 
 import { execFileSync, spawnSync } from 'node:child_process';
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -68,6 +68,7 @@ describe('deploy.sh rollback', () => {
     mkdirSync(binDir);
     git(root, 'init', '-q', '-b', 'main', appDir);
 
+    writeFileSync(join(appDir, '.bun-version'), readFileSync(join(REPO_ROOT, '.bun-version')));
     counterFile = join(root, 'curl-calls');
     envFile = join(root, 'env.production');
     writeFileSync(envFile, 'DATABASE_URL=postgres://stub/never-used\n');
@@ -86,7 +87,7 @@ describe('deploy.sh rollback', () => {
     );
     // BUN stub: install / run migrate are no-ops (deploy.sh invokes "$BUN" directly via env).
     bunStub = join(binDir, 'bun-stub');
-    writeStub(binDir, 'bun-stub', 'exit 0');
+    writeStub(binDir, 'bun-stub', 'if [ "$1" = --version ]; then cat .bun-version; fi; exit 0');
   });
 
   afterEach(() => {

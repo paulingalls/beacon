@@ -1,4 +1,5 @@
-FROM oven/bun:1.3.14-alpine
+ARG BUN_VERSION
+FROM oven/bun:${BUN_VERSION}-alpine
 
 WORKDIR /app
 
@@ -17,6 +18,7 @@ RUN bun install --frozen-lockfile --production --ignore-scripts
 
 COPY . .
 
+ENV HOST=0.0.0.0
 EXPOSE 8080
 HEALTHCHECK --interval=5s --timeout=3s --start-period=10s --retries=3 CMD bun -e 'const r = await fetch(`http://127.0.0.1:${process.env.PORT ?? 8080}/health`, {signal: AbortSignal.timeout(2000)}); if (!r.ok || (await r.json()).status !== "ok") process.exit(1);'
 CMD ["bun", "run", "apps/server/src/server.ts"]
