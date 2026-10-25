@@ -128,7 +128,10 @@ export async function dbFreeHealth(f: ContainerFixture, url: string) {
     const before = (await inspect(f.env.SERVER as string)).State.Health.Log.at(-1).Start;
     expect(
       await (await fetch(`${url}/health`, { signal: AbortSignal.timeout(2000) })).json(),
-    ).toEqual({ status: 'ok' });
+    ).toEqual({
+      status: 'ok',
+      commit: Bun.spawnSync(['git', 'rev-parse', 'HEAD']).stdout.toString().trim(),
+    });
     await until(
       'fresh DB-free Docker health success',
       async () => {
@@ -230,8 +233,8 @@ export async function healthControls(f: ContainerFixture) {
   await f.launch(
     serverMutation(
       f,
-      "app.get('/health', (c) => c.json({ status: 'ok' }));",
-      "app.get('/health', async (c) => { try { await beacon.createShortLink({destination:'https://example.com',productId:'container'}); return c.json({status:'ok'}); } catch { return c.json({status:'db unavailable'},500); } });",
+      "app.get('/health', (c) => c.json({ status: 'ok', commit }));",
+      "app.get('/health', async (c) => { try { await beacon.createShortLink({destination:'https://example.com',productId:'container'}); return c.json({status:'ok',commit}); } catch { return c.json({status:'db unavailable'},500); } });",
     ),
   );
   await f.ready(url);

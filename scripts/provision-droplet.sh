@@ -4,9 +4,8 @@
 #
 #   ssh -i ~/.ssh/<key> root@<DROPLET_IP> 'bash -s' < scripts/provision-droplet.sh
 #
-# Idempotent: safe to re-run. Does NOT disable root SSH or touch the firewall —
-# those are done deliberately, AFTER you've verified non-root access, to avoid a
-# lockout. See docs/DEPLOYMENT.md.
+# Rerun after Tailscale enrollment as beacon with sudo; see docs/DEPLOYMENT.md.
+# Lockdown requires a logged-in, running Tailscale node.
 set -euo pipefail
 
 APP_USER=beacon
@@ -14,16 +13,13 @@ APP_DIR="/home/${APP_USER}/app"
 # SSH remote — the repo is private, so the droplet authenticates with a read-only
 # GitHub deploy key generated below (registered once via `gh repo deploy-key add`).
 REPO="git@github.com:paulingalls/beacon.git"
-# Branch to clone for the initial checkout. Steady-state deploys track main (the
-# CI bootstrap ~/deploy.sh below resets to origin/main); override only to bring a
-# droplet up from another branch before the code has merged, e.g.
-# DEPLOY_BRANCH=some-branch ... bash -s < scripts/provision-droplet.sh
-DEPLOY_BRANCH="${DEPLOY_BRANCH:-main}"
+# Fresh boots must use a gated release; override for disposable validation only.
+DEPLOY_BRANCH="${DEPLOY_BRANCH:-release}"
 
 echo "==> apt deps (unzip BEFORE bun, curl, git, caddy prereqs)"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -y
-apt-get install -y unzip curl git debian-keyring debian-archive-keyring apt-transport-https
+apt-get install -y unzip curl git debian-keyring debian-archive-keyring apt-transport-https util-linux ufw unattended-upgrades jq
 
 echo "==> Caddy (official apt repo)"
 if ! command -v caddy >/dev/null 2>&1; then
@@ -33,6 +29,24 @@ if ! command -v caddy >/dev/null 2>&1; then
     > /etc/apt/sources.list.d/caddy-stable.list
   apt-get update -y && apt-get install -y caddy
 fi
+
+echo "==> Tailscale (Ubuntu 24.04 repository)"
+curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/noble.noarmor.gpg \
+  > /usr/share/keyrings/tailscale-archive-keyring.gpg
+curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/noble.tailscale-keyring.list \
+  > /etc/apt/sources.list.d/tailscale.list
+apt-get update -y
+apt-get install -y tailscale
+systemctl enable --now tailscaled
+timedatectl set-timezone UTC
+cat > /etc/apt/apt.conf.d/52beacon-unattended <<'EOF'
+// Beacon: keep the third-party edge packages patched and reboot onto new kernels.
+// Without Automatic-Reboot, kernel fixes install but never run (2026-10: 126 days on 6.8.0-71).
+Unattended-Upgrade::Origins-Pattern { "origin=cloudsmith/caddy/stable"; "origin=Tailscale"; };
+// Reboot only when a package requires it, at 10:00 UTC (03:00 US Pacific, lowest traffic).
+Unattended-Upgrade::Automatic-Reboot "true"; Unattended-Upgrade::Automatic-Reboot-WithUsers "true";
+Unattended-Upgrade::Automatic-Reboot-Time "10:00";
+EOF
 
 echo "==> app user '${APP_USER}' (no password; unattended sudo for deploy)"
 if ! id "${APP_USER}" >/dev/null 2>&1; then
@@ -46,7 +60,7 @@ printf '%s ALL=(ALL) NOPASSWD:ALL\n' "${APP_USER}" \
 
 echo "==> copy the deploy SSH key from root to ${APP_USER}"
 install -d -m 700 -o "${APP_USER}" -g "${APP_USER}" "/home/${APP_USER}/.ssh"
-if [ -f /root/.ssh/authorized_keys ]; then
+if [ -f /root/.ssh/authorized_keys ] && [ ! -e "/home/${APP_USER}/.ssh/authorized_keys" ]; then
   install -m 600 -o "${APP_USER}" -g "${APP_USER}" \
     /root/.ssh/authorized_keys "/home/${APP_USER}/.ssh/authorized_keys"
 fi
@@ -70,7 +84,7 @@ echo "==> clone/refresh the repo at ${APP_DIR}"
 if ! sudo -u "${APP_USER}" -H bash -lc "
   set -e
   if [ ! -d '${APP_DIR}/.git' ]; then git clone --branch '${DEPLOY_BRANCH}' '${REPO}' '${APP_DIR}'
-  else cd '${APP_DIR}' && git fetch --all --prune && git reset --hard 'origin/${DEPLOY_BRANCH}'; fi
+  else cd '${APP_DIR}' && git fetch --all --prune; fi
 "; then
   echo
   echo "!! Repo clone failed — the deploy key is not yet registered on GitHub."
@@ -98,17 +112,10 @@ sudo -u "${APP_USER}" -H bash -lc '
   grep -q ".bun/bin" "$HOME/.bashrc" || echo "export PATH=\"$HOME/.bun/bin:\$PATH\"" >> "$HOME/.bashrc"
 ' bash "${APP_DIR}"
 
-echo "==> install the deploy bootstrap (~/deploy.sh) for the CI SSH action"
-cat > "/home/${APP_USER}/deploy.sh" <<EOF
-#!/usr/bin/env bash
-set -euo pipefail
-cd "${APP_DIR}"
-git fetch --all --prune
-git reset --hard origin/main
-exec bash scripts/deploy.sh
-EOF
-chown "${APP_USER}:${APP_USER}" "/home/${APP_USER}/deploy.sh"
-chmod 750 "/home/${APP_USER}/deploy.sh"
+echo "==> external pull runner and units (timer activation is an operator step)"
+install -m 755 "${APP_DIR}/deploy/beacon-deploy.sh" /usr/local/bin/beacon-deploy
+install -m 644 "${APP_DIR}/deploy/beacon-deploy.service" /etc/systemd/system/beacon-deploy.service
+install -m 644 "${APP_DIR}/deploy/beacon-deploy.timer" /etc/systemd/system/beacon-deploy.timer
 
 echo "==> systemd unit + Caddyfile from the repo"
 install -m 644 "${APP_DIR}/deploy/beacon.service" /etc/systemd/system/beacon.service
@@ -124,5 +131,38 @@ echo "  2. Confirm the host in /etc/caddy/Caddyfile, then: systemctl reload cadd
 echo "  3. sudo -u ${APP_USER} -H bash -lc 'cd ${APP_DIR} && ~/.bun/bin/bun install --frozen-lockfile --production --ignore-scripts'"
 echo "  4. sudo -u ${APP_USER} -H bash -lc 'cd ${APP_DIR} && set -a; . ~/.env.production; set +a; ~/.bun/bin/bun run migrate'"
 echo "  5. systemctl enable --now beacon && curl -sf http://localhost:8080/health"
-echo "  6. ONLY after verifying 'ssh ${APP_USER}@<ip>' works in a SEPARATE session:"
-echo "     disable root SSH (PermitRootLogin no) and reload sshd."
+
+echo "  6. Seed release at the serving SHA, verify it exists, then explicitly enable beacon-deploy.timer."
+
+if ! tailscale status --json | jq -e '.BackendState == "Running" and (.Self.Online == true)' >/dev/null; then
+  echo "Tailscale is not enrolled/running. Public SSH access is unchanged." >&2
+  echo "Run: sudo tailscale up --hostname=beacon-prod" >&2
+  echo "Approve tag:beacon, verify a fresh beacon SSH session and sudo over Tailscale, then rerun this script." >&2
+  exit 1
+fi
+
+install -d -m 755 /etc/ssh/sshd_config.d
+cat > /etc/ssh/sshd_config.d/00-hardening.conf <<'EOF'
+# Sorts before 50-cloud-init.conf: sshd keeps the first value it reads.
+PermitRootLogin no
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+AuthenticationMethods publickey
+MaxAuthTries 3
+X11Forwarding no
+EOF
+sshd -t
+systemctl reload ssh
+
+ufw default deny incoming
+ufw default allow outgoing
+ufw allow 80/tcp
+ufw allow 443/tcp
+ufw allow in on tailscale0
+ufw --force enable
+# Numbered status includes saved rules only after ufw is enabled. Delete descending
+# so IPv4/IPv6 indices stay valid; preserve rules restricted to tailscale0.
+public_ssh_rules="$(ufw status numbered | sed -nE '/^\[ *[0-9]+\] +(22(\/tcp)?|OpenSSH)( +|$)/ { /tailscale0/! s/^\[ *([0-9]+)\].*/\1/p; }' | sort -rn)"
+while read -r rule; do
+  [ -z "$rule" ] || ufw --force delete "$rule"
+done <<< "$public_ssh_rules"

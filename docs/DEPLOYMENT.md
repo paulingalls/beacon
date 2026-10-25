@@ -11,14 +11,6 @@ The deploy is modeled on the sibling `vodshorter` project. A docs-sync guard
 naming the load-bearing artifacts, env vars, and steps below, so it can't
 silently drift from how Beacon actually deploys.
 
-> **Status — proven live (free-2026-06-21-live-do-deploy).** Beacon runs at
-> `https://beacon.vodshorter.com` on a dedicated droplet, with autodeploy on
-> merge to `main`. The interim hostname is a subdomain of `vodshorter.com`
-> (Beacon's first integration target); swap it for a dedicated short domain by
-> editing `deploy/Caddyfile` + DNS, or serve both.
-
----
-
 ## Architecture
 
 - **One droplet** (`s-1vcpu-1gb`, region `sfo3`, in the same VPC as the DB) runs
@@ -50,7 +42,7 @@ migration or restart; see [runtime recovery](./OPERATIONS.md) before retrying.
 - A managed Postgres cluster (Beacon reuses the existing one) and a domain you
   control on DigitalOcean DNS for the hostname.
 - An SSH keypair for the droplet (its public half uploaded to DO, its private
-  half stored as the `SSH_PRIVATE_KEY` GitHub secret for autodeploy).
+  half kept only on your workstation).
 
 ---
 
@@ -114,25 +106,55 @@ doctl compute domain records create vodshorter.com \
 
 ## 3. Provision the droplet
 
-[`scripts/provision-droplet.sh`](../scripts/provision-droplet.sh) is idempotent
-and run as root. It installs Caddy + Bun, creates the `beacon` user, generates a
-read-only GitHub deploy key, clones the repo, and installs the systemd unit +
-Caddyfile:
+[`scripts/provision-droplet.sh`](../scripts/provision-droplet.sh) installs Caddy,
+Bun from `.bun-version`, real flock (util-linux), Tailscale, unattended-upgrades
+and ufw. It creates `beacon`, preserves existing maintenance authorized_keys,
+generates a read-only GitHub key and clones `release`. Existing checkouts are
+fetched without resetting HEAD. It installs the app unit, Caddyfile and external
+pull runner/units, leaving timer activation to the operator.
 
 ```bash
-ssh -i ~/.ssh/<key> root@<droplet-ip> 'bash -s' < scripts/provision-droplet.sh
+ssh -i ~/.ssh/<maintenance-key> root@<droplet-ip> 'bash -s' < scripts/provision-droplet.sh
 ```
 
-The first run fails at `git clone` and prints the droplet's deploy public key —
-register it, then re-run:
+The first clone fails until the printed public key is registered read-only:
 
 ```bash
 gh repo deploy-key add <key.pub> --repo paulingalls/beacon --title beacon-droplet
-ssh -i ~/.ssh/<key> root@<droplet-ip> 'bash -s' < scripts/provision-droplet.sh
 ```
 
-> To bring a droplet up from a branch before it has merged to `main`, set
-> `DEPLOY_BRANCH=<branch>` in the SSH command. Steady-state deploys track `main`.
+Rerun the initial command. `DEPLOY_BRANCH` defaults to `release`; override it
+only for a disposable branch validation. Without an enrolled running Tailscale
+node the script installs everything else, prints the enrollment step and exits
+nonzero, leaving SSH/firewall access unchanged. Enroll interactively:
+
+```bash
+sudo tailscale up --hostname=beacon-prod
+```
+
+Approve `tag:beacon` in the tailnet admin console (Paul's ACL grants
+`autogroup:admin` TCP 22). Verify a fresh `beacon` login over Tailscale and
+`sudo -n true`, with the DO console available. Then rerun from your workstation:
+
+```bash
+ssh beacon@beacon-prod 'sudo bash -s' < scripts/provision-droplet.sh
+```
+
+Configure the local `beacon` SSH alias to the tailnet host before using it.
+The enrolled rerun writes `00-hardening.conf` before cloud-init's SSH config:
+root/password/keyboard-interactive login off, publickey required, MaxAuthTries 3,
+X11 forwarding off; `sshd -t` must pass before reloading `ssh`. It sets ufw deny
+incoming, allow outgoing, 80/443 and incoming `tailscale0`, enables ufw, then removes public
+22 rules (IPv4 and IPv6). OpenSSH runs over Tailscale;
+`tailscale up` does not enable Tailscale SSH. Remove public 22 from DO's
+`beacon-fw` separately and verify a fresh tailnet login and external port probe.
+
+The script preserves Ubuntu security update origins, adds Caddy
+`cloudsmith/caddy/stable` and `Tailscale` origins, and configures required reboots
+at 10:00 UTC with the system timezone UTC. Before enabling the timer, validate
+`systemd-analyze verify` on installed units, `sshd -t` and `sshd -T`,
+`apt-cache policy caddy tailscale`, `unattended-upgrade --dry-run --debug`,
+`timedatectl` and `ufw status verbose`. Reruns leave timer state unchanged.
 
 ---
 
@@ -178,35 +200,68 @@ systemctl enable --now beacon
 
 These map to `ServerEnv` in [`apps/server/src/server.ts`](../apps/server/src/server.ts).
 
-Finally, after confirming `ssh beacon@<ip>` works in a separate session, disable
-root SSH (`PermitRootLogin no`, reload sshd) — last, to avoid a lockout.
+## 5. Pull deploy and cut-over
 
----
+[`.github/workflows/deploy.yml`](../.github/workflows/deploy.yml) runs reusable
+`ci.yml` on each push to `main`. Only after it passes does GITHUB_TOKEN
+(`contents: write` in the deploy job) push that exact SHA to `release`, without
+force, after unshallowing history. The runner fetches main and release together,
+under a nonblocking flock. It skips HEAD and last-failed, refuses off-main or
+non-forward releases without resetting, otherwise resets and runs the unchanged
+`scripts/deploy.sh`: install → migrate → restart → health-check → rollback.
+A failed deploy records the captured release even if deploy.sh restored HEAD.
+The workflow polls public `/health` for up to five minutes for status ok and that
+boot commit; failed-run email is the deployment alarm. Keep those notifications on.
 
-## 5. Autodeploy on merge to `main`
+`main` holds releases; integration happens on `develop`. GitHub has no inbound
+access to the droplet. The droplet's GitHub key is read-only. Deploying code still
+permits execution as `beacon`, which has passwordless sudo.
 
-[`.github/workflows/deploy.yml`](../.github/workflows/deploy.yml) triggers on
-push to `main`, re-runs the full CI suite via the reusable `ci.yml` as a hard
-gate, then SSHes to the droplet and runs `~/deploy.sh` (which fast-forwards
-`~/app` to `origin/main` and runs [`scripts/deploy.sh`](../scripts/deploy.sh)).
-It needs two repo secrets:
+**Lead cut-over, after develop merge and before the release PR merges:**
 
-```bash
-gh secret set DROPLET_IP --repo paulingalls/beacon --body <droplet-ip>
-gh secret set SSH_PRIVATE_KEY --repo paulingalls/beacon < ~/.ssh/<deploy-key>
-```
+1. Keep public 22 available. Do not rerun provisioning during this installation:
+   it would apply lockdown before the pull flow is proven. Fetch files from
+   develop without changing production HEAD, as beacon:
 
-`main` is releases-only; integration happens on `develop` (see
-[`BRANCH_PROTECTION.md`](./BRANCH_PROTECTION.md)). A `develop`→`main` PR is a
-release. `scripts/deploy.sh` rolls back to the previous commit (code only) if the
-new commit fails its health check.
+   ```bash
+   set -euo pipefail
+   git -C ~/app fetch origin develop
+   git -C ~/app show origin/develop:deploy/beacon-deploy.sh | sudo install -m 755 /dev/stdin /usr/local/bin/beacon-deploy
+   git -C ~/app show origin/develop:deploy/beacon-deploy.service | sudo install -m 644 /dev/stdin /etc/systemd/system/beacon-deploy.service
+   git -C ~/app show origin/develop:deploy/beacon-deploy.timer | sudo install -m 644 /dev/stdin /etc/systemd/system/beacon-deploy.timer
+   sudo systemctl daemon-reload
+   ```
+
+2. Identify the actual serving SHA (before this release adds health.commit,
+   verify the running deployment's checkout). From an authorized local clone,
+   `git push origin <serving-sha>:refs/heads/release`. Never seed an unserved tip.
+3. After secrets and first healthy boot, on the droplet:
+
+   ```bash
+   git -C ~/app ls-remote --exit-code origin refs/heads/release
+   sudo systemctl enable --now beacon-deploy.timer
+   journalctl -u beacon-deploy --since '2 minutes ago'
+   ```
+
+   Confirm a real tick skips the serving SHA.
+4. Merge the release PR and confirm the actual workflow health poll goes green.
+5. Delete GitHub secrets `SSH_PRIVATE_KEY` and `DROPLET_IP`, retire `~/deploy.sh`
+   and remove the CI public key from authorized_keys. Preserve maintenance access.
+6. Rerun the shipped provisioner over Tailscale to apply/verify the enrolled path.
+   Remove public 22 from `beacon-fw` and ufw; verify fresh OpenSSH/sudo over
+   Tailscale and that external TCP 22 is closed. Keep the DO console as break-glass.
+
+Later runner/unit changes require explicit reinstall with the timer paused and
+service idle; a checkout reset cannot update `/usr/local/bin/beacon-deploy`.
+For pause, retry, manual rollback and timeout recovery see [OPERATIONS.md](./OPERATIONS.md).
+For macOS runner tests install real flock with `brew install flock`.
 
 ---
 
 ## 6. Smoke checks
 
 ```bash
-# Health probe — DB-free, must return {"status":"ok"} even during a DB outage.
+# Health probe — DB-free, must return status ok and the full boot commit even during a DB outage.
 curl https://beacon.vodshorter.com/health
 
 # URL shortener — a known code answers with a 302 redirect to its destination.
@@ -276,6 +331,10 @@ policy.
 ## Self-contained container deployment
 
 Run these commands from the repository root with Docker Engine/Compose available.
+Build the exact clean source revision you identify with `git rev-parse HEAD`;
+rebuild for every revision. The required BEACON_COMMIT build argument is baked
+image metadata, never a runtime deployment target override. Images exclude .git;
+health reports that built SHA, while checkout boots capture their own HEAD once.
 Acquire the Bun, Postgres and Caddy images before isolating Beacon. Choose unique
 resource names, an absolute CONFIG_DIR outside the repo, and fresh secrets; the
 example uses shell variables so multiple installations can coexist.
@@ -306,7 +365,7 @@ docker pull caddy:2-alpine
 
 <!-- container-build -->
 ```bash
-docker build --build-arg BUN_VERSION="$(cat .bun-version)" -t "$IMAGE" .
+docker build --build-arg BEACON_COMMIT="$(git rev-parse HEAD)" --build-arg BUN_VERSION="$(cat .bun-version)" -t "$IMAGE" .
 ```
 
 <!-- container-network -->
@@ -427,6 +486,9 @@ CDN dependency needs browser internet access and is not server outbound traffic.
 
 ## Related
 
+- [`deploy/beacon-deploy.sh`](../deploy/beacon-deploy.sh) — external pull runner.
+- [`deploy/beacon-deploy.service`](../deploy/beacon-deploy.service) — deploy service.
+- [`deploy/beacon-deploy.timer`](../deploy/beacon-deploy.timer) — minute timer.
 - [`deploy/beacon.service`](../deploy/beacon.service) — systemd unit.
 - [`deploy/Caddyfile`](../deploy/Caddyfile) — reverse proxy / TLS.
 - [`scripts/provision-droplet.sh`](../scripts/provision-droplet.sh) — provisioning.

@@ -100,9 +100,17 @@ describe.skipIf(!TEST_DB)('apps/server host', () => {
     // Point at an unreachable DB. createDb is fail-soft (REQUIREMENTS §1.3 — never throws),
     // so buildServer still succeeds; /health answering 200 proves it issues no query.
     const { app } = build({ DATABASE_URL: 'postgres://beacon:beacon@127.0.0.1:1/beacon' });
-    const res = await app.fetch(new Request('http://host/health'));
-    expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ status: 'ok' });
+    const server = Bun.serve({ port: 0, hostname: '127.0.0.1', fetch: app.fetch });
+    try {
+      const res = await fetch(new URL('/health', server.url));
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({
+        status: 'ok',
+        commit: Bun.spawnSync(['git', 'rev-parse', 'HEAD']).stdout.toString().trim(),
+      });
+    } finally {
+      await server.stop(true);
+    }
   });
 
   test('ingest lands events under the batch product_id', async () => {
