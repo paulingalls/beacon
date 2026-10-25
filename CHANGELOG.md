@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.13 — 2026-10-24
+
+- Publish CI-gated releases for a minute droplet timer to pull; remove inbound GitHub SSH deployment. Reject off-main releases and automatic downgrades, serialize deploys, and suppress repeated failed targets.
+- Report the running process boot commit in DB-free `/health`; CI waits for that exact commit.
+- Provision Tailscale, SSH/UFW hardening after enrollment, and third-party security updates with required reboots at 10:00 UTC. Document cut-over, retry and manual rollback.
+- **Breaking for self-built containers:** build with `--build-arg BEACON_COMMIT="$(git rev-parse HEAD)"` from the exact clean source revision. Images without a valid full commit now fail at boot. This is image metadata; rebuild for each revision.
+
+The SDK, client, and server manifests all declare version `0.2.13`. SDK and client behavior is unchanged.
+
 ## 0.2.12 — 2026-10-24
 
 - Pin Bun 1.4.4 (eMudhra CA distrust, brotli CVE-2026-111497) in `.bun-version` for CI, provisioning and container builds; deployment refuses a runtime that does not match the pin.
