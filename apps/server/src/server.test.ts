@@ -7,9 +7,9 @@ import { createBeacon } from './createBeacon';
 import { buildServer } from './server';
 
 // Smoke test for the first-party host app (sprint-012 story-001). Boots the app via
-// buildServer and exercises the four
-// surfaces it serves plus the DB-free /health probe. DB-gated like the rest of the
-// integration suite: the bunfig preload resolves TEST_DATABASE_URL before this evaluates.
+// buildServer and exercises the four surfaces it serves plus the DB-free /health probe.
+// DB-gated like the rest of the integration suite: the bunfig preload resolves
+// TEST_DATABASE_URL before this evaluates.
 registerDbCoverageGuard();
 
 const ADMIN_TOKEN = 'test-admin-secret';
