@@ -135,6 +135,7 @@ const faults: Array<[string, string, (f: Awaited<ReturnType<typeof fixture>>) =>
       f.command(['git', 'update-index', '--skip-worktree', 'payload'], join(f.root, 'app'));
       f.put('app/payload', 'forged\n');
     },
+    'payload',
   ],
   [
     'hidden untracked file',

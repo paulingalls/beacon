@@ -213,7 +213,7 @@ processes() {
 checkout() (
   exec 9< "$LOCK"
   flock -w 60 9
-  local release untracked
+  local release changed untracked
   mkdir -p "$CACHE"
   trusted_git() {
     env -i PATH="$PATH" HOME=/root GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null \
@@ -228,7 +228,8 @@ checkout() (
   release=$(trusted_git rev-parse --verify refs/heads/release^{commit})
   trusted_git --work-tree="$APP" read-tree "$release"
   trusted_git --work-tree="$APP" update-index -q --refresh
-  trusted_git --work-tree="$APP" diff-files --quiet
+  changed=$(trusted_git --work-tree="$APP" diff-files --name-only)
+  [ -z "$changed" ] || { printf '%s\n' "$changed"; return 1; }
   untracked=$(trusted_git --work-tree="$APP" ls-files --others --exclude=node_modules/)
   [ -z "$untracked" ] || { printf '%s\n' "$untracked"; return 1; }
 )
