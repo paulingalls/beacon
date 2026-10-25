@@ -207,7 +207,7 @@ Before the 0.2.15 release, the lead installs the managed cluster CA and env line
 on the existing host. Old code ignores the new variable. From the workstation:
 
 ```bash
-doctl --context default databases get-ca 9785744c-ed60-4075-9a2f-9d65247982ab > /tmp/beacon-db-ca.crt
+doctl --context default databases get-ca 9785744c-ed60-4075-9a2f-9d65247982ab --no-header > /tmp/beacon-db-ca.crt
 openssl x509 -in /tmp/beacon-db-ca.crt -noout -subject -dates
 scp /tmp/beacon-db-ca.crt beacon:/tmp/beacon-db-ca.crt
 ssh beacon 'sudo install -d -o root -g root -m 0755 /etc/beacon && sudo install -o root -g root -m 0644 /tmp/beacon-db-ca.crt /etc/beacon/db-ca.crt && rm /tmp/beacon-db-ca.crt'
