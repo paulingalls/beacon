@@ -136,11 +136,7 @@ export async function outbound(f: ContainerFixture) {
       ['trace-command-mismatch', [], ['bun', 'apps/server/src/server.ts']],
       [
         'trace-source-mismatch',
-        serverMutation(
-          f,
-          'console.log(`[server] listening on :' + '$' + '{port}`);',
-          'console.log(`[server] ready on :' + '$' + '{port}`);',
-        ),
+        serverMutation(f, '[server] listening on', '[server] ready on'),
         undefined,
       ],
     ] as const) {

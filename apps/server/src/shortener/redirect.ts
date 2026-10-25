@@ -85,7 +85,7 @@ function logClick(c: Context, opts: RedirectOptions, record: ShortLinkRecord): v
     userId,
     visitorToken,
     platform,
-    properties: { code: record.code, destination: record.destination },
+    properties: { code: record.code },
     context: scrubReferrerContext(context, opts.referrerMode),
     attribution,
   });

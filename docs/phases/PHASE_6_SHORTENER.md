@@ -89,7 +89,7 @@ Build a URL shortener that lives on the same Postgres instance, logs every redir
   4. Push a `short_link_click` event to the event buffer with:
      - `product_id` from the short link record
      - `event_type`: `short_link_click`
-     - `properties`: `{ code, destination }`
+     - `properties`: `{ code }` — a destination may carry a bearer credential; retrieve it by joining the event's `properties.code` to `beacon_short_links.code`.
      - `attribution`: campaign data from the short link record merged with any request URL params per `REQUIREMENTS.md` §3.3 (short link campaign data takes precedence)
      - Standard request metadata (IP hash, user-agent, referrer)
   5. Return `302` redirect to `destination`
