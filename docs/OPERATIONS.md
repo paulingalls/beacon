@@ -207,13 +207,17 @@ Triage the failed name before changing the baseline:
   scopes group existing processes and are excluded from the file check.
 - **Processes**: a daemon may still run a deleted binary after an upgrade.
   Confirm the upgrade and restart that daemon, then rerun the check.
-- **Checkout**: compare the clean app HEAD with GitHub's authoritative `release`.
-  Root runs `git ls-remote` against the explicit repository URL outside the app
-  repo, ignoring inherited Git configuration and app SSH config. It uses the
-  read-only `/home/beacon/.ssh/github_deploy` key and root-owned
-  `/etc/beacon-integrity/known_hosts`, with strict checking and no global fallback.
-  Local tracking refs cannot authorize a checkout. Lookup failure fails Checkout.
-  The check waits for the deploy lock, never fetches, resets or cleans.
+- **Checkout**: compare the served files with GitHub's authoritative `release`
+  tree. Root fetches the explicit repository into the root-owned bare mirror at
+  `/var/cache/beacon-integrity/mirror.git`, ignoring inherited Git configuration
+  and app SSH config. It uses the read-only `/home/beacon/.ssh/github_deploy` key
+  and root-owned `/etc/beacon-integrity/known_hosts`, with strict checking and no
+  global fallback. A fresh temporary index compares tracked files without reading
+  the app repository's config, index, refs or objects. Only `node_modules/` at any
+  depth is excluded from untracked inventory; ignored paths such as `.env.local`
+  are reported. Inspect each reported path before removing or restoring it.
+  Transport failures also fail Checkout and alert. The deploy lock covers the
+  fetch and comparison; the check never resets or cleans the app.
 - **Bun**: compare the pin/installed runtime with the official Linux release.
   The root cache keys binary digests by version and asset, after verifying the zip.
 
@@ -354,7 +358,7 @@ ssh beacon "timeout 5 bash -c 'cat </dev/null >/dev/tcp/<private-db-host>/25060'
 ### Migrations didn't apply
 ```bash
 ssh beacon
-sudo -u beacon -H bash -lc 'cd /home/beacon/app && set -a; . ~/.env.production; set +a; ~/.bun/bin/bun run migrate'
+sudo -u beacon -H bash -lc 'cd /home/beacon/app && set -a; . ~/.env.production; set +a; ~/.bun/bin/bun --no-env-file run apps/server/src/storage/migrate.ts'
 ```
 Idempotent + advisory-locked; safe to re-run. `permission denied for schema
 public` ⇒ the GRANT in DEPLOYMENT.md §1b was never applied.
