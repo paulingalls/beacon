@@ -1,0 +1,18 @@
+[Unit]
+Description=Beacon host integrity check and failure email
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+ExecStart=/usr/local/sbin/beacon-integrity
+TimeoutStartSec=8min
+TimeoutStopSec=45s
+KillMode=mixed
+Environment=PATH=/usr/sbin:/usr/bin:/sbin:/bin
+Environment=INTEGRITY_ROOT= INTEGRITY_APP=/home/beacon/app INTEGRITY_POLICY=/etc/beacon-integrity
+Environment=INTEGRITY_CACHE=/var/cache/beacon-integrity INTEGRITY_LOCK=/home/beacon/.local/state/beacon-deploy/lock
+Environment=INTEGRITY_BUN=/home/beacon/.bun/bin/bun INTEGRITY_ALERT_ENV=/etc/beacon-integrity/alert.env
+Environment=INTEGRITY_RELEASE_BASE=https://github.com/oven-sh/bun/releases/download/bun-v INTEGRITY_ALERT_BASE=https://api.resend.com
+UMask=0077
