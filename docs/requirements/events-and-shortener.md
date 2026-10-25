@@ -101,7 +101,7 @@ Protected by the same `isAdmin` check as the query API.
 
 The short URL base domain is configurable via `shortDomain` config (e.g., `https://pi.ink`).
 
-**Rate limit:** 100 link creations per hour per admin user.
+**Rate limit:** Default 100 link creations per hour per admin user, falling back to client IP when the host supplies no user identity (as in the deployed server). Configurable via `SHORT_LINK_CREATE_RATE_LIMIT` / `SHORT_LINK_CREATE_RATE_WINDOW_MS`.
 
 #### `GET /:code` — Redirect
 
