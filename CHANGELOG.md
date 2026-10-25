@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.16 — 2026-10-25
+
+- Compare the served checkout with independently fetched GitHub release objects using a root-owned mirror and temporary index. Report ignored untracked files, hidden tracked edits and forged app repository state; exclude only node_modules at any depth.
+- Disable automatic dotenv loading in the service and deploy install/migration processes. Continue using the explicit systemd EnvironmentFile and deploy migration environment.
+
+The SDK, client, and server manifests all declare version `0.2.16`. SDK and client behavior is unchanged.
+
 ## 0.2.15 — 2026-10-25
 
 - Verify managed Postgres certificates and hostnames using the optional `DATABASE_CA_CERT` PEM path in both server and migration clients. Invalid explicit CA configuration fails before connecting; unset preserves local/CI behavior.
