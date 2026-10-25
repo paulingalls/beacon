@@ -8,6 +8,7 @@ test('eleven named verdicts, usrmerge ownership, and warm authenticated Bun cach
   try {
     f.put('app/node_modules/root/index.js', 'dependency');
     f.put('app/packages/example/node_modules/nested/index.js', 'dependency');
+    f.put('app/apps/server/node_modules/nested/index.js', 'dependency');
     const cold = await f.run();
     expect(cold.code, cold.output).toBe(0);
     expect(cold.output.match(/^PASS .+:/gm)?.map((x) => x.slice(5, -1))).toEqual(names);
@@ -128,6 +129,12 @@ const faults: Array<[string, string, (f: Awaited<ReturnType<typeof fixture>>) =>
   ],
   ['dirty checkout', 'Checkout', (f) => f.put('app/.bun-version', '1.4.4\n\n')],
   ['ignored env file', 'Checkout', (f) => f.put('app/.env.local', 'PLANTED=yes\n'), '.env.local'],
+  [
+    'node_modules inside source',
+    'Checkout',
+    (f) => f.put('app/apps/server/src/node_modules/hono/index.js', 'planted'),
+    'apps/server/src/node_modules/hono/index.js',
+  ],
   [
     'hidden tracked edit',
     'Checkout',

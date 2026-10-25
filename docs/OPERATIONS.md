@@ -214,8 +214,9 @@ Triage the failed name before changing the baseline:
   and root-owned `/etc/beacon-integrity/known_hosts`, with strict checking and no
   global fallback. A fresh temporary index compares tracked files without reading
   the app repository's config, index, refs or objects, and names each changed
-  tracked path; do not trust `git status` in the app for triage. Only `node_modules/` at any
-  depth is excluded from untracked inventory; ignored paths such as `.env.local`
+  tracked path; do not trust `git status` in the app for triage. Only Bun's install directories
+  (`/node_modules/`, `/apps/*/node_modules/`, `/packages/*/node_modules/`) are excluded
+  from untracked inventory; a `node_modules` anywhere else is reported; ignored paths such as `.env.local`
   are reported. Inspect each reported path before removing or restoring it.
   Transport failures also fail Checkout and alert. The deploy lock covers the
   fetch and comparison; the check never resets or cleans the app.

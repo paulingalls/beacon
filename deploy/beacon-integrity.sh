@@ -230,7 +230,8 @@ checkout() (
   trusted_git --work-tree="$APP" update-index -q --refresh
   changed=$(trusted_git --work-tree="$APP" diff-files --name-only)
   [ -z "$changed" ] || { printf '%s\n' "$changed"; return 1; }
-  untracked=$(trusted_git --work-tree="$APP" ls-files --others --exclude=node_modules/)
+  untracked=$(trusted_git --work-tree="$APP" ls-files --others \
+    --exclude=/node_modules/ --exclude=/apps/*/node_modules/ --exclude=/packages/*/node_modules/)
   [ -z "$untracked" ] || { printf '%s\n' "$untracked"; return 1; }
 )
 hash() { sha256sum "$1" | awk '{print $1}'; }
