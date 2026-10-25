@@ -6,6 +6,8 @@ import { fixture, names } from './integrity.fixture';
 test('eleven named verdicts, usrmerge ownership, and warm authenticated Bun cache', async () => {
   const f = await fixture();
   try {
+    f.put('app/node_modules/root/index.js', 'dependency');
+    f.put('app/packages/example/node_modules/nested/index.js', 'dependency');
     const cold = await f.run();
     expect(cold.code, cold.output).toBe(0);
     expect(cold.output.match(/^PASS .+:/gm)?.map((x) => x.slice(5, -1))).toEqual(names);
@@ -14,11 +16,28 @@ test('eleven named verdicts, usrmerge ownership, and warm authenticated Bun cach
     const warm = await f.run();
     expect(warm.code, warm.output).toBe(0);
     expect(f.downloads()).toBe(2);
+    const args = readFileSync(join(f.root, 'ssh-args'), 'utf8');
+    for (const required of [
+      '-F /dev/null',
+      'IdentitiesOnly=yes',
+      'StrictHostKeyChecking=yes',
+      `UserKnownHostsFile=${f.root}/policy/known_hosts`,
+      'GlobalKnownHostsFile=/dev/null',
+      '/home/beacon/.ssh/github_deploy',
+      "git-upload-pack 'paulingalls/beacon.git'",
+    ])
+      expect(args).toContain(required);
+    f.put('remote-error', '');
+    const failed = await f.run();
+    expect(failed.code).not.toBe(0);
+    expect(failed.output).toContain('FAIL Checkout:');
+    expect(f.alerts).toHaveLength(1);
+    expect(f.alerts[0]?.text).toContain('FAIL Checkout:');
   } finally {
     f.close();
   }
 });
-const faults: Array<[string, string, (f: Awaited<ReturnType<typeof fixture>>) => void]> = [
+const faults: Array<[string, string, (f: Awaited<ReturnType<typeof fixture>>) => void, string?]> = [
   ['package executable', 'Packages', (f) => f.put('verify', '??5?????? /usr/bin/owned\n')],
   [
     'package helper outside bin/lib',
@@ -108,29 +127,37 @@ const faults: Array<[string, string, (f: Awaited<ReturnType<typeof fixture>>) =>
     (f) => symlinkSync('/usr/bin/deleted (deleted)', join(f.root, 'proc/1/exe')),
   ],
   ['dirty checkout', 'Checkout', (f) => f.put('app/.bun-version', '1.4.4\n\n')],
+  ['ignored env file', 'Checkout', (f) => f.put('app/.env.local', 'PLANTED=yes\n'), '.env.local'],
   [
-    'forged local release ref',
+    'hidden tracked edit',
     'Checkout',
     (f) => {
-      const tree = f.command(['git', 'rev-parse', 'HEAD^{tree}'], join(f.root, 'app'));
-      const sha = f.command(
-        [
-          'git',
-          '-c',
-          'user.name=test',
-          '-c',
-          'user.email=test@test',
-          'commit-tree',
-          tree,
-          '-m',
-          'remote release',
-        ],
-        join(f.root, 'remote'),
-      );
-      f.command(['git', 'update-ref', 'refs/heads/release', sha], join(f.root, 'remote'));
+      f.command(['git', 'update-index', '--skip-worktree', 'payload'], join(f.root, 'app'));
+      f.put('app/payload', 'forged\n');
     },
   ],
-  ['release transport failure', 'Checkout', (f) => f.put('remote-error', '')],
+  [
+    'hidden untracked file',
+    'Checkout',
+    (f) => {
+      f.command(['git', 'config', 'status.showUntrackedFiles', 'no'], join(f.root, 'app'));
+      f.put('app/untracked', 'forged\n');
+    },
+  ],
+  [
+    'forged app objects',
+    'Checkout',
+    (f) => {
+      const app = join(f.root, 'app');
+      const release = f.command(['git', 'rev-parse', 'HEAD'], app);
+      f.put('app/payload', 'forged\n');
+      f.command(['git', 'add', 'payload'], app);
+      f.command(['git', 'commit', '-qm', 'forged'], app);
+      const forged = f.command(['git', 'rev-parse', 'HEAD'], app);
+      f.command(['git', 'replace', release, forged], app);
+      f.command(['git', 'reset', '--hard', release], app);
+    },
+  ],
   [
     'absent release',
     'Checkout',
@@ -140,7 +167,7 @@ const faults: Array<[string, string, (f: Awaited<ReturnType<typeof fixture>>) =>
   ],
   ['changed Bun', 'Bun', (f) => f.put('bun', 'changed')],
 ];
-for (const [fault, name, inject] of faults)
+for (const [fault, name, inject, expected] of faults)
   test(`alerts once for ${fault}`, async () => {
     const f = await fixture();
     try {
@@ -151,6 +178,10 @@ for (const [fault, name, inject] of faults)
       expect(f.alerts).toHaveLength(1);
       expect(f.alerts[0]?.text).toContain(`FAIL ${name}:`);
       expect(r.output).toContain('Alert accepted: test-message');
+      if (expected) {
+        expect(r.output).toContain(expected);
+        expect(f.alerts[0]?.text).toContain(expected);
+      }
     } finally {
       f.close();
     }
@@ -227,24 +258,3 @@ for (const group of ['sudo', 'admin']) {
     });
   }
 }
-test('authoritative remote succeeds despite a stale app tracking ref', async () => {
-  const f = await fixture();
-  try {
-    f.command(['git', 'update-ref', '-d', 'refs/remotes/origin/release'], join(f.root, 'app'));
-    const result = await f.run();
-    expect(result.code, result.output).toBe(0);
-    const args = readFileSync(join(f.root, 'ssh-args'), 'utf8');
-    for (const required of [
-      '-F /dev/null',
-      'IdentitiesOnly=yes',
-      'StrictHostKeyChecking=yes',
-      `UserKnownHostsFile=${f.root}/policy/known_hosts`,
-      'GlobalKnownHostsFile=/dev/null',
-      '/home/beacon/.ssh/github_deploy',
-      "git-upload-pack 'paulingalls/beacon.git'",
-    ])
-      expect(args).toContain(required);
-  } finally {
-    f.close();
-  }
-});
