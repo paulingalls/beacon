@@ -54,7 +54,7 @@ set -e
 WORK=$(mktemp -d)
 jq -e '(.keys | type == "object") and (.uid0 | type == "array") and
   (.logins | type == "array") and (.sudoers | type == "object") and
-  (.units | type == "array")' "$POLICY/allowlist" >/dev/null
+  (.units | type == "array") and (.links | type == "object")' "$POLICY/allowlist" >/dev/null
 set +e
 
 as_app() {
@@ -145,17 +145,25 @@ suid() {
   done < "$WORK/suid"
 }
 units() {
-  local dir file path target status
+  local dir file path target status expected resolved
   : > "$WORK/units"
   for dir in /etc/systemd/system /etc/systemd/system.control /etc/systemd/system.attached /run/systemd/system /run/systemd/system.control /run/systemd/system.attached /run/systemd/transient /run/systemd/generator.early /run/systemd/generator /run/systemd/generator.late /usr/local/lib/systemd/system /usr/lib/systemd/system; do
     [ ! -d "$ROOT$dir" ] || find "$ROOT$dir" \( -type f -o -type l \) -print0 >> "$WORK/units"
   done
   while IFS= read -r -d '' file; do
     path=${file#"$ROOT"}
+    # Runtime scopes group existing processes; they cannot start programs.
+    case "$path" in /run/systemd/transient/*.scope) continue ;; esac
     if [ -L "$file" ]; then
       target=$(readlink "$file")
-      case "$target" in /*) target=$ROOT$target ;; *) target=$(dirname "$file")/$target ;; esac
-      path=$(realpath -e "$target"); path=${path#"$ROOT"}
+      case "$target" in /*) resolved=$ROOT$target ;; *) resolved=$(dirname "$file")/$target ;; esac
+      if ! path=$(realpath -e "$resolved" 2>/dev/null); then
+        # systemd permits dangling dependency links. Approve exact reviewed pairs.
+        expected=$(jq -er --arg path "${file#"$ROOT"}" '.links[$path]' "$POLICY/allowlist")
+        [ "$target" = "$expected" ]
+        continue
+      fi
+      path=${path#"$ROOT"}
       # Packaged masks point at /dev/null, which is not itself package-owned.
       owned "${file#"$ROOT"}" && continue
       status=$?; [ "$status" -eq 1 ] || return 2

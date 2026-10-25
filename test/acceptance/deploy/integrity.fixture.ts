@@ -75,6 +75,12 @@ export async function fixture() {
   const policy = JSON.parse(readFileSync('deploy/integrity-allowlist', 'utf8'));
   policy.keys.paul = [fingerprint];
   put('policy/allowlist', JSON.stringify(policy));
+  put('run/systemd/transient/session-1.scope', '[Scope]\n');
+  mkdirSync(join(root, 'run/systemd/generator/multi-user.target.wants'), { recursive: true });
+  symlinkSync(
+    '../systemd-networkd.service',
+    join(root, 'run/systemd/generator/multi-user.target.wants/systemd-networkd.service'),
+  );
   put('dev/null', '');
   symlinkSync('/dev/null', join(root, 'usr/lib/systemd/system/masked.service'));
   symlinkSync(

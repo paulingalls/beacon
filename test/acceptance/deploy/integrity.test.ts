@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { readFileSync, symlinkSync } from 'node:fs';
+import { readFileSync, symlinkSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { fixture, names } from './integrity.fixture';
 
@@ -45,7 +45,19 @@ const faults: Array<[string, string, (f: Awaited<ReturnType<typeof fixture>>) =>
   ],
   ['unowned SUID', 'SUID/SGID', (f) => f.put('usr/bin/intruder', 'bad', 0o4755)],
   ['literal dpkg wildcard', 'SUID/SGID', (f) => f.put('usr/bin/*', 'bad', 0o4755)],
-  ['unknown timer', 'Units', (f) => f.put('etc/systemd/system/intruder.timer', 'bad')],
+  ['unknown timer', 'Units', (f) => f.put('run/systemd/transient/intruder.timer', 'bad')],
+  [
+    'changed generated dependency link',
+    'Units',
+    (f) => {
+      const path = join(
+        f.root,
+        'run/systemd/generator/multi-user.target.wants/systemd-networkd.service',
+      );
+      unlinkSync(path);
+      symlinkSync('../intruder.service', path);
+    },
+  ],
   ['loader', 'Loader', (f) => f.put('etc/ld.so.preload', 'bad')],
   [
     'deleted executable',
