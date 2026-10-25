@@ -44,7 +44,7 @@ test('production listener defaults to loopback and permits an explicit public bi
         signal: AbortSignal.timeout(2000),
       });
       if (host) expect((await remote).status).toBe(200);
-      else await expect(remote).rejects.toMatchObject({ code: 'ConnectionRefused' });
+      else await expect(remote).rejects.toThrow('ECONNREFUSED');
     } finally {
       child.kill('SIGTERM');
       const timer = setTimeout(() => child.kill('SIGKILL'), 2000);

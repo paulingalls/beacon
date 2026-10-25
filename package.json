@@ -24,9 +24,9 @@
     "@biomejs/biome": "2.4.15",
     "@pi-innovations/beacon-client": "workspace:*",
     "@pi-innovations/beacon-sdk": "workspace:*",
-    "@playwright/test": "1.60.0",
+    "@playwright/test": "1.64.1",
     "@types/bun": "latest",
-    "hono": "^4.12.21",
+    "hono": "^4.13.13",
     "lefthook": "2.1.8",
     "postgres": "^3.4.5",
     "typescript": "^5.7.0"

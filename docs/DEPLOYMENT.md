@@ -39,6 +39,10 @@ failing the health check and cycling the service.
 
 ---
 
+The runtime is pinned in `.bun-version`. CI, provisioning and the documented Docker
+build read this pin. Deploy refuses a different runtime before any install,
+migration or restart; see [runtime recovery](./OPERATIONS.md) before retrying.
+
 ## Prerequisites
 
 - [`doctl`](https://docs.digitalocean.com/reference/doctl/) and `gh`, both
@@ -302,7 +306,7 @@ docker pull caddy:2-alpine
 
 <!-- container-build -->
 ```bash
-docker build -t "$IMAGE" .
+docker build --build-arg BUN_VERSION="$(cat .bun-version)" -t "$IMAGE" .
 ```
 
 <!-- container-network -->
