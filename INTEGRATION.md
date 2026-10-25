@@ -76,7 +76,7 @@ The Beacon server (`apps/server`) is the single writer: it holds the Postgres cr
 | `PORT` | no | Listen port (default `8080`). |
 | `HOST` | no | Listen address: default `127.0.0.1` on the host, `0.0.0.0` in the Docker image; set explicitly to override. Host Caddy proxies to `localhost:8080`. |
 
-The canonical, deployable wiring lives in [`apps/server/src/server.ts`](./apps/server/src/server.ts) — `/health` and the query router mount before the shortener's catch-all `GET /:code`, and the admin gate is a constant-time bearer compare that fails closed when `ADMIN_TOKEN` is unset. Deployment to a DigitalOcean droplet (Caddy + systemd, autodeploy on merge to `main`) is covered in [`docs/DEPLOYMENT.md`](./docs/DEPLOYMENT.md).
+The canonical, deployable wiring lives in [`apps/server/src/server.ts`](./apps/server/src/server.ts) — `/health` reports status and the commit captured at process startup; it and the query router mount before the shortener's catch-all `GET /:code`, and the admin gate is a constant-time bearer compare that fails closed when `ADMIN_TOKEN` is unset. Deployment to a DigitalOcean droplet (Caddy + systemd, CI-gated release publication on merge to `main`, pulled by a droplet timer) is covered in [`docs/DEPLOYMENT.md`](./docs/DEPLOYMENT.md).
 
 ## Server-side products (Bun.serve / Hono)
 

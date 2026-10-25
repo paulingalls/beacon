@@ -1,0 +1,11 @@
+[Unit]
+Description=Beacon pull deployment
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=beacon
+WorkingDirectory=/home/beacon/app
+ExecStart=/usr/local/bin/beacon-deploy
+TimeoutStartSec=15min

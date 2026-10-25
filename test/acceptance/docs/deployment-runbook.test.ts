@@ -18,6 +18,9 @@ const runbook = await Bun.file(join(REPO_ROOT, 'docs', 'DEPLOYMENT.md')).text();
 describe('docs/DEPLOYMENT.md droplet runbook', () => {
   // The runtime artifacts the runbook must point an operator at.
   test.each([
+    'deploy/beacon-deploy.sh',
+    'deploy/beacon-deploy.service',
+    'deploy/beacon-deploy.timer',
     'deploy/beacon.service', // systemd unit
     'deploy/Caddyfile', // reverse proxy / TLS
     'scripts/provision-droplet.sh', // one-shot provisioning

@@ -1,0 +1,11 @@
+[Unit]
+Description=Poll Beacon release every minute
+
+[Timer]
+OnCalendar=*-*-* *:*:00
+Persistent=true
+AccuracySec=1s
+Unit=beacon-deploy.service
+
+[Install]
+WantedBy=timers.target

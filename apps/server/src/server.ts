@@ -4,6 +4,8 @@
 // reverse proxy / load balancer (§1.3 outage-degrade). Config follows REQUIREMENTS.md §10.
 // This is the entry point the systemd unit (deploy/beacon.service) and Dockerfile invoke.
 
+import { existsSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { type Context, Hono } from 'hono';
 import { verifyTrustedBearer } from './api/auth';
 import { type Beacon, createBeacon } from './createBeacon';
@@ -12,6 +14,7 @@ import { validateReferrerMode } from './visitors/referrer';
 
 /** Environment the host reads (a subset of process.env, injected for testability). */
 export interface ServerEnv {
+  BEACON_COMMIT?: string;
   /** Postgres connection string. Required. */
   DATABASE_URL?: string;
   /** Bearer token gating the dashboard + query API. Unset ⇒ those surfaces fail closed. */
@@ -97,6 +100,16 @@ export function buildServer(env: ServerEnv): { app: Hono; beacon: Beacon } {
     throw new Error('[server] DATABASE_URL is required');
   }
 
+  const root = fileURLToPath(new URL('../../../', import.meta.url));
+  const commit = existsSync(`${root}/.git`)
+    ? Bun.spawnSync(['git', '-C', root, 'rev-parse', 'HEAD']).stdout.toString().trim()
+    : env.BEACON_COMMIT;
+  if (!commit || !/^[0-9a-f]{40}$/.test(commit)) {
+    throw new Error(
+      '[server] A full boot commit is required (checkout HEAD or image BEACON_COMMIT)',
+    );
+  }
+
   const allowlist = parseAllowlist(env.PRODUCT_ALLOWLIST);
   const beacon = createBeacon({
     corsOrigins: parseAllowlist(env.CORS_ORIGINS),
@@ -124,7 +137,7 @@ export function buildServer(env: ServerEnv): { app: Hono; beacon: Beacon } {
   const app = new Hono();
   // /health must not touch Postgres (REQUIREMENTS §1.3 outage-degrade); register first so
   // the shortener catch-all below never claims it.
-  app.get('/health', (c) => c.json({ status: 'ok' }));
+  app.get('/health', (c) => c.json({ status: 'ok', commit }));
   app.route(beacon.basePath, beacon.router());
   app.route('/', beacon.shortener());
 
