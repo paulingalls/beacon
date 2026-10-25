@@ -150,8 +150,9 @@ printf '#!/bin/bash\n/bin/sleep 0.05\n' > "$root/bin/sleep"
 chmod +x "$root/bin/"*
 export PATH="$root/bin:$PATH"
 `;
-  const result = await Bun.$`bash -c ${fixture + poll.replace('SECONDS + 300', 'SECONDS + 1')}`
-    .quiet()
-    .nothrow();
+  // Only the timeout case shortens the deadline: bash SECONDS ticks on wall-clock
+  // seconds, so a one-second deadline can expire before the happy path's second poll.
+  const shipped = timeout ? poll.replace('SECONDS + 300', 'SECONDS + 1') : poll;
+  const result = await Bun.$`bash -c ${fixture + shipped}`.quiet().nothrow();
   expect(result.exitCode, result.stderr.toString()).toBe(timeout ? 1 : 0);
 });
