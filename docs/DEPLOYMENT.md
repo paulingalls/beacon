@@ -124,12 +124,10 @@ git -c tar.umask=0022 archive origin/main scripts deploy | ssh -i ~/.ssh/<mainte
 ssh -i ~/.ssh/<maintenance-key> root@<droplet-ip> 'bash /root/beacon-provision/scripts/provision-droplet.sh'
 ```
 
-The physical asset directory must be root-owned mode 0700; required assets must
-exist, and descendants must be root-owned, free of symlinks and unwritable by
-group/other. Refusal precedes host changes. Root never installs assets from the
-beacon-writable checkout. The explicit archive mask removes Git's default
-group-write bits so the trusted bundle satisfies the guard. Archive delivery from the operator's reviewed source
-is the trust boundary; never archive on the app host.
+Root installs only from this bundle, never from the beacon-writable checkout; archive
+from the operator's reviewed source, never on the app host. The script refuses before
+changing anything unless the directory is root-owned 0700 and every entry is root-owned,
+not a symlink and not group/other-writable (hence `tar.umask=0022`).
 
 The first clone fails until the printed public key is registered read-only:
 
@@ -182,12 +180,7 @@ incoming, allow outgoing, 80/443 and incoming `tailscale0`, enables ufw, then re
 `tailscale up` does not enable Tailscale SSH. Remove public 22 from DO's
 `beacon-fw` separately and verify a fresh tailnet login and external port probe.
 
-The script preserves Ubuntu security update origins, adds Caddy
-`cloudsmith/caddy/stable` and `Tailscale` origins, and configures required reboots
-at 10:00 UTC with the system timezone UTC. Before enabling the pull timer, validate
-`systemd-analyze verify` on installed units, `sshd -t` and `sshd -T`,
-`apt-cache policy caddy tailscale`, `unattended-upgrade --dry-run --debug`,
-`timedatectl` and `ufw status verbose`. Reruns preserve pull timer state and enable the integrity timer.
+Patching and pre-activation validation: see [OPERATIONS.md](./OPERATIONS.md#host-patching-and-validation).
 
 ---
 
@@ -204,32 +197,7 @@ TRUSTED_INGEST_TOKEN=<openssl rand -hex 32>
 SHORT_DOMAIN=https://beacon.vodshorter.com
 ```
 
-Before the 0.2.15 release, the lead installs the managed cluster CA and env line
-on the existing host. Old code ignores the new variable. From the workstation:
-
-```bash
-doctl --context default databases get-ca 9785744c-ed60-4075-9a2f-9d65247982ab --no-header > /tmp/beacon-db-ca.crt
-openssl x509 -in /tmp/beacon-db-ca.crt -noout -subject -dates
-ssh beacon 'sudo install -d -o root -g root -m 0755 /etc/beacon && sudo tee /etc/beacon/db-ca.crt.next >/dev/null && sudo chown root:root /etc/beacon/db-ca.crt.next && sudo chmod 0644 /etc/beacon/db-ca.crt.next && sudo mv /etc/beacon/db-ca.crt.next /etc/beacon/db-ca.crt' < /tmp/beacon-db-ca.crt
-```
-
-Add `DATABASE_CA_CERT=/etc/beacon/db-ca.crt` to `/home/beacon/.env.production`.
-Before release, on the droplet substitute the private host and port from
-DATABASE_URL (do not print its credentials):
-
-```bash
-openssl s_client -starttls postgres -connect <host>:<port> -servername <host> \
-  -CAfile /etc/beacon/db-ca.crt -verify_hostname <host> -verify_return_error </dev/null
-```
-
-Require `Verify return code: 0 (ok)`; resolve a SAN mismatch before releasing.
-After release, confirm migration success in the deploy journal and authenticated
-`/analytics/schema` HTTP 200. Then deliver `origin/main`'s root bundle and rerun
-provisioning as above to install the new checker and GitHub host pins. Run
-`sudo /usr/local/sbin/beacon-integrity` and inspect all eleven PASS verdicts with
-the CA installed; a regular `/etc/beacon/db-ca.crt` needs no integrity allowlist
-entry. Check public HTTPS `/health` with redirects disabled: HTTP 200, status ok,
-and the expected boot commit. See [CA rotation](./OPERATIONS.md#database-ca-rotation).
+Install the cluster CA first: [Database CA install and rotation](./OPERATIONS.md#database-ca-install-and-rotation).
 
 Then reload Caddy (provision installs the Caddyfile but does not reload the
 running Caddy), install, migrate, and start:
@@ -294,23 +262,7 @@ A boot older than ten minutes can trigger a check during provisioning.
 
 Later runner/unit changes require explicit reinstall with the timer paused and
 service idle; a checkout reset cannot update `/usr/local/bin/beacon-deploy`.
-For a selective reinstall after delivering the reviewed root bundle, while paused:
-
-```bash
-sudo install -o root -g root -m 0755 /root/beacon-provision/deploy/beacon-deploy.sh /usr/local/bin/beacon-deploy
-for unit in beacon.service beacon-deploy.service beacon-deploy.timer beacon-integrity.service beacon-integrity.timer; do
-  sudo install -o root -g root -m 0644 "/root/beacon-provision/deploy/$unit" "/etc/systemd/system/$unit"
-done
-sudo install -o root -g root -m 0755 /root/beacon-provision/deploy/beacon-integrity.sh /usr/local/sbin/beacon-integrity
-sudo install -o root -g root -m 0600 /root/beacon-provision/deploy/integrity-allowlist /etc/beacon-integrity/allowlist
-sudo install -o root -g root -m 0600 /root/beacon-provision/deploy/github_known_hosts /etc/beacon-integrity/known_hosts
-sudo install -o root -g root -m 0600 /root/beacon-provision/deploy/Caddyfile /etc/beacon-integrity/Caddyfile
-sudo install -o root -g root -m 0644 /root/beacon-provision/deploy/Caddyfile /etc/caddy/Caddyfile
-sudo systemctl daemon-reload
-sudo systemctl reload caddy
-```
-
-For pause, retry, manual rollback and timeout recovery see [OPERATIONS.md](./OPERATIONS.md).
+For [selective reinstalls](./OPERATIONS.md#reinstalling-root-assets), pause, retry, manual rollback and timeout recovery see OPERATIONS.md.
 For macOS runner tests install `brew install flock coreutils`; Linux fixture
 hosts also need `zip` (the checker itself only needs `unzip`).
 
@@ -336,15 +288,6 @@ curl -i https://beacon.vodshorter.com/analytics/dashboard  # => 403
 ```
 
 ---
-
-## Operations
-
-```bash
-sudo journalctl -u beacon -f     # app logs
-sudo journalctl -u caddy -f      # proxy / TLS logs
-sudo systemctl restart beacon    # manual restart
-sudo systemctl stop beacon-deploy.timer  # pause on-box pulls; wait for idle
-```
 
 ## Grafana database reader
 

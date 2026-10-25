@@ -245,18 +245,71 @@ GitHub host-key changes require an operator review of `https://api.github.com/me
 SSH keys against GitHub's published SSH key fingerprints, then a commit to
 `deploy/github_known_hosts` and delivery/install from the root bundle. Never
 accept a replacement from the app's known_hosts or disable strict checking.
-Runner, unit and baseline reinstalls also use `/root/beacon-provision/deploy`;
-see DEPLOYMENT.md for exact install commands. Reruns preserve the CA and alert.env.
+Reruns preserve the CA and alert.env.
 
-## Database CA rotation
+### Host patching and validation
+
+The script preserves Ubuntu security update origins, adds Caddy
+`cloudsmith/caddy/stable` and `Tailscale` origins, and configures required reboots
+at 10:00 UTC with the system timezone UTC. Before enabling the pull timer, validate
+`systemd-analyze verify` on installed units, `sshd -t` and `sshd -T`,
+`apt-cache policy caddy tailscale`, `unattended-upgrade --dry-run --debug`,
+`timedatectl` and `ufw status verbose`. Reruns preserve pull timer state and enable the integrity timer.
+
+### Reinstalling root assets
+
+Runner, unit and baseline reinstalls use only `/root/beacon-provision/deploy`
+(delivered per DEPLOYMENT.md §3), never the app checkout. For a selective reinstall after delivering the reviewed root bundle, while paused:
+
+```bash
+sudo install -o root -g root -m 0755 /root/beacon-provision/deploy/beacon-deploy.sh /usr/local/bin/beacon-deploy
+for unit in beacon.service beacon-deploy.service beacon-deploy.timer beacon-integrity.service beacon-integrity.timer; do
+  sudo install -o root -g root -m 0644 "/root/beacon-provision/deploy/$unit" "/etc/systemd/system/$unit"
+done
+sudo install -o root -g root -m 0755 /root/beacon-provision/deploy/beacon-integrity.sh /usr/local/sbin/beacon-integrity
+sudo install -o root -g root -m 0600 /root/beacon-provision/deploy/integrity-allowlist /etc/beacon-integrity/allowlist
+sudo install -o root -g root -m 0600 /root/beacon-provision/deploy/github_known_hosts /etc/beacon-integrity/known_hosts
+sudo install -o root -g root -m 0600 /root/beacon-provision/deploy/Caddyfile /etc/beacon-integrity/Caddyfile
+sudo install -o root -g root -m 0644 /root/beacon-provision/deploy/Caddyfile /etc/caddy/Caddyfile
+sudo systemctl daemon-reload
+sudo systemctl reload caddy
+```
+
+## Database CA install and rotation
 
 `DATABASE_CA_CERT=/etc/beacon/db-ca.crt` is required for the managed deployment;
-local plaintext databases leave it unset. See DEPLOYMENT.md for initial doctl
-fetch/install and the mandatory pre-release hostname proof. A bad explicit path
+local plaintext databases leave it unset. A bad explicit path
 or PEM fails before opening Postgres, naming the variable. Handshake failures
 remain certificate/hostname errors, including in the migration CLI.
 
-Fetch the replacement CA using the same cluster UUID and `--context default`,
+Install: before a host first runs 0.2.15 or later, install the managed cluster CA
+and env line. Older code ignores the variable. From the workstation:
+
+```bash
+doctl --context default databases get-ca 9785744c-ed60-4075-9a2f-9d65247982ab --no-header > /tmp/beacon-db-ca.crt
+openssl x509 -in /tmp/beacon-db-ca.crt -noout -subject -dates
+ssh beacon 'sudo install -d -o root -g root -m 0755 /etc/beacon && sudo tee /etc/beacon/db-ca.crt.next >/dev/null && sudo chown root:root /etc/beacon/db-ca.crt.next && sudo chmod 0644 /etc/beacon/db-ca.crt.next && sudo mv /etc/beacon/db-ca.crt.next /etc/beacon/db-ca.crt' < /tmp/beacon-db-ca.crt
+```
+
+Add `DATABASE_CA_CERT=/etc/beacon/db-ca.crt` to `/home/beacon/.env.production`.
+Before release, on the droplet substitute the private host and port from
+DATABASE_URL (do not print its credentials):
+
+```bash
+openssl s_client -starttls postgres -connect <host>:<port> -servername <host> \
+  -CAfile /etc/beacon/db-ca.crt -verify_hostname <host> -verify_return_error </dev/null
+```
+
+Require `Verify return code: 0 (ok)`; resolve a SAN mismatch before releasing.
+After release, confirm migration success in the deploy journal and authenticated
+`/analytics/schema` HTTP 200. Then deliver `origin/main`'s root bundle and rerun
+provisioning (DEPLOYMENT.md §3) to install the new checker and GitHub host pins. Run
+`sudo /usr/local/sbin/beacon-integrity` and inspect all eleven PASS verdicts with
+the CA installed; a regular `/etc/beacon/db-ca.crt` needs no integrity allowlist
+entry. Check public HTTPS `/health` with redirects disabled: HTTP 200, status ok,
+and the expected boot commit.
+
+Rotate: fetch the replacement CA using the same cluster UUID and `--context default`,
 inspect its subject, dates and provider provenance, then stage it beside the
 existing file as root:root 0644. Use the documented `openssl s_client` command
 with `-CAfile /etc/beacon/db-ca.crt.next` and the DATABASE_URL private hostname;
@@ -265,8 +318,8 @@ require verification code 0 before atomically replacing the file on the same fil
 ```bash
 sudo mv /etc/beacon/db-ca.crt.next /etc/beacon/db-ca.crt
 ```
- Keep a valid
-overlap PEM bundle when the provider requires both old and new CAs during
+
+Keep a valid overlap PEM bundle when the provider requires both old and new CAs during
 rotation. CA contents are read when each client is created: pause pulls, wait
 for idle, restart Beacon or deploy, verify the migration journal and authenticated
 schema response, then resume pulls. Never disable verification to recover;
