@@ -1,12 +1,30 @@
 {
-  "keys": {"root": [], "beacon": [], "paul": ["SHA256:WinDDgEVbllrw7W1TuPfxM2k+SNTZZzcGtSZuwFUFVc"]},
-  "uid0": ["root"],
-  "logins": ["beacon", "paul", "root"],
+  "keys": {
+    "root": [],
+    "beacon": [],
+    "paul": [
+      "SHA256:WinDDgEVbllrw7W1TuPfxM2k+SNTZZzcGtSZuwFUFVc"
+    ]
+  },
+  "uid0": [
+    "root"
+  ],
+  "logins": [
+    "beacon",
+    "paul",
+    "root"
+  ],
   "sudoers": {
-    "90-cloud-init-users": ["root ALL=(ALL) NOPASSWD:ALL"],
+    "90-cloud-init-users": [
+      "root ALL=(ALL) NOPASSWD:ALL"
+    ],
     "README": [],
-    "beacon": ["beacon ALL=(root) NOPASSWD: /usr/bin/systemctl restart beacon, /usr/bin/systemctl restart beacon.service"],
-    "paul": ["paul ALL=(ALL) NOPASSWD:ALL"]
+    "beacon": [
+      "beacon ALL=(root) NOPASSWD: /usr/bin/systemctl restart beacon, /usr/bin/systemctl restart beacon.service"
+    ],
+    "paul": [
+      "paul ALL=(ALL) NOPASSWD:ALL"
+    ]
   },
   "units": [
     "/etc/systemd/system/beacon.service",
@@ -14,6 +32,11 @@
     "/etc/systemd/system/beacon-deploy.timer",
     "/etc/systemd/system/beacon-integrity.service",
     "/etc/systemd/system/beacon-integrity.timer",
-    "/etc/systemd/system/vpc-peering.service"
+    "/etc/systemd/system/vpc-peering.service",
+    "/run/systemd/system/netplan-ovs-cleanup.service",
+    "/run/systemd/generator/-.mount",
+    "/run/systemd/generator/boot.mount",
+    "/run/systemd/generator/boot-efi.mount",
+    "/run/systemd/generator/netplan.stamp"
   ]
 }

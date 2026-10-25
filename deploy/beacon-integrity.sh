@@ -147,7 +147,7 @@ suid() {
 units() {
   local dir file path target status
   : > "$WORK/units"
-  for dir in /etc/systemd/system /etc/systemd/system.control /etc/systemd/system.attached /run/systemd/system /run/systemd/system.control /run/systemd/system.attached /run/systemd/transient /usr/local/lib/systemd/system /usr/lib/systemd/system; do
+  for dir in /etc/systemd/system /etc/systemd/system.control /etc/systemd/system.attached /run/systemd/system /run/systemd/system.control /run/systemd/system.attached /run/systemd/transient /run/systemd/generator.early /run/systemd/generator /run/systemd/generator.late /usr/local/lib/systemd/system /usr/lib/systemd/system; do
     [ ! -d "$ROOT$dir" ] || find "$ROOT$dir" \( -type f -o -type l \) -print0 >> "$WORK/units"
   done
   while IFS= read -r -d '' file; do
@@ -156,6 +156,9 @@ units() {
       target=$(readlink "$file")
       case "$target" in /*) target=$ROOT$target ;; *) target=$(dirname "$file")/$target ;; esac
       path=$(realpath -e "$target"); path=${path#"$ROOT"}
+      # Packaged masks point at /dev/null, which is not itself package-owned.
+      owned "${file#"$ROOT"}" && continue
+      status=$?; [ "$status" -eq 1 ] || return 2
     fi
     owned "$path" && continue
     status=$?; [ "$status" -eq 1 ] || return 2

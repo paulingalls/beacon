@@ -75,6 +75,12 @@ export async function fixture() {
   const policy = JSON.parse(readFileSync('deploy/integrity-allowlist', 'utf8'));
   policy.keys.paul = [fingerprint];
   put('policy/allowlist', JSON.stringify(policy));
+  put('dev/null', '');
+  symlinkSync('/dev/null', join(root, 'usr/lib/systemd/system/masked.service'));
+  symlinkSync(
+    '/usr/lib/systemd/system/owned.service',
+    join(root, 'etc/systemd/system/absolute-alias.service'),
+  );
   put('usr/lib/systemd/system/owned.service', 'package unit\n');
   put('etc/systemd/system/beacon.service', 'local unit\n');
   symlinkSync(
@@ -86,7 +92,10 @@ export async function fixture() {
     join(root, 'etc/systemd/system/timers.target.wants/beacon.service'),
   );
   put('usr/bin/owned', 'binary', 0o4755);
-  put('owned', '/lib/systemd/system/owned.service\n/usr/bin/owned\n');
+  put(
+    'owned',
+    '/lib/systemd/system/owned.service\n/lib/systemd/system/masked.service\n/usr/bin/owned\n',
+  );
   put(
     'bin/dpkg',
     `#!/usr/bin/env python3
