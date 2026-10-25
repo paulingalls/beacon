@@ -30,6 +30,8 @@ export interface ServerEnv {
   CORS_ORIGINS?: string;
   /** Absolute base for generated short URLs, e.g. 'https://pi.ink'. */
   SHORT_DOMAIN?: string;
+  SHORT_LINK_CREATE_RATE_LIMIT?: string;
+  SHORT_LINK_CREATE_RATE_WINDOW_MS?: string;
   RETENTION_DAYS?: string;
   IP_MODE?: string;
   REFERRER_MODE?: string;
@@ -55,6 +57,17 @@ function parseAllowlist(raw: string | undefined): string[] | undefined {
     .map((s) => s.trim())
     .filter((s) => s.length > 0);
   return list.length > 0 ? list : undefined;
+}
+
+function parsePositiveInteger(raw: string | undefined, variable: string): number | undefined {
+  if (raw === undefined) return undefined;
+  const value = raw.trim();
+  if (!/^[1-9]\d*$/.test(value) || !Number.isSafeInteger(Number(value))) {
+    throw new Error(
+      `[server] ${variable} must be a positive decimal integer <= ${Number.MAX_SAFE_INTEGER}`,
+    );
+  }
+  return Number(value);
 }
 
 function parseRetentionDays(raw: string | undefined): number | undefined {
@@ -94,6 +107,14 @@ export function buildServer(env: ServerEnv): { app: Hono; beacon: Beacon } {
     trustedIngestToken: env.TRUSTED_INGEST_TOKEN,
     basePath: env.BASE_PATH ?? '/analytics',
     shortDomain: env.SHORT_DOMAIN,
+    shortLinkCreateRateLimit: parsePositiveInteger(
+      env.SHORT_LINK_CREATE_RATE_LIMIT,
+      'SHORT_LINK_CREATE_RATE_LIMIT',
+    ),
+    shortLinkCreateRateWindowMs: parsePositiveInteger(
+      env.SHORT_LINK_CREATE_RATE_WINDOW_MS,
+      'SHORT_LINK_CREATE_RATE_WINDOW_MS',
+    ),
     hashIPs: true,
     ipMode: validateIpMode(env.IP_MODE),
     referrerMode: validateReferrerMode(env.REFERRER_MODE),

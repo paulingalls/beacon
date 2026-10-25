@@ -291,7 +291,10 @@ export function createBeacon(
       getUserId: config.getUserId,
       hashIPs: config.hashIPs,
       ipPolicy,
-      rateLimit: { limit: config.shortLinkCreateRateLimit },
+      rateLimit: {
+        limit: config.shortLinkCreateRateLimit,
+        windowMs: config.shortLinkCreateRateWindowMs,
+      },
     }),
   );
   shortenerRouter.get(

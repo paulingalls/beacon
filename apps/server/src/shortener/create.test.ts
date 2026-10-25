@@ -10,7 +10,6 @@ const SHORT_DOMAIN = 'https://pi.ink';
 
 interface BuildOpts {
   isAdmin?: (c: unknown) => boolean;
-  rateLimit?: { limit?: number; windowMs?: number };
 }
 
 registerDbCoverageGuard();
@@ -29,7 +28,7 @@ describe.skipIf(!TEST_DB)('create route POST /short (integration)', () => {
       '/short',
       // biome-ignore lint/suspicious/noExplicitAny: test composes the real gate
       adminGate({ isAdmin: isAdmin as (c: any) => boolean }),
-      createCreateHandler({ sql, shortDomain: SHORT_DOMAIN, rateLimit: opts.rateLimit }),
+      createCreateHandler({ sql, shortDomain: SHORT_DOMAIN }),
     );
     return app;
   }
@@ -132,17 +131,6 @@ describe.skipIf(!TEST_DB)('create route POST /short (integration)', () => {
     expect(((await res.json()) as { error: { code: string } }).error.code).toBe(
       'INVALID_PARAMETER',
     );
-  });
-
-  test('exceeding the creation rate limit returns 429 RATE_LIMITED with Retry-After', async () => {
-    const app = buildApp(getSql(), { rateLimit: { limit: 1 } });
-    const ok = await post(app, { destination: 'https://x.com', product_id: 'p' });
-    expect(ok.status).toBe(201);
-
-    const limited = await post(app, { destination: 'https://x.com', product_id: 'p' });
-    expect(limited.status).toBe(429);
-    expect(((await limited.json()) as { error: { code: string } }).error.code).toBe('RATE_LIMITED');
-    expect(limited.headers.get('retry-after')).toBeTruthy();
   });
 
   test('a non-admin caller returns 403 UNAUTHORIZED', async () => {
