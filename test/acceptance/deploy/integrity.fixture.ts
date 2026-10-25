@@ -135,6 +135,8 @@ sys.exit(0 if any(fnmatch.fnmatchcase(x,p) for x in (r/'owned').read_text().spli
   command(['git', 'config', 'user.email', 'test@test'], join(root, 'app'));
   command(['git', 'config', 'user.name', 'test'], join(root, 'app'));
   put('app/.bun-version', '1.4.4\n');
+  put('app/.gitignore', '.env\n.env.*\nnode_modules/\n');
+  put('app/payload', 'trusted\n');
   command(['git', 'add', '.'], join(root, 'app'));
   command(['git', 'commit', '-qm', 'baseline'], join(root, 'app'));
   command(['git', 'update-ref', 'refs/remotes/origin/release', 'HEAD'], join(root, 'app'));

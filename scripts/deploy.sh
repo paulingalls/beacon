@@ -31,14 +31,14 @@ HEAD_NOW="$(git rev-parse --short HEAD)"
 echo "Deploying ${HEAD_NOW} (rollback target: ${PREV:0:7})"
 
 install_deps() {
-  "$BUN" install --frozen-lockfile --production --ignore-scripts
+  "$BUN" --no-env-file install --frozen-lockfile --production --ignore-scripts
 }
 
 run_migrations() {
   # Source the env in a subshell so DATABASE_URL never persists in this shell's
   # environment beyond the migrate call. `set +x` is implied (never enabled).
   # shellcheck source=/dev/null  # runtime-only file on the droplet, not in repo
-  ( set -a && . "$ENV_FILE" && set +a && "$BUN" run migrate )
+  ( set -a && . "$ENV_FILE" && set +a && "$BUN" --no-env-file run apps/server/src/storage/migrate.ts )
 }
 
 restart_and_check() {

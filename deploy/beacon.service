@@ -11,7 +11,7 @@ User=beacon
 WorkingDirectory=/home/beacon/app
 EnvironmentFile=/home/beacon/.env.production
 Environment=PORT=8080
-ExecStart=/home/beacon/.bun/bin/bun run apps/server/src/server.ts
+ExecStart=/home/beacon/.bun/bin/bun --no-env-file run apps/server/src/server.ts
 Restart=on-failure
 RestartSec=5
 # server.ts traps SIGTERM → beacon.shutdown() (flush buffered events) → server.stop();
