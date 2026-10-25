@@ -18,7 +18,7 @@
     },
     "apps/server": {
       "name": "@pi-innovations/beacon-server",
-      "version": "0.2.14",
+      "version": "0.2.15",
       "dependencies": {
         "@pi-innovations/beacon-sdk": "workspace:*",
         "hono": "^4.13.13",
@@ -27,7 +27,7 @@
     },
     "packages/beacon": {
       "name": "@pi-innovations/beacon-sdk",
-      "version": "0.2.14",
+      "version": "0.2.15",
       "devDependencies": {
         "hono": "^4.13.13",
       },
@@ -40,7 +40,7 @@
     },
     "packages/beacon-client": {
       "name": "@pi-innovations/beacon-client",
-      "version": "0.2.14",
+      "version": "0.2.15",
     },
   },
   "packages": {

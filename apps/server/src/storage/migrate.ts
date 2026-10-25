@@ -60,7 +60,7 @@ if (import.meta.main) {
     console.error('[beacon] DATABASE_URL is not set — cannot run migrations.');
     process.exit(1);
   }
-  const sql = createDb({ connectionString });
+  const sql = createDb({ connectionString, caCertPath: process.env.DATABASE_CA_CERT });
   try {
     const applied = await runMigrations(sql);
     console.log(applied.length ? `Applied: ${applied.join(', ')}` : 'No pending migrations.');

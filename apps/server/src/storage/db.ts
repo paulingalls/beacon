@@ -1,3 +1,5 @@
+import { X509Certificate } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import postgres, { type Options, type Sql } from 'postgres';
 
 /** The value type postgres.js `sql.json()` accepts. One shared home for the cast. */
@@ -8,12 +10,13 @@ export interface DbConfig {
   connectionString: string;
   /** Connection pool size. Defaults to 10 (REQUIREMENTS.md §10). */
   maxConnections?: number;
+  caCertPath?: string;
 }
 
 /**
  * Creates a postgres.js client.
  *
- * Failure isolation (REQUIREMENTS.md §1.3): this never throws. postgres.js
+ * Failure isolation (REQUIREMENTS.md §1.3): only explicit CA configuration errors throw. postgres.js
  * connects lazily, so a well-formed-but-unreachable host surfaces only when a
  * query runs — we fire a non-blocking connectivity probe that logs a warning
  * on failure without rejecting to the caller. A malformed connection string
@@ -26,6 +29,25 @@ export function createDb(config: DbConfig): Sql {
     max: config.maxConnections ?? 10,
     onnotice: () => {},
   };
+
+  if (config.caCertPath !== undefined) {
+    try {
+      const ca = readFileSync(config.caCertPath, 'utf8');
+      const certificates = ca.match(
+        /-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----/g,
+      );
+      if (
+        !certificates?.length ||
+        ca.replace(/-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----/g, '').trim()
+      ) {
+        throw new Error('expected a PEM certificate bundle');
+      }
+      for (const certificate of certificates) new X509Certificate(certificate);
+      options.ssl = { ca, rejectUnauthorized: true };
+    } catch (cause) {
+      throw new Error(`DATABASE_CA_CERT: ${String(cause)}`, { cause });
+    }
+  }
 
   let sql: Sql;
   try {

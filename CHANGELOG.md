@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.15 — 2026-10-25
+
+- Verify managed Postgres certificates and hostnames using the optional `DATABASE_CA_CERT` PEM path in both server and migration clients. Invalid explicit CA configuration fails before connecting; unset preserves local/CI behavior.
+- Provision privileged files only from a root-owned 0700 operator-delivered bundle. Resolve the integrity check's release authority directly from GitHub with pinned host keys; fail on sudo/admin group membership.
+- Operator cut-over before release: install the cluster CA and env line, prove private-host certificate verification, then release. After release, deliver origin/main's root bundle, rerun provisioning and walk the installed integrity check. See DEPLOYMENT.md and OPERATIONS.md for CA rotation and the external health-monitor contract.
+
+The SDK, client, and server manifests all declare version `0.2.15`. SDK and client behavior is unchanged.
+
 ## 0.2.14 — 2026-10-24
 
 - Separate full-sudo operator `paul` from the SSH-disabled app user, whose only sudo permission restarts Beacon. Preserve rotated operator keys on provisioning reruns.

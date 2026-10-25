@@ -116,8 +116,18 @@ pull runner/units and the root integrity checker/baseline. The integrity timer
 is enabled automatically; the pull timer requires explicit operator activation.
 
 ```bash
-ssh -i ~/.ssh/<maintenance-key> root@<droplet-ip> 'bash -s' < scripts/provision-droplet.sh
+set -euo pipefail
+git fetch origin main
+git -c tar.umask=0022 archive origin/main scripts deploy | ssh -i ~/.ssh/<maintenance-key> root@<droplet-ip> \
+  'rm -rf /root/beacon-provision && install -d -o root -g root -m 0700 /root/beacon-provision && tar -x -C /root/beacon-provision'
+# Run only after successful delivery:
+ssh -i ~/.ssh/<maintenance-key> root@<droplet-ip> 'bash /root/beacon-provision/scripts/provision-droplet.sh'
 ```
+
+Root installs only from this bundle, never from the beacon-writable checkout; archive
+from the operator's reviewed source, never on the app host. The script refuses before
+changing anything unless the directory is root-owned 0700 and every entry is root-owned,
+not a symlink and not group/other-writable (hence `tar.umask=0022`).
 
 The first clone fails until the printed public key is registered read-only:
 
@@ -139,7 +149,14 @@ Approve `tag:beacon` in the tailnet admin console (Paul's ACL grants
 `sudo -n true`, with the DO console available. Then rerun from your workstation:
 
 ```bash
-ssh beacon 'sudo bash -s' < scripts/provision-droplet.sh
+ssh beacon 'sudo systemctl stop beacon-deploy.timer; systemctl status beacon-deploy.service'
+# Wait until the service is idle, then deliver from the operator workstation:
+set -euo pipefail
+git fetch origin main
+git -c tar.umask=0022 archive origin/main scripts deploy | ssh beacon \
+  'sudo rm -rf /root/beacon-provision && sudo install -d -o root -g root -m 0700 /root/beacon-provision && sudo tar -x -C /root/beacon-provision'
+# Run only after successful delivery:
+ssh beacon 'sudo bash /root/beacon-provision/scripts/provision-droplet.sh'
 ```
 
 Configure the local alias before using it:
@@ -163,12 +180,7 @@ incoming, allow outgoing, 80/443 and incoming `tailscale0`, enables ufw, then re
 `tailscale up` does not enable Tailscale SSH. Remove public 22 from DO's
 `beacon-fw` separately and verify a fresh tailnet login and external port probe.
 
-The script preserves Ubuntu security update origins, adds Caddy
-`cloudsmith/caddy/stable` and `Tailscale` origins, and configures required reboots
-at 10:00 UTC with the system timezone UTC. Before enabling the pull timer, validate
-`systemd-analyze verify` on installed units, `sshd -t` and `sshd -T`,
-`apt-cache policy caddy tailscale`, `unattended-upgrade --dry-run --debug`,
-`timedatectl` and `ufw status verbose`. Reruns preserve pull timer state and enable the integrity timer.
+Patching and pre-activation validation: see [OPERATIONS.md](./OPERATIONS.md#host-patching-and-validation).
 
 ---
 
@@ -179,10 +191,13 @@ committed**; `.env.*` is gitignored and this lives outside the repo:
 
 ```bash
 DATABASE_URL=postgres://beacon:<password>@private-<cluster-host>:25060/beacon_prod?sslmode=require
+DATABASE_CA_CERT=/etc/beacon/db-ca.crt
 ADMIN_TOKEN=<openssl rand -hex 32>
 TRUSTED_INGEST_TOKEN=<openssl rand -hex 32>
 SHORT_DOMAIN=https://beacon.vodshorter.com
 ```
+
+Install the cluster CA first: [Database CA install and rotation](./OPERATIONS.md#database-ca-install-and-rotation).
 
 Then reload Caddy (provision installs the Caddyfile but does not reload the
 running Caddy), install, migrate, and start:
@@ -197,6 +212,7 @@ sudo systemctl enable --now beacon
 | Variable | Required | Purpose |
 |---|---|---|
 | `DATABASE_URL` | yes | Postgres connection string; use TLS for managed Postgres. Host fails fast if unset. |
+| `DATABASE_CA_CERT` | required for managed deployment; optional locally | PEM CA bundle file path, e.g. `/etc/beacon/db-ca.crt`. When set, server and migrations verify the certificate chain and hostname, overriding URL sslmode. Empty, unreadable or invalid PEM fails synchronously naming DATABASE_CA_CERT before Postgres opens. Unset preserves existing local/CI behavior. |
 | `PORT` | no | HTTP port (default `8080`); also used by the container HEALTHCHECK. |
 | `HOST` | no | Listen address: default `127.0.0.1` on the host, `0.0.0.0` in the Docker image; set explicitly to override. Host Caddy proxies to `localhost:8080`. |
 | `RETENTION_DAYS` | optional | Unset or 0 = disabled. Positive finite decimal days enable pruning; invalid or unrepresentable cutoff values fail startup before resources are created. |
@@ -246,7 +262,7 @@ A boot older than ten minutes can trigger a check during provisioning.
 
 Later runner/unit changes require explicit reinstall with the timer paused and
 service idle; a checkout reset cannot update `/usr/local/bin/beacon-deploy`.
-For pause, retry, manual rollback and timeout recovery see [OPERATIONS.md](./OPERATIONS.md).
+For [selective reinstalls](./OPERATIONS.md#reinstalling-root-assets), pause, retry, manual rollback and timeout recovery see OPERATIONS.md.
 For macOS runner tests install `brew install flock coreutils`; Linux fixture
 hosts also need `zip` (the checker itself only needs `unzip`).
 
@@ -272,15 +288,6 @@ curl -i https://beacon.vodshorter.com/analytics/dashboard  # => 403
 ```
 
 ---
-
-## Operations
-
-```bash
-sudo journalctl -u beacon -f     # app logs
-sudo journalctl -u caddy -f      # proxy / TLS logs
-sudo systemctl restart beacon    # manual restart
-sudo systemctl stop beacon-deploy.timer  # pause on-box pulls; wait for idle
-```
 
 ## Grafana database reader
 
