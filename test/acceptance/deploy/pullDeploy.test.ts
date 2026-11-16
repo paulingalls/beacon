@@ -17,7 +17,9 @@ git init -q -b main "$APP_DIR"
 cd "$APP_DIR"
 git config user.email test@test
 git config user.name test
-git remote add origin "$root/origin"
+# Git 2.56+ updates origin/* on a push to a URL matching origin; publish() stands in for
+# CI pushing elsewhere, so origin gets a different spelling of the same repo.
+git remote add origin "file://$root/origin"
 publish() {
   printf 'git rev-parse HEAD >> "$STATE_DIR/calls"\\n%s\\n' "$1" > scripts/deploy.sh
   git add .
