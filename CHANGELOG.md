@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.17 — 2026-11-15
+
+- Integrity Keys check creates sshd's runtime directory before reading `sshd -T`. Ubuntu 24.04's socket-activated sshd creates `/run/sshd` only on first connection, so the post-reboot run reported a false "Missing privilege separation directory" failure.
+- Operators: after release, deliver origin/main's root bundle and reinstall `/usr/local/sbin/beacon-integrity` (OPERATIONS.md, Reinstalling root assets).
+
+The SDK, client, and server manifests all declare version `0.2.17`. SDK and client behavior is unchanged.
+
 ## 0.2.16 — 2026-10-25
 
 - Compare the served checkout with independently fetched GitHub release objects using a root-owned mirror and temporary index. Report ignored untracked files, hidden tracked edits and forged app repository state; exclude only node_modules at any depth.

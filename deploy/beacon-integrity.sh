@@ -92,6 +92,8 @@ config() {
 }
 keys() {
   local user home file line fingerprint actual expected
+  # ssh.socket creates /run/sshd only on first connection, so after a reboot sshd -T refuses to run.
+  install -d -m 0755 "$ROOT/run/sshd"
   # A root-written sshd drop-in can add key sources this loop never reads.
   sshd -T | grep -Ei '^(authorizedkeysfile|authorizedkeyscommand|trustedusercakeys|authorizedprincipalsfile|authorizedprincipalscommand) ' |
     sort > "$WORK/sshd-keys"

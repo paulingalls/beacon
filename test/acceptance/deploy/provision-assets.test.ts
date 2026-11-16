@@ -19,6 +19,18 @@ test('privileged installs and scripts never use the app checkout', () => {
     .filter((line) => /\b(install|bash)\b/.test(line));
   expect(commands.filter((line) => /\$\{?APP_DIR\}?\/(deploy|scripts)\b/.test(line))).toEqual([]);
 });
+// Bun auto-loads .env files from the app checkout, and a package script's nested bun drops the flag.
+test('operator bun commands in the app checkout skip .env files', async () => {
+  const runbook = await Bun.file('docs/DEPLOYMENT.md').text();
+  const commands = `${provision}\n${runbook}`
+    .split('\n')
+    .filter((line) => line.includes('.bun/bin/bun '));
+  expect(
+    commands.filter(
+      (line) => !/bun (install )?--no-env-file /.test(line) || /run migrate\b/.test(line),
+    ),
+  ).toEqual([]);
+});
 for (const [name, mode, missing, diagnostic] of [
   ['missing asset', 0o700, true, 'Missing asset'],
   ['unsafe mode', 0o755, false, 'mode 0700'],
